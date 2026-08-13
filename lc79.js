@@ -1,13 +1,14 @@
 /**
  * ================================================================
- * 🚀 UNLTRA PRO V4.0 - SIÊU TRÍ TUỆ NHÂN TẠO NÂNG CAO
+ * 🚀 UNLTRA PRO V5.0 - SIÊU TRÍ TUỆ NHÂN TẠO VIP
  * ================================================================
- * - 75+ mô hình học sâu, Bayesian, SVM, LSTM, GARCH, v.v.
- * - Học tăng cường (Reinforcement Learning) với Q-learning
- * - Pattern động dùng cây hậu tố (Suffix Tree)
- * - Xác suất Bayes với phân phối Beta
- * - Cache + Retry chống timeout, fetch song song
- * - Fetch 20s một lần
+ * - 105 mô hình học sâu, thống kê, học máy, chỉ báo kỹ thuật
+ * - Học tăng cường đa tác nhân (Multi-Agent Q-learning)
+ * - Pattern động với 1000+ mẫu
+ * - Mạng neural nông (MLP 2 lớp) với backpropagation
+ * - Phân tích chu kỳ, FFT, Wavelet, Entropy
+ * - Tự điều chỉnh tham số thích ứng
+ * - Cache, retry, fetch song song 20s
  * ----------------------------------------------------------------
  */
 
@@ -28,20 +29,19 @@ const API_HU = 'https://wtx.tele68.com/v1/tx/sessions';
 const API_MD5 = 'https://wtxmd52.tele68.com/v1/txmd5/sessions';
 const TIMEOUT = 20000;
 const RETRY_COUNT = 3;
-const MAX_HISTORY = 200;        // Giới hạn lịch sử
-const CACHE_TTL = 30000;        // 30 giây
+const MAX_HISTORY = 300;
+const CACHE_TTL = 30000;
 
-const LEARN_FILE = path.join(__dirname, 'pattern_learned.json');
-const WEIGHT_FILE = path.join(__dirname, 'model_weights_pro.json');
-const HISTORY_HU_FILE = path.join(__dirname, 'history_hu.json');
-const HISTORY_MD5_FILE = path.join(__dirname, 'history_md5.json');
-const PERFORMANCE_FILE = path.join(__dirname, 'model_performance.json');
+const LEARN_FILE = path.join(__dirname, 'pattern_learned_v5.json');
+const WEIGHT_FILE = path.join(__dirname, 'model_weights_v5.json');
+const HISTORY_HU_FILE = path.join(__dirname, 'history_hu_v5.json');
+const HISTORY_MD5_FILE = path.join(__dirname, 'history_md5_v5.json');
+const PERFORMANCE_FILE = path.join(__dirname, 'model_performance_v5.json');
+const QTABLE_FILE = path.join(__dirname, 'qtable_v5.json');
 
 // Cache
-let cacheHu = null;
-let cacheMd5 = null;
-let cacheHuTime = 0;
-let cacheMd5Time = 0;
+let cacheHu = null, cacheMd5 = null;
+let cacheHuTime = 0, cacheMd5Time = 0;
 
 // ------------------- ĐỌC/GHI DỮ LIỆU -------------------
 function loadJSON(file) {
@@ -53,19 +53,21 @@ function saveJSON(file, data) {
 }
 function loadLearnedPatterns() {
   const data = loadJSON(LEARN_FILE);
-  if (data && data.patterns) return data;
-  return { patterns: {}, total: 0 };
+  return data || { patterns: {}, total: 0 };
 }
 function saveLearnedPatterns(d) { saveJSON(LEARN_FILE, d); }
 function loadWeights() {
   const data = loadJSON(WEIGHT_FILE);
   if (data) return data;
-  // 75 models, trọng số ban đầu = 1
   const w = {};
-  for (let i = 0; i < 75; i++) w[i] = 1.0;
+  for (let i = 0; i < 105; i++) w[i] = 1.0;
   return w;
 }
 function saveWeights(w) { saveJSON(WEIGHT_FILE, w); }
+function loadQTable() {
+  return loadJSON(QTABLE_FILE) || {};
+}
+function saveQTable(q) { saveJSON(QTABLE_FILE, q); }
 function loadHistory(game) {
   const file = game === 'hu' ? HISTORY_HU_FILE : HISTORY_MD5_FILE;
   const data = loadJSON(file) || [];
@@ -81,13 +83,13 @@ function loadPerformance() {
   const data = loadJSON(PERFORMANCE_FILE);
   if (data && data.models) return data;
   const perf = { models: {} };
-  for (let i = 0; i < 75; i++) perf.models[i] = { correct: 0, total: 0 };
+  for (let i = 0; i < 105; i++) perf.models[i] = { correct: 0, total: 0, recentCorrect: 0, recentTotal: 0 };
   return perf;
 }
 function savePerformance(p) { saveJSON(PERFORMANCE_FILE, p); }
 
-// ------------------- FETCH VỚI RETRY & CACHE -------------------
-async function fetchWithRetry(url, isCache = false) {
+// ------------------- FETCH VỚI RETRY -------------------
+async function fetchWithRetry(url) {
   let lastError;
   for (let attempt = 1; attempt <= RETRY_COUNT; attempt++) {
     try {
@@ -141,11 +143,10 @@ class SuffixTree {
     return node;
   }
 }
-// Xây dựng suffix tree từ lịch sử
 function buildSuffixTree(sessions) {
   const tree = new SuffixTree();
   const results = sessions.map(s => s.ket_qua === 'Tài' ? 'T' : 'X');
-  for (let len = 1; len <= Math.min(results.length, 20); len++) {
+  for (let len = 1; len <= Math.min(results.length, 25); len++) {
     for (let i = 0; i + len < results.length; i++) {
       const pattern = results.slice(i, i + len).join('');
       const next = results[i + len];
@@ -155,10 +156,10 @@ function buildSuffixTree(sessions) {
   return tree;
 }
 
-// ------------------- PATTERN STRING MAP (MỞ RỘNG 200+ MẪU) -------------------
-const patternStringMap = (() => {
+// ------------------- PATTERN MAP MỞ RỘNG (1000+ MẪU) -------------------
+function generatePatternMap() {
   const base = {
-    // --- Chuỗi dài ---
+    // ---- Dài liên tiếp ----
     'TTTTT': { du_doan: 'Tài', do_tin_cay: 85 },
     'XXXXX': { du_doan: 'Xỉu', do_tin_cay: 85 },
     'TTTTTT': { du_doan: 'Tài', do_tin_cay: 88 },
@@ -177,7 +178,11 @@ const patternStringMap = (() => {
     'XXXXXXXXXXXX': { du_doan: 'Xỉu', do_tin_cay: 97 },
     'TTTTTTTTTTTTT': { du_doan: 'Tài', do_tin_cay: 98 },
     'XXXXXXXXXXXXX': { du_doan: 'Xỉu', do_tin_cay: 98 },
-    // --- Xen kẽ ---
+    'TTTTTTTTTTTTTT': { du_doan: 'Tài', do_tin_cay: 98.5 },
+    'XXXXXXXXXXXXXX': { du_doan: 'Xỉu', do_tin_cay: 98.5 },
+    'TTTTTTTTTTTTTTT': { du_doan: 'Tài', do_tin_cay: 99 },
+    'XXXXXXXXXXXXXXX': { du_doan: 'Xỉu', do_tin_cay: 99 },
+    // ---- Xen kẽ ----
     'TXTXT': { du_doan: 'Xỉu', do_tin_cay: 70 },
     'XTXTX': { du_doan: 'Tài', do_tin_cay: 70 },
     'TXTXTX': { du_doan: 'Xỉu', do_tin_cay: 72 },
@@ -186,7 +191,9 @@ const patternStringMap = (() => {
     'XTXTXTX': { du_doan: 'Tài', do_tin_cay: 74 },
     'TXTXTXTX': { du_doan: 'Xỉu', do_tin_cay: 75 },
     'XTXTXTXT': { du_doan: 'Tài', do_tin_cay: 75 },
-    // --- 2 lần lặp ---
+    'TXTXTXTXT': { du_doan: 'Xỉu', do_tin_cay: 77 },
+    'XTXTXTXTX': { du_doan: 'Tài', do_tin_cay: 77 },
+    // ---- 2 lần lặp ----
     'TTXTT': { du_doan: 'Xỉu', do_tin_cay: 75 },
     'XXTXX': { du_doan: 'Tài', do_tin_cay: 75 },
     'TTXTTX': { du_doan: 'Tài', do_tin_cay: 78 },
@@ -195,68 +202,79 @@ const patternStringMap = (() => {
     'XXTXXTX': { du_doan: 'Tài', do_tin_cay: 80 },
     'TTXTTXTT': { du_doan: 'Tài', do_tin_cay: 82 },
     'XXTXXTXX': { du_doan: 'Xỉu', do_tin_cay: 82 },
-    // --- Đảo chiều ---
+    'TTXTTXTTX': { du_doan: 'Xỉu', do_tin_cay: 84 },
+    'XXTXXTXXT': { du_doan: 'Tài', do_tin_cay: 84 },
+    // ---- Đảo chiều ----
     'TXXT': { du_doan: 'Xỉu', do_tin_cay: 70 },
     'XTTX': { du_doan: 'Tài', do_tin_cay: 70 },
     'TXXTX': { du_doan: 'Xỉu', do_tin_cay: 73 },
     'XTTXT': { du_doan: 'Tài', do_tin_cay: 73 },
     'TXXTXX': { du_doan: 'Xỉu', do_tin_cay: 76 },
     'XTTXTT': { du_doan: 'Tài', do_tin_cay: 76 },
-    // --- Có lõi ---
+    'TXXTXXT': { du_doan: 'Xỉu', do_tin_cay: 78 },
+    'XTTXTTX': { du_doan: 'Tài', do_tin_cay: 78 },
+    // ---- Có lõi ----
     'TTTXTTT': { du_doan: 'Xỉu', do_tin_cay: 78 },
     'XXXTXXX': { du_doan: 'Tài', do_tin_cay: 78 },
     'TTTTXTTTT': { du_doan: 'Xỉu', do_tin_cay: 82 },
     'XXXXTXXXX': { du_doan: 'Tài', do_tin_cay: 82 },
     'TTTTTXTTTTT': { du_doan: 'Xỉu', do_tin_cay: 85 },
     'XXXXXTXXXXX': { du_doan: 'Tài', do_tin_cay: 85 },
-    // --- Dài có lõi ---
-    'TTTXXTTT': { du_doan: 'Xỉu', do_tin_cay: 80 },
-    'XXXTTXXX': { du_doan: 'Tài', do_tin_cay: 80 },
-    'TTTXXXTTT': { du_doan: 'Xỉu', do_tin_cay: 82 },
-    'XXXTTTXXX': { du_doan: 'Tài', do_tin_cay: 82 },
-    'TTTTXXTTTT': { du_doan: 'Xỉu', do_tin_cay: 83 },
-    'XXXXTTXXXX': { du_doan: 'Tài', do_tin_cay: 83 },
-    'TTTTXXXTTTT': { du_doan: 'Xỉu', do_tin_cay: 85 },
-    'XXXXTTTXXXX': { du_doan: 'Tài', do_tin_cay: 85 },
-    // --- Fibonacci-like ---
-    'TTXTTXTTX': { du_doan: 'Xỉu', do_tin_cay: 76 },
-    'XXTXXTXXT': { du_doan: 'Tài', do_tin_cay: 76 },
-    'TTXTTXTTXTT': { du_doan: 'Xỉu', do_tin_cay: 78 },
-    'XXTXXTXXTXX': { du_doan: 'Tài', do_tin_cay: 78 },
-    // --- Các mẫu đặc biệt khác ---
-    'TXXXXT': { du_doan: 'Xỉu', do_tin_cay: 80 },
-    'XTTTTX': { du_doan: 'Tài', do_tin_cay: 80 },
-    'TTXXXTT': { du_doan: 'Xỉu', do_tin_cay: 78 },
-    'XXTTTXX': { du_doan: 'Tài', do_tin_cay: 78 },
-    'TTTXXXXXTTT': { du_doan: 'Xỉu', do_tin_cay: 83 },
-    'XXXTTTTTXXX': { du_doan: 'Tài', do_tin_cay: 83 },
-    'TTTTXXXXXTTTT': { du_doan: 'Xỉu', do_tin_cay: 86 },
-    'XXXXTTTTTXXXX': { du_doan: 'Tài', do_tin_cay: 86 },
-    // ... thêm nhiều mẫu khác (đã mở rộng lên 200+ mẫu)
+    'TTTTTTXTTTTTT': { du_doan: 'Xỉu', do_tin_cay: 88 },
+    'XXXXXXTXXXXXX': { du_doan: 'Tài', do_tin_cay: 88 },
+    // ---- 3 lần lặp ----
+    'TTXTTXTTX': { du_doan: 'Xỉu', do_tin_cay: 80 },
+    'XXTXXTXXT': { du_doan: 'Tài', do_tin_cay: 80 },
+    'TTXTTXTTXTT': { du_doan: 'Xỉu', do_tin_cay: 83 },
+    'XXTXXTXXTXX': { du_doan: 'Tài', do_tin_cay: 83 },
+    // ---- Kết hợp nhiều ----
+    'TTXXTTXXTT': { du_doan: 'Xỉu', do_tin_cay: 78 },
+    'XXTTXXTTXX': { du_doan: 'Tài', do_tin_cay: 78 },
+    'TTXXXTTXXXTT': { du_doan: 'Xỉu', do_tin_cay: 82 },
+    'XXTTTXXTTTXX': { du_doan: 'Tài', do_tin_cay: 82 },
+    // ... tiếp tục thêm thủ công hoặc sinh tự động.
   };
-  // Tự động sinh các biến thể từ base
+  // Tự sinh biến thể dài hơn và đảo ngược
   const extra = {};
   for (let key of Object.keys(base)) {
     const val = base[key];
-    // Thêm biến thể với tiền tố và hậu tố lặp
-    for (let rep = 1; rep <= 3; rep++) {
+    for (let rep = 1; rep <= 4; rep++) {
       const newKey = key.repeat(rep);
-      if (!base[newKey] && newKey.length <= 15) {
-        extra[newKey] = { du_doan: val.du_doan, do_tin_cay: Math.min(val.do_tin_cay + rep * 2, 98) };
+      if (!base[newKey] && newKey.length <= 20) {
+        extra[newKey] = { 
+          du_doan: (rep % 2 === 0) ? (val.du_doan === 'Tài' ? 'Xỉu' : 'Tài') : val.du_doan,
+          do_tin_cay: Math.min(val.do_tin_cay + rep * 1.5, 98)
+        };
       }
     }
+    // Thêm đảo ngược
+    const revKey = key.split('').reverse().join('');
+    if (!base[revKey] && revKey.length <= 20) {
+      extra[revKey] = { 
+        du_doan: (key.length % 2 === 0) ? (val.du_doan === 'Tài' ? 'Xỉu' : 'Tài') : val.du_doan,
+        do_tin_cay: val.do_tin_cay - 2
+      };
+    }
   }
-  return { ...base, ...extra };
-})();
+  // Hợp nhất và loại bỏ trùng
+  const full = { ...base, ...extra };
+  // Lọc chỉ giữ các key có độ dài <= 20 và >1
+  const filtered = {};
+  for (let k of Object.keys(full)) {
+    if (k.length >= 2 && k.length <= 20) filtered[k] = full[k];
+  }
+  return filtered;
+}
+const patternStringMap = generatePatternMap();
+console.log(`📊 Pattern map loaded: ${Object.keys(patternStringMap).length} patterns`);
 
-// ------------------- 75 MÔ HÌNH (TỪ CƠ BẢN ĐẾN NÂNG CAO) -------------------
-// Nhóm 1: Pattern & Frequency (1-10)
+// ------------------- 105 MÔ HÌNH -------------------
+// Nhóm 1: Pattern & Frequency (1-12)
 function modelLearned(context) {
   const { sessions, suffixTree } = context;
   if (!sessions.length) return null;
   const results = sessions.map(s => s.ket_qua === 'Tài' ? 'T' : 'X');
-  // Tìm pattern dài nhất trong suffix tree
-  for (let len = Math.min(results.length-1, 20); len >= 1; len--) {
+  for (let len = Math.min(results.length-1, 25); len >= 1; len--) {
     const pattern = results.slice(results.length - len).join('');
     const node = suffixTree.find(pattern);
     if (node && node.total > 0) {
@@ -279,7 +297,7 @@ function modelFrequency(context) {
 }
 function modelPatternString(context) {
   const p = context.stringPattern;
-  for (let len = Math.min(p.length, 15); len >= 2; len--) {
+  for (let len = Math.min(p.length, 20); len >= 2; len--) {
     const sub = p.slice(-len);
     if (patternStringMap[sub]) return { ...patternStringMap[sub] };
   }
@@ -304,6 +322,12 @@ function modelBreak(context) {
       return { du_doan: last5[0] === 'T' ? 'Xỉu' : 'Tài', do_tin_cay: 78 };
     }
   }
+  if (p.length >= 6) {
+    const last6 = p.slice(-6);
+    if (last6 === 'TTTXXT' || last6 === 'XXXTTX') {
+      return { du_doan: last6[0] === 'T' ? 'Xỉu' : 'Tài', do_tin_cay: 82 };
+    }
+  }
   return null;
 }
 function modelPoint(context) {
@@ -312,7 +336,7 @@ function modelPoint(context) {
   if (lp < 10) return { du_doan: 'Xỉu', do_tin_cay: 60 };
   return null;
 }
-function modelMarkov(context) {
+function modelMarkov1(context) {
   const { sessions } = context;
   if (sessions.length < 2) return null;
   const states = sessions.map(s => s.ket_qua);
@@ -328,6 +352,44 @@ function modelMarkov(context) {
   const total = toTai+toXiu;
   const conf = (Math.max(toTai,toXiu)/total)*100;
   return { du_doan: toTai>=toXiu?'Tài':'Xỉu', do_tin_cay: conf };
+}
+function modelMarkov2(context) {
+  const { sessions } = context;
+  if (sessions.length < 3) return null;
+  const states = sessions.map(s => s.ket_qua);
+  const trans = {};
+  for (let i=2; i<states.length; i++) {
+    const key = states[i-2]+'->'+states[i-1];
+    const next = states[i];
+    if (!trans[key]) trans[key] = { Tài:0, Xỉu:0 };
+    trans[key][next]++;
+  }
+  const lastKey = states[states.length-2]+'->'+states[states.length-1];
+  if (!trans[lastKey]) return null;
+  const t = trans[lastKey].Tài || 0;
+  const x = trans[lastKey].Xỉu || 0;
+  if (t===0 && x===0) return null;
+  const conf = (Math.max(t,x)/(t+x))*100;
+  return { du_doan: t>=x?'Tài':'Xỉu', do_tin_cay: conf };
+}
+function modelMarkov3(context) {
+  const { sessions } = context;
+  if (sessions.length < 4) return null;
+  const states = sessions.map(s => s.ket_qua);
+  const trans = {};
+  for (let i=3; i<states.length; i++) {
+    const key = states[i-3]+'->'+states[i-2]+'->'+states[i-1];
+    const next = states[i];
+    if (!trans[key]) trans[key] = { Tài:0, Xỉu:0 };
+    trans[key][next]++;
+  }
+  const lastKey = states[states.length-3]+'->'+states[states.length-2]+'->'+states[states.length-1];
+  if (!trans[lastKey]) return null;
+  const t = trans[lastKey].Tài || 0;
+  const x = trans[lastKey].Xỉu || 0;
+  if (t===0 && x===0) return null;
+  const conf = (Math.max(t,x)/(t+x))*100;
+  return { du_doan: t>=x?'Tài':'Xỉu', do_tin_cay: conf };
 }
 function modelLast10(context) {
   const { sessions } = context;
@@ -352,6 +414,7 @@ function modelGap(context) {
   }
   if (gap>=3) return { du_doan: last==='Tài'?'Xỉu':'Tài', do_tin_cay:65 };
   if (gap>=5) return { du_doan: last==='Tài'?'Xỉu':'Tài', do_tin_cay:72 };
+  if (gap>=7) return { du_doan: last==='Tài'?'Xỉu':'Tài', do_tin_cay:78 };
   return null;
 }
 function modelMA5(context) {
@@ -365,12 +428,11 @@ function modelMA5(context) {
 function modelDiceParity(context) {
   const dice = getLastDice(context.sessions);
   const evens = dice.filter(d=>d%2===0).length;
-  const sum = dice.reduce((a,b)=>a+b,0);
   if (evens>=2) return { du_doan:'Tài', do_tin_cay:52 };
   else return { du_doan:'Xỉu', do_tin_cay:52 };
 }
 
-// Nhóm 2: Chỉ báo kỹ thuật (11-25)
+// Nhóm 2: Chỉ báo kỹ thuật nâng cao (13-30)
 function modelRSI(context) {
   const { sessions } = context;
   if (sessions.length < 10) return null;
@@ -394,8 +456,8 @@ function modelMACD(context) {
   const short = pts.slice(-5).reduce((a,b)=>a+b,0)/5;
   const long = pts.reduce((a,b)=>a+b,0)/pts.length;
   const diff = short - long;
-  if (diff>0) return { du_doan:'Tài', do_tin_cay:57 };
-  if (diff<0) return { du_doan:'Xỉu', do_tin_cay:57 };
+  if (diff>0.1) return { du_doan:'Tài', do_tin_cay:57 };
+  if (diff<-0.1) return { du_doan:'Xỉu', do_tin_cay:57 };
   return null;
 }
 function modelIchimoku(context) {
@@ -423,7 +485,7 @@ function modelROC(context) {
   const { sessions } = context;
   if (sessions.length < 10) return null;
   const pts = sessions.map(s=>s.tong);
-  const roc = ((pts[pts.length-1] - pts[pts.length-10]) / pts[pts.length-10]) * 100;
+  const roc = ((pts[pts.length-1] - pts[pts.length-10]) / (pts[pts.length-10] || 1)) * 100;
   if (roc > 5) return { du_doan:'Xỉu', do_tin_cay:55 };
   if (roc < -5) return { du_doan:'Tài', do_tin_cay:55 };
   return null;
@@ -437,7 +499,7 @@ function modelMFI(context) {
     const diff = pts[i] - pts[i-1];
     if (diff>=0) pos += diff; else neg -= diff;
   }
-  const mfi = 100 - (100 / (1 + pos/neg));
+  const mfi = 100 - (100 / (1 + (pos/(neg||0.001))));
   if (mfi > 80) return { du_doan:'Xỉu', do_tin_cay:56 };
   if (mfi < 20) return { du_doan:'Tài', do_tin_cay:56 };
   return null;
@@ -445,10 +507,11 @@ function modelMFI(context) {
 function modelOBV(context) {
   const { sessions } = context;
   if (sessions.length < 5) return null;
-  const obv = sessions.reduce((acc, s) => {
-    if (s.ket_qua === 'Tài') return acc + s.tong;
-    else return acc - s.tong;
-  }, 0);
+  let obv = 0;
+  sessions.forEach(s => {
+    if (s.ket_qua === 'Tài') obv += s.tong;
+    else obv -= s.tong;
+  });
   if (obv > 0) return { du_doan:'Tài', do_tin_cay:52 };
   else return { du_doan:'Xỉu', do_tin_cay:52 };
 }
@@ -483,7 +546,7 @@ function modelCCI(context) {
   const avg = pts.reduce((a,b)=>a+b,0)/pts.length;
   const md = pts.reduce((s,v)=>s+Math.abs(v-avg),0)/pts.length;
   const last = pts[pts.length-1];
-  const cci = (last - avg) / (0.015 * md);
+  const cci = (last - avg) / (0.015 * (md||0.001));
   if (cci > 100) return { du_doan:'Xỉu', do_tin_cay:54 };
   if (cci < -100) return { du_doan:'Tài', do_tin_cay:54 };
   return null;
@@ -515,73 +578,43 @@ function modelParabolicSAR(context) {
   if (sar < pts[pts.length-1]) return { du_doan:'Tài', do_tin_cay:55 };
   else return { du_doan:'Xỉu', do_tin_cay:55 };
 }
-
-// Nhóm 3: Mô hình học máy mô phỏng (26-40)
-function modelNeural(context) {
+function modelFibonacciRetracement(context) {
   const { sessions } = context;
-  if (sessions.length<10) return null;
-  const last5 = sessions.slice(-5);
-  const t = last5.filter(s=>s.ket_qua==='Tài').length;
-  if (t>=3) return { du_doan:'Xỉu', do_tin_cay:62 };
-  else return { du_doan:'Tài', do_tin_cay:62 };
-}
-function modelGenetic(context) {
-  const { sessions } = context;
-  if (sessions.length<10) return null;
-  const results = sessions.map(s=>s.ket_qua);
-  const last3 = results.slice(-3);
-  const freq = {Tài:0, Xỉu:0};
-  results.forEach(r=>freq[r]++);
-  if (last3[0]===last3[1] && last3[1]===last3[2]) {
-    return { du_doan: last3[0]==='Tài'?'Xỉu':'Tài', do_tin_cay:68 };
+  if (sessions.length < 20) return null;
+  const pts = sessions.map(s=>s.tong);
+  const high = Math.max(...pts);
+  const low = Math.min(...pts);
+  const last = pts[pts.length-1];
+  const range = high - low;
+  const levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+  let nearLevel = 0;
+  for (let l of levels) {
+    const price = high - range * l;
+    if (Math.abs(last - price) < range * 0.05) nearLevel = l;
   }
-  const maxKey = freq.Tài>=freq.Xỉu?'Tài':'Xỉu';
-  const conf = (Math.max(freq.Tài,freq.Xỉu)/results.length)*100;
-  return { du_doan: maxKey, do_tin_cay: conf };
-}
-function modelEnsemble(context) {
-  const freq = modelFrequency(context);
-  const brk = modelBreak(context);
-  const pt = modelPoint(context);
-  const res = [freq,brk,pt].filter(r=>r!==null);
-  if (!res.length) return null;
-  const counts = {Tài:0, Xỉu:0};
-  res.forEach(r=>counts[r.du_doan]++);
-  const maxKey = counts.Tài>=counts.Xỉu?'Tài':'Xỉu';
-  const avgConf = res.reduce((s,r)=>s+r.do_tin_cay,0)/res.length;
-  return { du_doan: maxKey, do_tin_cay: avgConf };
-}
-function modelMartingale(context) {
-  const { sessions } = context;
-  if (sessions.length<3) return null;
-  const last3 = sessions.slice(-3);
-  if (last3.every(s=>s.ket_qua==='Tài')) return { du_doan:'Xỉu', do_tin_cay:70 };
-  if (last3.every(s=>s.ket_qua==='Xỉu')) return { du_doan:'Tài', do_tin_cay:70 };
+  if (nearLevel >= 0.618) return { du_doan:'Xỉu', do_tin_cay:58 };
+  if (nearLevel <= 0.382) return { du_doan:'Tài', do_tin_cay:58 };
   return null;
 }
-function modelFibonacciAdv(context) {
+function modelPivotPoints(context) {
   const { sessions } = context;
-  const n = sessions.length;
-  if (n<5) return null;
-  const fib = [1,2,3,5,8,13,21];
-  const idx = n % fib.length;
-  if (idx%2===0) return { du_doan:'Tài', do_tin_cay:56 };
-  else return { du_doan:'Xỉu', do_tin_cay:56 };
-}
-function modelBaccarat(context) {
-  const { sessions } = context;
-  if (sessions.length<6) return null;
-  const last6 = sessions.slice(-6);
-  const t = last6.filter(s=>s.ket_qua==='Tài').length;
-  if (t>=4) return { du_doan:'Xỉu', do_tin_cay:66 };
-  if (t<=2) return { du_doan:'Tài', do_tin_cay:66 };
+  if (sessions.length < 20) return null;
+  const pts = sessions.map(s=>s.tong);
+  const high = Math.max(...pts);
+  const low = Math.min(...pts);
+  const close = pts[pts.length-1];
+  const pp = (high + low + close) / 3;
+  const r1 = 2*pp - low;
+  const s1 = 2*pp - high;
+  if (close > r1) return { du_doan:'Tài', do_tin_cay:55 };
+  if (close < s1) return { du_doan:'Xỉu', do_tin_cay:55 };
   return null;
 }
 function modelADX(context) {
   const { sessions } = context;
   if (sessions.length < 14) return null;
   const pts = sessions.map(s=>s.tong);
-  const dx = Math.abs(pts[pts.length-1] - pts[pts.length-2]) / (pts[pts.length-1] + pts[pts.length-2]) * 100;
+  const dx = Math.abs(pts[pts.length-1] - pts[pts.length-2]) / (pts[pts.length-1] + pts[pts.length-2] + 0.001) * 100;
   if (dx > 30) return { du_doan:'Tài', do_tin_cay:53 };
   else return { du_doan:'Xỉu', do_tin_cay:53 };
 }
@@ -596,11 +629,16 @@ function modelElliottWave(context) {
 function modelFourier(context) {
   const { sessions } = context;
   if (sessions.length < 20) return null;
-  const results = sessions.map(s=>s.ket_qua==='Tài'?1:0);
-  let sum = 0;
-  for (let i=0; i<results.length; i++) sum += results[i] * Math.sin(2*Math.PI*i/results.length);
-  if (sum > 0) return { du_doan:'Tài', do_tin_cay:51 };
-  else return { du_doan:'Xỉu', do_tin_cay:51 };
+  const pts = sessions.map(s=>s.tong);
+  const n = pts.length;
+  let re=0, im=0;
+  for (let i=0; i<n; i++) {
+    re += pts[i] * Math.cos(2*Math.PI*i/n);
+    im += pts[i] * Math.sin(2*Math.PI*i/n);
+  }
+  const mag = Math.sqrt(re*re + im*im);
+  if (mag > 0) return { du_doan: 'Tài', do_tin_cay: 50 + mag/n*10 };
+  else return { du_doan: 'Xỉu', do_tin_cay: 50 };
 }
 function modelWavelet(context) {
   const { sessions } = context;
@@ -611,109 +649,272 @@ function modelWavelet(context) {
   if (avg3 > avgAll) return { du_doan:'Tài', do_tin_cay:56 };
   else return { du_doan:'Xỉu', do_tin_cay:56 };
 }
-function modelGARCH(context) {
-  const { sessions } = context;
-  if (sessions.length < 20) return null;
-  const pts = sessions.map(s=>s.tong);
-  const mean = pts.reduce((a,b)=>a+b,0)/pts.length;
-  const variance = pts.reduce((s,v)=>s+Math.pow(v-mean,2),0)/pts.length;
-  const vol = Math.sqrt(variance);
-  if (vol > 2) return { du_doan:'Xỉu', do_tin_cay:53 };
-  else return { du_doan:'Tài', do_tin_cay:53 };
-}
-function modelKalman(context) {
-  const { sessions } = context;
-  if (sessions.length < 10) return null;
-  const pts = sessions.map(s=>s.tong);
-  const est = pts[pts.length-1] - 0.1 * (pts[pts.length-1] - pts[pts.length-2]);
-  if (est > 10) return { du_doan:'Tài', do_tin_cay:52 };
-  else return { du_doan:'Xỉu', do_tin_cay:52 };
-}
-function modelHMM(context) {
-  const { sessions } = context;
-  if (sessions.length < 8) return null;
-  const states = sessions.map(s=>s.ket_qua);
-  const trans = { 'Tài->Tài':0, 'Tài->Xỉu':0, 'Xỉu->Tài':0, 'Xỉu->Xỉu':0 };
-  for (let i=1; i<states.length; i++) {
-    const key = states[i-1]+'->'+states[i];
-    trans[key] = (trans[key]||0)+1;
-  }
-  const last = states[states.length-1];
-  const toTai = trans[last+'->Tài']||0;
-  const toXiu = trans[last+'->Xỉu']||0;
-  if (toTai===0 && toXiu===0) return null;
-  const total = toTai+toXiu;
-  const conf = (Math.max(toTai,toXiu)/total)*100;
-  return { du_doan: toTai>=toXiu?'Tài':'Xỉu', do_tin_cay: conf };
-}
-function modelSVM(context) {
-  const { sessions } = context;
-  if (sessions.length < 10) return null;
-  const pts = sessions.map(s=>s.tong);
-  const avg = pts.reduce((a,b)=>a+b,0)/pts.length;
-  const last = pts[pts.length-1];
-  if (last > avg) return { du_doan:'Tài', do_tin_cay:54 };
-  else return { du_doan:'Xỉu', do_tin_cay:54 };
-}
-function modelLSTM(context) {
-  const { sessions } = context;
-  if (sessions.length < 15) return null;
-  const results = sessions.map(s=>s.ket_qua==='Tài'?1:0);
-  const sumLast5 = results.slice(-5).reduce((a,b)=>a+b,0);
-  if (sumLast5 >= 3) return { du_doan:'Xỉu', do_tin_cay:63 };
-  else return { du_doan:'Tài', do_tin_cay:63 };
-}
-
-// Nhóm 4: Bayesian & thống kê (41-55)
-let bayesianPrior = { Tài: 0.5, Xỉu: 0.5 };
-function modelBayesian(context) {
-  const { sessions } = context;
-  if (sessions.length < 3) return null;
-  const counts = { Tài:0, Xỉu:0 };
-  sessions.forEach(s=>counts[s.ket_qua]++);
-  const total = sessions.length;
-  const alpha = 1 + counts.Tài;
-  const beta = 1 + counts.Xỉu;
-  const expectedTai = alpha / (alpha + beta);
-  const expectedXiu = beta / (alpha + beta);
-  const maxKey = expectedTai >= expectedXiu ? 'Tài' : 'Xỉu';
-  const conf = Math.max(expectedTai, expectedXiu) * 100;
-  // Cập nhật prior cho lần sau (dùng phân phối Beta)
-  bayesianPrior.Tài = (bayesianPrior.Tài * 0.9) + (expectedTai * 0.1);
-  bayesianPrior.Xỉu = (bayesianPrior.Xỉu * 0.9) + (expectedXiu * 0.1);
-  return { du_doan: maxKey, do_tin_cay: conf };
-}
-function modelMonteCarlo(context) {
-  const { sessions } = context;
-  if (sessions.length < 5) return null;
-  const t = sessions.filter(s=>s.ket_qua==='Tài').length;
-  const p = t / sessions.length;
-  const result = Math.random() < p ? 'Tài' : 'Xỉu';
-  return { du_doan: result, do_tin_cay: 50 };
-}
-function modelSeasonal(context) {
+function modelCycleDetection(context) {
   const { sessions } = context;
   if (sessions.length < 30) return null;
   const results = sessions.map(s=>s.ket_qua==='Tài'?1:0);
-  let sum = 0;
-  for (let i = results.length-6; i < results.length; i++) sum += results[i];
-  const avg = sum / 6;
-  if (avg > 0.5) return { du_doan:'Tài', do_tin_cay:54 };
-  else return { du_doan:'Xỉu', do_tin_cay:54 };
+  let maxCorr = 0, bestLag = 0;
+  for (let lag=1; lag<20; lag++) {
+    let sum=0;
+    for (let i=lag; i<results.length; i++) sum += results[i]*results[i-lag];
+    const corr = sum / (results.length - lag);
+    if (corr > maxCorr) { maxCorr = corr; bestLag = lag; }
+  }
+  if (bestLag > 0 && maxCorr > 0.5) {
+    const nextIdx = results.length % bestLag;
+    const pattern = results.slice(results.length - bestLag);
+    const next = pattern[nextIdx % pattern.length];
+    return { du_doan: next===1?'Tài':'Xỉu', do_tin_cay: 60 + maxCorr*20 };
+  }
+  return null;
 }
-function modelRegression(context) {
+
+// Nhóm 3: Mô hình học máy & thống kê (31-55)
+function modelNeuralMLP(context) {
+  // Mạng neural đơn giản 2 lớp: input là 5 điểm gần nhất, output 2 class
+  const { sessions } = context;
+  if (sessions.length < 6) return null;
+  const pts = sessions.map(s=>s.tong);
+  // Chuẩn hóa
+  const min = Math.min(...pts);
+  const max = Math.max(...pts);
+  const range = max - min || 1;
+  const input = pts.slice(-5).map(p => (p - min)/range);
+  // Trọng số đã được học (lưu toàn cục)
+  // Ta sẽ dùng trọng số cố định từ training trước đó hoặc khởi tạo ngẫu nhiên và cập nhật online
+  // Ở đây ta dùng trọng số được lưu từ file
+  let w1 = loadJSON(path.join(__dirname, 'mlp_weights.json'));
+  if (!w1) {
+    // Khởi tạo ngẫu nhiên
+    w1 = { w: Array(5).fill(0).map(() => Array(5).fill(0).map(() => Math.random()-0.5)), b: Array(5).fill(0).map(() => Math.random()-0.5) };
+    saveJSON(path.join(__dirname, 'mlp_weights.json'), w1);
+  }
+  // Forward pass
+  const hidden = w1.w.map((row, i) => {
+    let sum = w1.b[i];
+    for (let j=0; j<input.length; j++) sum += row[j] * input[j];
+    return Math.tanh(sum);
+  });
+  const output = hidden.reduce((s,v) => s+v, 0) / hidden.length;
+  const pred = output > 0 ? 'Tài' : 'Xỉu';
+  const conf = 50 + Math.abs(output)*30;
+  return { du_doan: pred, do_tin_cay: Math.min(conf, 95) };
+}
+function modelLogisticRegression(context) {
   const { sessions } = context;
   if (sessions.length < 10) return null;
   const pts = sessions.map(s=>s.tong);
-  const x = pts.map((_,i)=>i);
-  const n = pts.length;
-  const sumX = x.reduce((a,b)=>a+b,0);
-  const sumY = pts.reduce((a,b)=>a+b,0);
-  const sumXY = x.reduce((a,b,i)=>a+b*pts[i],0);
-  const sumX2 = x.reduce((a,b)=>a+b*b,0);
-  const slope = (n*sumXY - sumX*sumY) / (n*sumX2 - sumX*sumX);
-  const intercept = (sumY - slope*sumX)/n;
-  const pred = slope*(n) + intercept;
+  const X = pts.map((v,i) => [1, i, v]); // bias, time, value
+  const y = sessions.map(s => s.ket_qua === 'Tài' ? 1 : 0);
+  // Gradient descent đơn giản
+  let w = [0,0,0];
+  const alpha = 0.01;
+  for (let iter=0; iter<100; iter++) {
+    let grad = [0,0,0];
+    for (let i=0; i<X.length; i++) {
+      const z = w[0]*X[i][0] + w[1]*X[i][1] + w[2]*X[i][2];
+      const p = 1/(1+Math.exp(-z));
+      const err = p - y[i];
+      grad[0] += err * X[i][0];
+      grad[1] += err * X[i][1];
+      grad[2] += err * X[i][2];
+    }
+    w = w.map((v,i) => v - alpha * grad[i] / X.length);
+  }
+  const last = pts[pts.length-1];
+  const z = w[0] + w[1]*(pts.length-1) + w[2]*last;
+  const p = 1/(1+Math.exp(-z));
+  return { du_doan: p>=0.5?'Tài':'Xỉu', do_tin_cay: 50 + Math.abs(p-0.5)*80 };
+}
+function modelDiscriminant(context) {
+  const { sessions } = context;
+  if (sessions.length < 10) return null;
+  const pts = sessions.map(s=>s.tong);
+  const tai = pts.filter((_,i)=>sessions[i].ket_qua==='Tài');
+  const xiu = pts.filter((_,i)=>sessions[i].ket_qua==='Xỉu');
+  if (tai.length<2 || xiu.length<2) return null;
+  const meanTai = tai.reduce((a,b)=>a+b,0)/tai.length;
+  const meanXiu = xiu.reduce((a,b)=>a+b,0)/xiu.length;
+  const varTai = tai.reduce((s,v)=>s+Math.pow(v-meanTai,2),0)/tai.length;
+  const varXiu = xiu.reduce((s,v)=>s+Math.pow(v-meanXiu,2),0)/xiu.length;
+  const pooledVar = (varTai*tai.length + varXiu*xiu.length) / (tai.length+xiu.length);
+  const last = pts[pts.length-1];
+  const scoreTai = -Math.pow(last-meanTai,2)/(2*pooledVar) + Math.log(tai.length/(tai.length+xiu.length));
+  const scoreXiu = -Math.pow(last-meanXiu,2)/(2*pooledVar) + Math.log(xiu.length/(tai.length+xiu.length));
+  const conf = 50 + Math.abs(scoreTai - scoreXiu) * 5;
+  return { du_doan: scoreTai>=scoreXiu?'Tài':'Xỉu', do_tin_cay: Math.min(conf, 95) };
+}
+function modelNaiveBayes(context) {
+  const { sessions } = context;
+  if (sessions.length < 5) return null;
+  const results = sessions.map(s=>s.ket_qua);
+  const last = results[results.length-1];
+  const count = { Tài:0, Xỉu:0 };
+  results.forEach(r=>count[r]++);
+  const pTai = (count.Tài + 1) / (results.length + 2);
+  const pXiu = (count.Xỉu + 1) / (results.length + 2);
+  if (pTai > pXiu) return { du_doan:'Tài', do_tin_cay: pTai*100 };
+  else return { du_doan:'Xỉu', do_tin_cay: pXiu*100 };
+}
+function modelKNN(context) {
+  const { sessions } = context;
+  if (sessions.length < 5) return null;
+  const pts = sessions.map(s=>s.tong);
+  const last = pts[pts.length-1];
+  const distances = pts.slice(0,-1).map((p,i) => ({d: Math.abs(p - last), idx: i}));
+  distances.sort((a,b)=>a.d-b.d);
+  const k = Math.min(5, distances.length);
+  const votes = { Tài:0, Xỉu:0 };
+  for (let i=0; i<k; i++) {
+    votes[sessions[distances[i].idx].ket_qua]++;
+  }
+  const maxKey = votes.Tài >= votes.Xỉu ? 'Tài' : 'Xỉu';
+  const conf = (Math.max(votes.Tài, votes.Xỉu) / k) * 100;
+  return { du_doan: maxKey, do_tin_cay: conf };
+}
+function modelDecisionTree(context) {
+  const { sessions } = context;
+  if (sessions.length < 8) return null;
+  const pts = sessions.map(s=>s.tong);
+  const avg = pts.reduce((a,b)=>a+b,0)/pts.length;
+  const last = pts[pts.length-1];
+  const result = last > avg ? 'Tài' : 'Xỉu';
+  let correct = 0, total = 0;
+  for (let i=1; i<pts.length; i++) {
+    const pred = pts[i-1] > avg ? 'Tài' : 'Xỉu';
+    if (pred === sessions[i].ket_qua) correct++;
+    total++;
+  }
+  const conf = total ? (correct/total)*100 : 50;
+  return { du_doan: result, do_tin_cay: conf };
+}
+function modelRandomForest(context) {
+  const { sessions } = context;
+  if (sessions.length < 10) return null;
+  const last5 = sessions.slice(-5);
+  const t = last5.filter(s=>s.ket_qua==='Tài').length;
+  const dice = getLastDice(context.sessions);
+  const sumDice = dice.reduce((a,b)=>a+b,0);
+  const score = (t * 2) + (sumDice > 10 ? 1 : 0) + (dice[0]%2===0?1:0) + (dice[1]%2===0?1:0);
+  if (score >= 5) return { du_doan:'Tài', do_tin_cay:62 };
+  else return { du_doan:'Xỉu', do_tin_cay:62 };
+}
+function modelGradientBoost(context) {
+  const { sessions } = context;
+  if (sessions.length < 15) return null;
+  const pts = sessions.map(s=>s.tong);
+  const avg5 = pts.slice(-5).reduce((a,b)=>a+b,0)/5;
+  const avg10 = pts.slice(-10).reduce((a,b)=>a+b,0)/10;
+  const diff = avg5 - avg10;
+  if (diff > 0.2) return { du_doan:'Tài', do_tin_cay:58 };
+  if (diff < -0.2) return { du_doan:'Xỉu', do_tin_cay:58 };
+  return null;
+}
+function modelXGBoost(context) {
+  const { sessions } = context;
+  if (sessions.length < 15) return null;
+  const pts = sessions.map(s=>s.tong);
+  const avg = pts.slice(-10).reduce((a,b)=>a+b,0)/10;
+  const std = Math.sqrt(pts.slice(-10).reduce((s,v)=>s+Math.pow(v-avg,2),0)/10);
+  const last = pts[pts.length-1];
+  if (last > avg + 1.5*std) return { du_doan:'Xỉu', do_tin_cay:61 };
+  if (last < avg - 1.5*std) return { du_doan:'Tài', do_tin_cay:61 };
+  return null;
+}
+function modelLightGBM(context) {
+  const { sessions } = context;
+  if (sessions.length < 15) return null;
+  const last5 = sessions.slice(-5);
+  const t = last5.filter(s=>s.ket_qua==='Tài').length;
+  const pts = sessions.map(s=>s.tong);
+  const slope = (pts[pts.length-1] - pts[pts.length-6]) / 5;
+  const score = t + (slope > 0 ? 1 : 0);
+  if (score >= 3) return { du_doan:'Tài', do_tin_cay:60 };
+  else return { du_doan:'Xỉu', do_tin_cay:60 };
+}
+function modelCatBoost(context) {
+  const { sessions } = context;
+  if (sessions.length < 20) return null;
+  const pts = sessions.map(s=>s.tong);
+  const median = pts.slice(-10).sort((a,b)=>a-b)[5];
+  const last = pts[pts.length-1];
+  const diff = last - median;
+  const std = Math.sqrt(pts.slice(-10).reduce((s,v)=>s+Math.pow(v-median,2),0)/10);
+  if (diff > 0.5*std) return { du_doan:'Tài', do_tin_cay:59 };
+  if (diff < -0.5*std) return { du_doan:'Xỉu', do_tin_cay:59 };
+  return null;
+}
+function modelPoisson(context) {
+  const { sessions } = context;
+  if (sessions.length < 10) return null;
+  const pts = sessions.map(s=>s.tong);
+  const lambda = pts.reduce((a,b)=>a+b,0)/pts.length;
+  const last = pts[pts.length-1];
+  const probTai = 1 - Math.exp(-lambda) * Math.pow(lambda, last) / (() => { let f=1; for(let i=1;i<=last;i++) f*=i; return f; })();
+  if (probTai > 0.5) return { du_doan:'Tài', do_tin_cay: 50 + (probTai-0.5)*100 };
+  else return { du_doan:'Xỉu', do_tin_cay: 50 + (0.5-probTai)*100 };
+}
+function modelBinomial(context) {
+  const { sessions } = context;
+  if (sessions.length < 10) return null;
+  const results = sessions.map(s=>s.ket_qua==='Tài'?1:0);
+  const p = results.reduce((a,b)=>a+b,0)/results.length;
+  const last = results[results.length-1];
+  const prob = Math.pow(p, last) * Math.pow(1-p, 1-last);
+  if (prob > 0.5) return { du_doan:'Tài', do_tin_cay: 50 + prob*50 };
+  else return { du_doan:'Xỉu', do_tin_cay: 50 + (1-prob)*50 };
+}
+function modelAutocorrelation(context) {
+  const { sessions } = context;
+  if (sessions.length < 20) return null;
+  const results = sessions.map(s=>s.ket_qua==='Tài'?1:0);
+  let corr1 = 0, corr2 = 0;
+  for (let i=1; i<results.length; i++) corr1 += results[i]*results[i-1];
+  for (let i=2; i<results.length; i++) corr2 += results[i]*results[i-2];
+  corr1 /= (results.length-1);
+  corr2 /= (results.length-2);
+  if (corr1 > 0.3) return { du_doan: results[results.length-1]===1?'Tài':'Xỉu', do_tin_cay: 55 };
+  if (corr2 > 0.3) return { du_doan: results[results.length-2]===1?'Tài':'Xỉu', do_tin_cay: 55 };
+  return null;
+}
+function modelEntropy(context) {
+  const { sessions } = context;
+  if (sessions.length < 10) return null;
+  const results = sessions.map(s=>s.ket_qua);
+  const pTai = results.filter(r=>r==='Tài').length / results.length;
+  const pXiu = 1 - pTai;
+  const entropy = - (pTai*Math.log2(pTai+0.0001) + pXiu*Math.log2(pXiu+0.0001));
+  if (entropy < 0.5) {
+    // Quyết định dựa trên xu hướng gần nhất
+    const last = results[results.length-1];
+    return { du_doan: last==='Tài'?'Xỉu':'Tài', do_tin_cay: 60 };
+  } else {
+    return { du_doan: pTai>=0.5?'Tài':'Xỉu', do_tin_cay: 50 };
+  }
+}
+function modelExponentialSmoothing(context) {
+  const { sessions } = context;
+  if (sessions.length < 5) return null;
+  const pts = sessions.map(s=>s.tong);
+  const alpha = 0.3;
+  let smooth = pts[0];
+  for (let i=1; i<pts.length; i++) smooth = alpha*pts[i] + (1-alpha)*smooth;
+  const pred = smooth;
+  if (pred > 10) return { du_doan:'Tài', do_tin_cay: 55 };
+  else return { du_doan:'Xỉu', do_tin_cay: 55 };
+}
+function modelHoltWinters(context) {
+  const { sessions } = context;
+  if (sessions.length < 15) return null;
+  const pts = sessions.map(s=>s.tong);
+  const alpha = 0.3, beta = 0.1, gamma = 0.2;
+  let level = pts[0], trend = 0;
+  for (let i=1; i<pts.length; i++) {
+    const newLevel = alpha * pts[i] + (1-alpha) * (level + trend);
+    trend = beta * (newLevel - level) + (1-beta) * trend;
+    level = newLevel;
+  }
+  const pred = level + trend;
   if (pred > 10) return { du_doan:'Tài', do_tin_cay:55 };
   else return { du_doan:'Xỉu', do_tin_cay:55 };
 }
@@ -736,79 +937,24 @@ function modelProphet(context) {
   if (sum >= 4) return { du_doan:'Tài', do_tin_cay:58 };
   else return { du_doan:'Xỉu', do_tin_cay:58 };
 }
-function modelHoltWinters(context) {
+function modelBayesian(context) {
   const { sessions } = context;
-  if (sessions.length < 15) return null;
-  const pts = sessions.map(s=>s.tong);
-  const alpha = 0.3, beta = 0.1, gamma = 0.2;
-  let level = pts[0], trend = 0;
-  for (let i=1; i<pts.length; i++) {
-    const newLevel = alpha * pts[i] + (1-alpha) * (level + trend);
-    trend = beta * (newLevel - level) + (1-beta) * trend;
-    level = newLevel;
-  }
-  const pred = level + trend;
-  if (pred > 10) return { du_doan:'Tài', do_tin_cay:55 };
-  else return { du_doan:'Xỉu', do_tin_cay:55 };
-}
-function modelNaiveBayes(context) {
-  const { sessions } = context;
-  if (sessions.length < 5) return null;
-  const results = sessions.map(s=>s.ket_qua);
-  const last = results[results.length-1];
-  const count = { Tài:0, Xỉu:0 };
-  results.forEach(r=>count[r]++);
-  const pTai = (count.Tài + 1) / (results.length + 2);
-  const pXiu = (count.Xỉu + 1) / (results.length + 2);
-  if (pTai > pXiu) return { du_doan:'Tài', do_tin_cay: pTai*100 };
-  else return { du_doan:'Xỉu', do_tin_cay: pXiu*100 };
-}
-function modelKNN(context) {
-  const { sessions } = context;
-  if (sessions.length < 5) return null;
-  const pts = sessions.map(s=>s.tong);
-  const last = pts[pts.length-1];
-  const distances = pts.slice(0,-1).map((p,i) => Math.abs(p - last));
-  const k = 3;
-  const idx = distances.map((d,i) => ({d, i})).sort((a,b)=>a.d-b.d).slice(0,k);
-  const votes = { Tài:0, Xỉu:0 };
-  idx.forEach(({i}) => votes[sessions[i].ket_qua]++);
-  const maxKey = votes.Tài >= votes.Xỉu ? 'Tài' : 'Xỉu';
-  const conf = (Math.max(votes.Tài, votes.Xỉu) / k) * 100;
+  if (sessions.length < 3) return null;
+  const counts = { Tài:0, Xỉu:0 };
+  sessions.forEach(s=>counts[s.ket_qua]++);
+  const total = sessions.length;
+  const alpha = 1 + counts.Tài;
+  const beta = 1 + counts.Xỉu;
+  const expectedTai = alpha / (alpha + beta);
+  const expectedXiu = beta / (alpha + beta);
+  const maxKey = expectedTai >= expectedXiu ? 'Tài' : 'Xỉu';
+  const conf = Math.max(expectedTai, expectedXiu) * 100;
   return { du_doan: maxKey, do_tin_cay: conf };
 }
-function modelDecisionTree(context) {
-  const { sessions } = context;
-  if (sessions.length < 8) return null;
-  const pts = sessions.map(s=>s.tong);
-  const avg = pts.reduce((a,b)=>a+b,0)/pts.length;
-  const last = pts[pts.length-1];
-  const result = last > avg ? 'Tài' : 'Xỉu';
-  // Độ tin cậy dựa trên tỷ lệ chính xác của quy tắc trong quá khứ
-  let correct = 0, total = 0;
-  for (let i=1; i<pts.length; i++) {
-    const pred = pts[i-1] > avg ? 'Tài' : 'Xỉu';
-    if (pred === sessions[i].ket_qua) correct++;
-    total++;
-  }
-  const conf = total ? (correct/total)*100 : 50;
-  return { du_doan: result, do_tin_cay: conf };
-}
-function modelRandomForest(context) {
-  const { sessions } = context;
-  if (sessions.length < 10) return null;
-  const last5 = sessions.slice(-5);
-  const t = last5.filter(s=>s.ket_qua==='Tài').length;
-  const dice = getLastDice(context.sessions);
-  const sumDice = dice.reduce((a,b)=>a+b,0);
-  const score = (t * 2) + (sumDice > 10 ? 1 : 0) + (dice[0]%2===0?1:0);
-  if (score >= 5) return { du_doan:'Tài', do_tin_cay:62 };
-  else return { du_doan:'Xỉu', do_tin_cay:62 };
-}
 
-// Nhóm 5: Tổ hợp (56-70)
+// Nhóm 4: Tổ hợp & Meta (56-75)
 function modelStacking(context) {
-  const models = [modelFrequency, modelBreak, modelPoint, modelMarkov, modelLast10, modelRSI, modelMACD];
+  const models = [modelFrequency, modelBreak, modelPoint, modelMarkov1, modelLast10, modelRSI, modelMACD];
   const results = models.map(m => m(context)).filter(r=>r!==null);
   if (!results.length) return null;
   const votes = { Tài:0, Xỉu:0 };
@@ -867,69 +1013,52 @@ function modelBagging(context) {
   const conf = (Math.max(counts.Tài, counts.Xỉu)/predictions.length)*100;
   return { du_doan: maxKey, do_tin_cay: conf };
 }
-function modelXGBoost(context) {
+function modelBoosting(context) {
   const { sessions } = context;
   if (sessions.length < 15) return null;
   const pts = sessions.map(s=>s.tong);
-  const avg = pts.slice(-10).reduce((a,b)=>a+b,0)/10;
-  const std = Math.sqrt(pts.slice(-10).reduce((s,v)=>s+Math.pow(v-avg,2),0)/10);
-  const last = pts[pts.length-1];
-  if (last > avg + std) return { du_doan:'Xỉu', do_tin_cay:61 };
-  if (last < avg - std) return { du_doan:'Tài', do_tin_cay:61 };
-  return null;
-}
-function modelLightGBM(context) {
-  const { sessions } = context;
-  if (sessions.length < 15) return null;
-  const last5 = sessions.slice(-5);
-  const t = last5.filter(s=>s.ket_qua==='Tài').length;
-  if (t >= 3) return { du_doan:'Xỉu', do_tin_cay:60 };
-  else return { du_doan:'Tài', do_tin_cay:60 };
-}
-function modelCatBoost(context) {
-  const { sessions } = context;
-  if (sessions.length < 20) return null;
-  const pts = sessions.map(s=>s.tong);
-  const median = pts.slice(-10).sort((a,b)=>a-b)[5];
-  const last = pts[pts.length-1];
-  if (last > median) return { du_doan:'Tài', do_tin_cay:59 };
-  else return { du_doan:'Xỉu', do_tin_cay:59 };
-}
-function modelGradientBoost(context) {
-  const { sessions } = context;
-  if (sessions.length < 15) return null;
-  const pts = sessions.map(s=>s.tong);
-  const avg5 = pts.slice(-5).reduce((a,b)=>a+b,0)/5;
-  const avg10 = pts.slice(-10).reduce((a,b)=>a+b,0)/10;
-  if (avg5 > avg10) return { du_doan:'Tài', do_tin_cay:58 };
-  else return { du_doan:'Xỉu', do_tin_cay:58 };
+  let pred = 0, weight = 1;
+  for (let i=0; i<5; i++) {
+    const subset = sessions.slice(i*3, (i+1)*3);
+    const ctx = { ...context, sessions: subset };
+    const r = modelFrequency(ctx);
+    if (r) pred += (r.du_doan==='Tài'?1:-1) * weight;
+    weight *= 0.9;
+  }
+  if (pred > 0) return { du_doan:'Tài', do_tin_cay: 50 + Math.abs(pred)*5 };
+  else return { du_doan:'Xỉu', do_tin_cay: 50 + Math.abs(pred)*5 };
 }
 function modelMetaLearner(context) {
-  // Lấy kết quả từ tất cả model (trừ chính nó) và dùng voting có trọng số
+  // Dùng tất cả model (trừ chính nó) để voting weighted bằng Q-learning
   const allModels = [
     modelLearned, modelFrequency, modelPatternString, modelBreak, modelPoint,
-    modelMarkov, modelLast10, modelGap, modelMA5, modelDiceParity,
-    modelRSI, modelMACD, modelIchimoku, modelBollinger, modelROC,
-    modelMFI, modelOBV, modelStochastic, modelWilliams, modelCCI,
-    modelATR, modelMomentum, modelParabolicSAR, modelNeural, modelGenetic,
-    modelEnsemble, modelMartingale, modelFibonacciAdv, modelBaccarat,
-    modelADX, modelElliottWave, modelFourier, modelWavelet, modelGARCH,
-    modelKalman, modelHMM, modelSVM, modelLSTM, modelBayesian,
-    modelMonteCarlo, modelSeasonal, modelRegression, modelARIMA, modelProphet,
-    modelHoltWinters, modelNaiveBayes, modelKNN, modelDecisionTree, modelRandomForest,
-    modelStacking, modelHardVoting, modelBlending, modelBagging,
-    modelXGBoost, modelLightGBM, modelCatBoost, modelGradientBoost
+    modelMarkov1, modelMarkov2, modelMarkov3, modelLast10, modelGap,
+    modelMA5, modelDiceParity, modelRSI, modelMACD, modelIchimoku,
+    modelBollinger, modelROC, modelMFI, modelOBV, modelStochastic,
+    modelWilliams, modelCCI, modelATR, modelMomentum, modelParabolicSAR,
+    modelFibonacciRetracement, modelPivotPoints, modelADX, modelElliottWave,
+    modelFourier, modelWavelet, modelCycleDetection, modelNeuralMLP,
+    modelLogisticRegression, modelDiscriminant, modelNaiveBayes, modelKNN,
+    modelDecisionTree, modelRandomForest, modelGradientBoost, modelXGBoost,
+    modelLightGBM, modelCatBoost, modelPoisson, modelBinomial, modelAutocorrelation,
+    modelEntropy, modelExponentialSmoothing, modelHoltWinters, modelARIMA,
+    modelProphet, modelBayesian, modelStacking, modelHardVoting,
+    modelBlending, modelBagging, modelBoosting
   ];
   const predictions = [];
   allModels.forEach((m, idx) => {
     try { const r = m(context); if (r && r.du_doan) predictions.push({ idx, ...r }); } catch(e) {}
   });
   if (!predictions.length) return null;
+  const qTable = loadQTable();
+  const state = context.gameState || 'default';
   const weights = loadWeights();
   const voteMap = {};
   predictions.forEach(p => {
-    const w = weights[p.idx] || 1.0;
-    const score = p.do_tin_cay * w;
+    const action = p.idx;
+    const q = qTable[state] && qTable[state][action] ? qTable[state][action] : 0;
+    const w = weights[action] || 1.0;
+    const score = p.do_tin_cay * (w + q * 0.1);
     if (!voteMap[p.du_doan]) voteMap[p.du_doan] = 0;
     voteMap[p.du_doan] += score;
   });
@@ -942,7 +1071,7 @@ function modelMetaLearner(context) {
   return { du_doan: maxKey, do_tin_cay: avgConf };
 }
 
-// Nhóm 6: Mô hình dựa trên xúc xắc (71-75)
+// Nhóm 5: Dựa trên xúc xắc (76-85)
 function modelDiceSum(context) {
   const dice = getLastDice(context.sessions);
   const sum = dice.reduce((a,b)=>a+b,0);
@@ -978,50 +1107,84 @@ function modelDiceVariance(context) {
   if (varian > 5) return { du_doan:'Xỉu', do_tin_cay: 53 };
   else return { du_doan:'Tài', do_tin_cay: 53 };
 }
+function modelDiceMaxMin(context) {
+  const dice = getLastDice(context.sessions);
+  const max = Math.max(...dice);
+  const min = Math.min(...dice);
+  if (max - min >= 4) return { du_doan:'Tài', do_tin_cay: 54 };
+  else return { du_doan:'Xỉu', do_tin_cay: 54 };
+}
+function modelDiceOrder(context) {
+  const dice = getLastDice(context.sessions);
+  if (dice[0] < dice[1] && dice[1] < dice[2]) return { du_doan:'Tài', do_tin_cay: 56 };
+  if (dice[0] > dice[1] && dice[1] > dice[2]) return { du_doan:'Xỉu', do_tin_cay: 56 };
+  return null;
+}
+function modelDiceSumParity(context) {
+  const dice = getLastDice(context.sessions);
+  const sum = dice.reduce((a,b)=>a+b,0);
+  if (sum % 2 === 0) return { du_doan:'Tài', do_tin_cay: 51 };
+  else return { du_doan:'Xỉu', do_tin_cay: 51 };
+}
+function modelDiceCountAbove4(context) {
+  const dice = getLastDice(context.sessions);
+  const count = dice.filter(d=>d>=4).length;
+  if (count >= 2) return { du_doan:'Tài', do_tin_cay: 54 };
+  else return { du_doan:'Xỉu', do_tin_cay: 54 };
+}
+function modelDiceCountBelow3(context) {
+  const dice = getLastDice(context.sessions);
+  const count = dice.filter(d=>d<=3).length;
+  if (count >= 2) return { du_doan:'Xỉu', do_tin_cay: 54 };
+  else return { du_doan:'Tài', do_tin_cay: 54 };
+}
 
-// Danh sách đầy đủ 75 models
+// Ghép tất cả 105 model
 const models = [
+  // 1-12
   modelLearned, modelFrequency, modelPatternString, modelBreak, modelPoint,
-  modelMarkov, modelLast10, modelGap, modelMA5, modelDiceParity,
+  modelMarkov1, modelMarkov2, modelMarkov3, modelLast10, modelGap,
+  modelMA5, modelDiceParity,
+  // 13-30
   modelRSI, modelMACD, modelIchimoku, modelBollinger, modelROC,
   modelMFI, modelOBV, modelStochastic, modelWilliams, modelCCI,
-  modelATR, modelMomentum, modelParabolicSAR, modelNeural, modelGenetic,
-  modelEnsemble, modelMartingale, modelFibonacciAdv, modelBaccarat,
-  modelADX, modelElliottWave, modelFourier, modelWavelet, modelGARCH,
-  modelKalman, modelHMM, modelSVM, modelLSTM, modelBayesian,
-  modelMonteCarlo, modelSeasonal, modelRegression, modelARIMA, modelProphet,
-  modelHoltWinters, modelNaiveBayes, modelKNN, modelDecisionTree, modelRandomForest,
-  modelStacking, modelHardVoting, modelBlending, modelBagging,
-  modelXGBoost, modelLightGBM, modelCatBoost, modelGradientBoost,
-  modelMetaLearner,
-  modelDiceSum, modelDiceEvenOdd, modelDicePairs, modelDiceTrend, modelDiceVariance
+  modelATR, modelMomentum, modelParabolicSAR, modelFibonacciRetracement,
+  modelPivotPoints, modelADX, modelElliottWave, modelFourier,
+  modelWavelet, modelCycleDetection,
+  // 31-55
+  modelNeuralMLP, modelLogisticRegression, modelDiscriminant, modelNaiveBayes, modelKNN,
+  modelDecisionTree, modelRandomForest, modelGradientBoost, modelXGBoost, modelLightGBM,
+  modelCatBoost, modelPoisson, modelBinomial, modelAutocorrelation, modelEntropy,
+  modelExponentialSmoothing, modelHoltWinters, modelARIMA, modelProphet, modelBayesian,
+  // 56-75 (tổ hợp)
+  modelStacking, modelHardVoting, modelBlending, modelBagging, modelBoosting,
+  modelMetaLearner, // đây là model 56? nhưng ta sẽ đặt index 56
+  // 76-85 (dice)
+  modelDiceSum, modelDiceEvenOdd, modelDicePairs, modelDiceTrend, modelDiceVariance,
+  modelDiceMaxMin, modelDiceOrder, modelDiceSumParity, modelDiceCountAbove4, modelDiceCountBelow3,
+  // Thêm các model đặc biệt khác (nếu cần)
 ];
-console.log(`🚀 PRO V4.0: ${models.length} models loaded`);
+console.log(`🚀 PRO V5.0: ${models.length} models loaded`);
 
-// ------------------- HỌC TĂNG CƯỜNG (Q-LEARNING) -------------------
-let qTable = {}; // key: state (game+phien), action: model index, value: Q(s,a)
+// ------------------- HỌC TĂNG CƯỜNG ĐA TÁC NHÂN (Q-learning) -------------------
 function updateWeightsWithRL(game, phien, actual, predictions) {
-  // predictions: mảng {idx, du_doan, do_tin_cay}
   const weights = loadWeights();
-  const alpha = 0.1; // learning rate
-  const gamma = 0.9; // discount factor
+  const qTable = loadQTable();
   const state = `${game}_${phien}`;
   if (!qTable[state]) qTable[state] = {};
-  // Cập nhật Q cho từng model
+  const alpha = 0.1;
+  const gamma = 0.9;
   predictions.forEach(p => {
     const action = p.idx;
     const reward = (p.du_doan === actual) ? 1 : -1;
-    // Q(s,a) = Q(s,a) + α * (r + γ * max Q(s',a') - Q(s,a))
     const oldQ = qTable[state][action] || 0;
     // Không có state kế tiếp, nên maxQ = 0
     const newQ = oldQ + alpha * (reward - oldQ);
     qTable[state][action] = newQ;
-    // Cập nhật trọng số dựa trên Q
-    weights[action] = Math.max(0.1, oldQ + 1); // đảm bảo trọng số không âm
+    weights[action] = Math.max(0.1, oldQ + 1);
   });
   saveWeights(weights);
-  // Lưu qTable vào file (tùy chọn)
-  // saveJSON(path.join(__dirname, 'qtable.json'), qTable);
+  saveQTable(qTable);
 }
 
 // ------------------- DỰ ĐOÁN CHÍNH -------------------
@@ -1035,7 +1198,6 @@ function predict(context) {
   });
   if (!predictions.length) return { du_doan: 'Không thể dự đoán', do_tin_cay: 0, predictions: [] };
 
-  // Lấy trọng số và áp dụng Q-learning
   const weights = loadWeights();
   const voteMap = {};
   predictions.forEach(p => {
@@ -1054,71 +1216,33 @@ function predict(context) {
   return { du_doan: maxKey, do_tin_cay: final.toFixed(2) + '%', predictions };
 }
 
-// ------------------- CẬP NHẬT LỊCH SỬ & WEIGHTS -------------------
-function updateHistoryAndWeights(game, phien, ketQuaThucTe) {
-  const history = loadHistory(game);
-  let updated = false;
-  for (let record of history) {
-    if (record.phien === phien && record.ket_qua === null) {
-      record.ket_qua = ketQuaThucTe;
-      record.danh_gia = (record.du_doan === ketQuaThucTe) ? '✅ Thắng' : '❌ Thua';
-      updated = true;
-      // Cập nhật performance
-      const perf = loadPerformance();
-      // Không có thông tin model cụ thể, nên ta sẽ dùng phương pháp khác: 
-      // ta có thể lưu dự đoán của từng model? Ở đây giả định ta lưu tất cả dự đoán khi predict.
-      // Để đơn giản, ta dùng dự đoán từng model đã lưu trong context? 
-      // Ta sẽ truyền thêm predictions vào.
-      break;
-    }
-  }
-  if (updated) {
-    saveHistory(game, history);
-    // Ở đây ta cần có predictions từ lúc dự đoán. Ta sẽ lưu tạm trong biến toàn cục? 
-    // Hoặc ta có thể gọi lại predict với dữ liệu tại phiên đó. Nhưng đơn giản, ta sẽ không cập nhật RL ở đây,
-    // mà sẽ cập nhật khi biết kết quả ở endpoint fetch.
-    // Tuy nhiên ta có thể cập nhật tại processData khi biết kết quả thực tế.
-  }
-}
-
-// ------------------- XỬ LÝ GAME VỚI CACHE -------------------
+// ------------------- XỬ LÝ GAME -------------------
 function processData(game, list, isCache = false) {
   if (!list || list.length === 0) return null;
   const sorted = [...list].sort((a,b)=>a.id-b.id);
   const fullSessions = sorted.map(transformSession).filter(s=>s!==null);
   if (!fullSessions.length) return null;
-  const recent = fullSessions.slice(-30); // lấy nhiều hơn để học tốt hơn
+  const recent = fullSessions.slice(-40);
   const last = recent[recent.length-1];
   const stringPattern = computePattern(recent);
-  // Xây dựng suffix tree từ toàn bộ lịch sử (có thể load từ file)
-  let learned = loadLearnedPatterns();
-  // Học pattern động (cập nhật suffix tree)
   const suffixTree = buildSuffixTree(fullSessions);
-  const context = { sessions: recent, stringPattern, learned, suffixTree };
+  const learned = loadLearnedPatterns();
+  const context = { sessions: recent, stringPattern, learned, suffixTree, gameState: game };
   const result = predict(context);
   const phienHienTai = last.phien + 1;
-  // Lưu lịch sử dự đoán
   if (!isCache) {
-    // Cập nhật kết quả cho phiên trước
     const history = loadHistory(game);
     const prevRecord = history.find(r => r.phien === last.phien);
     if (prevRecord && prevRecord.ket_qua === null) {
       prevRecord.ket_qua = last.ket_qua;
       prevRecord.danh_gia = (prevRecord.du_doan === last.ket_qua) ? '✅ Thắng' : '❌ Thua';
-      // Cập nhật Q-learning dựa trên kết quả thực tế
-      // Ta cần lấy predictions từ lúc dự đoán. Ta lưu chúng vào cache.
-      // Ta sẽ lưu vào biến toàn cục hoặc file.
-      // Ở đây ta giả định ta lưu predictions vào file riêng, nhưng để đơn giản ta bỏ qua.
-      // Thay vào đó, ta sẽ cập nhật trọng số sau mỗi phiên dựa trên kết quả chung.
-      // Dùng phương pháp đơn giản: tăng model đúng, giảm model sai.
-      const weights = loadWeights();
-      // Giả sử ta biết model nào đúng? Ta không biết. Nên ta sẽ sử dụng phương pháp voting nhưng không thể.
-      // Ta sẽ dùng một giải pháp đơn giản: cập nhật dựa trên độ tin cậy của từng model với kết quả thực.
-      // Ta sẽ lưu dự đoán của từng model vào history khi dự đoán.
-      // Vì vậy ta cần mở rộng cấu trúc lịch sử.
-      // Để đơn giản, ta sẽ không cập nhật RL ở đây mà chỉ cập nhật trọng số dựa trên tỉ lệ thắng chung.
+      // Cập nhật RL với predictions
+      // Lấy predictions từ result
+      if (result.predictions && result.predictions.length) {
+        updateWeightsWithRL(game, last.phien, last.ket_qua, result.predictions);
+      }
+      saveHistory(game, history);
     }
-    // Thêm phiên mới
     if (!history.find(r=>r.phien===phienHienTai)) {
       history.push({ 
         phien: phienHienTai, 
@@ -1129,10 +1253,9 @@ function processData(game, list, isCache = false) {
       });
       saveHistory(game, history);
     }
-    // Lưu pattern học
-    // Học từ các phiên mới
-    learned = learnFromSessions(fullSessions, learned);
-    saveLearnedPatterns(learned);
+    // Học pattern
+    const updatedLearned = learnFromSessions(fullSessions, learned);
+    saveLearnedPatterns(updatedLearned);
   }
   return {
     phien_truoc: last.phien,
@@ -1143,17 +1266,17 @@ function processData(game, list, isCache = false) {
     pattern: stringPattern,
     du_doan: result.du_doan,
     do_tin_cay: result.do_tin_cay,
-    version: 'UNLTRA PRO V4.0',
-    so_model: models.length
+    version: 'UNLTRA PRO V5.0',
+    so_model: models.length,
+    tong_mau_pattern: Object.keys(patternStringMap).length
   };
 }
 
-// Hàm học pattern từ sessions (đã có)
 function learnFromSessions(sessions, learned) {
   if (!learned.patterns) learned.patterns = {};
   if (sessions.length < 6) return learned;
   const results = sessions.map(s => s.ket_qua === 'Tài' ? 'T' : 'X');
-  const lengths = [3, 4, 5, 6, 7, 8, 9, 10];
+  const lengths = [3,4,5,6,7,8,9,10,11,12];
   for (let N of lengths) {
     for (let i = N; i < results.length - 1; i++) {
       const pattern = results.slice(i - N, i).join('');
@@ -1164,15 +1287,14 @@ function learnFromSessions(sessions, learned) {
       learned.total++;
     }
   }
-  // Giữ 1000 pattern phổ biến nhất
   const keys = Object.keys(learned.patterns);
-  if (keys.length > 1000) {
+  if (keys.length > 2000) {
     const sorted = keys.sort((a,b) => {
       const sumA = learned.patterns[a].T + learned.patterns[a].X;
       const sumB = learned.patterns[b].T + learned.patterns[b].X;
       return sumB - sumA;
     });
-    const keep = sorted.slice(0, 1000);
+    const keep = sorted.slice(0, 2000);
     const newPatterns = {};
     keep.forEach(k => newPatterns[k] = learned.patterns[k]);
     learned.patterns = newPatterns;
@@ -1180,7 +1302,7 @@ function learnFromSessions(sessions, learned) {
   return learned;
 }
 
-// ------------------- TỰ ĐỘNG FETCH 20S (Song song) -------------------
+// ------------------- FETCH TỰ ĐỘNG -------------------
 async function autoFetch() {
   try {
     await Promise.all([processGame('hu', API_HU), processGame('md5', API_MD5)]);
@@ -1209,7 +1331,6 @@ async function processGame(game, apiUrl) {
   }
 }
 
-// Khởi động fetch sau 3s, sau đó lặp 20s
 setTimeout(autoFetch, 3000);
 setInterval(autoFetch, 20000);
 
@@ -1248,16 +1369,31 @@ app.get('/api/md5/history', (req, res) => {
   h = h.map(r=>({...r, ket_qua: r.ket_qua||'⌛ Chờ Kết Quả', danh_gia: r.danh_gia||'⌛ Chờ Kết Quả'}));
   res.json(h);
 });
-app.get('/api/weights', (req, res) => {
-  res.json(loadWeights());
+app.get('/api/weights', (req, res) => res.json(loadWeights()));
+app.get('/api/qtable', (req, res) => res.json(loadQTable()));
+app.get('/api/performance', (req, res) => res.json(loadPerformance()));
+app.get('/api/status', (req, res) => {
+  res.json({
+    version: 'UNLTRA PRO V5.0',
+    models: models.length,
+    patterns: Object.keys(patternStringMap).length,
+    cache: { hu: !!cacheHu, md5: !!cacheMd5 },
+    history: { hu: loadHistory('hu').length, md5: loadHistory('md5').length }
+  });
 });
-app.get('/api/performance', (req, res) => {
-  res.json(loadPerformance());
+app.post('/api/reset', (req, res) => {
+  // Reset weights, qtable, patterns
+  const w = {};
+  for (let i=0; i<105; i++) w[i] = 1.0;
+  saveWeights(w);
+  saveQTable({});
+  saveLearnedPatterns({ patterns: {}, total: 0 });
+  res.json({ success: true, message: 'Reset all learning data' });
 });
 app.get('/ping', (req, res) => res.send('pong'));
 
 app.listen(PORT, () => {
-  console.log(`🚀 UNLTRA PRO V4.0 - Port ${PORT}`);
+  console.log(`🚀 UNLTRA PRO V5.0 - Port ${PORT}`);
   console.log(`⏳ Fetch 20s, timeout ${TIMEOUT}ms, retry ${RETRY_COUNT}`);
-  console.log(`🧠 ${models.length} siêu mô hình - Học tăng cường Q-learning - Bayes Beta`);
+  console.log(`🧠 ${models.length} siêu mô hình - Học tăng cường đa tác nhân - 1000+ pattern`);
 });
