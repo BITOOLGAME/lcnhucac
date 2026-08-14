@@ -12,7 +12,7 @@ const API_URL = "https://wtxmd52.tele68.com/v1/txmd5/sessions";
 let txHistory = [];
 let currentSessionId = null;
 let fetchInterval = null;
-let currentPattern = "n/a"; // LƯU PATTERN CỐ ĐỊNH
+let currentPattern = "n/a"; // Sẽ lưu chuỗi cầu 15 ký tự
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -999,7 +999,7 @@ class SEIUEnsemble {
 }
 
 // ================================
-//  PATTERN ANALYSIS
+//  PATTERN ANALYSIS (LẤY 15 KÝ TỰ CUỐI)
 // ================================
 function getComplexPattern(history) {
     const minHistory = 15;
@@ -1041,10 +1041,8 @@ class SEIUManager {
         this.calculateInitialStats();
         this.currentPrediction = this.getPrediction();
         
-        // Cập nhật pattern toàn cục
-        const features = extractFeatures(this.history);
-        const patternType = detectPatternType(features.runs);
-        currentPattern = patternType ? patternType : "random";
+        // Lưu chuỗi cầu 15 ký tự cuối vào currentPattern
+        currentPattern = getComplexPattern(this.history);
         
         console.log("📦 Đã tải lịch sử. Hệ thống AI sẵn sàng.");
         const nextSession = this.history.at(-1) ? this.history.at(-1).session + 1 : 'N/A';
@@ -1064,8 +1062,8 @@ class SEIUManager {
         const features = extractFeatures(this.history);
         const patternType = detectPatternType(features.runs);
         
-        // Cập nhật pattern toàn cục
-        currentPattern = patternType ? patternType : "random";
+        // Cập nhật chuỗi cầu 15 ký tự cuối
+        currentPattern = getComplexPattern(this.history);
         
         if (patternType) {
             this.patternHistory.push(patternType);
@@ -1160,7 +1158,7 @@ app.get("/api/taixiumd5/lc79", async () => {
         xuc_xac3: lastResult.dice[2],
         tong: lastResult.total,
         ket_qua: lastResult.result.toLowerCase(),
-        pattern: currentPattern,   // dùng pattern đã lưu, không thay đổi khi F5
+        pattern: currentPattern,   // Trả về chuỗi cầu 15 ký tự
         phien_hien_tai: lastResult.session + 1,
         du_doan: currentPrediction.prediction,
         do_tin_cay: `${evenConfidence}%`
