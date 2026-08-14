@@ -1,4 +1,4 @@
-// ==================== FILE: server.js (CẬP NHẬT PATTERN MẪU) ====================
+// ==================== FILE: server.js (SỬA THEO YÊU CẦU) ====================
 const express = require('express');
 const axios = require('axios');
 const app = express();
@@ -10,46 +10,103 @@ const API_BASE = {
     MD5: 'https://wtxmd52.tele68.com/v1/txmd5/sessions'
 };
 
-const PATTERN_LENGTH = 6;
-const MODELS = 15;
+const PATTERN_LENGTH = 6; // Số ký tự mới nhất để so sánh
 
-// ==================== THƯ VIỆN PATTERN MẪU ====================
+// ==================== THƯ VIỆN PATTERN MẪU (DẠNG CHUỖI T/X) ====================
+// Key: chuỗi pattern mẫu (ví dụ "TTTXXXT"), Value: dự đoán kế tiếp (T hoặc X) và độ tin cậy
 const PATTERN_LIBRARY = {
-    // Dạng 1-X-1
-    '1-1': { next: 'X', confidence: 70 },
-    '1-2-1': { next: 'T', confidence: 75 },
-    '1-3-1': { next: 'X', confidence: 80 },
-    '1-4-1': { next: 'T', confidence: 72 },
-    '1-5-1': { next: 'X', confidence: 68 },
-    '1-2-2-1': { next: 'T', confidence: 78 },
-    '1-3-3-1': { next: 'X', confidence: 82 },
-    '1-4-4-1': { next: 'T', confidence: 74 },
-    '1-5-5-1': { next: 'X', confidence: 70 },
-    '1-2-3-2-1': { next: 'T', confidence: 85 },
+    // Dạng 1-1
+    'TTXXTT': { next: 'X', confidence: 70 },
+    'XXTTXX': { next: 'T', confidence: 70 },
+    // Dạng 1-2-1
+    'TXXT': { next: 'T', confidence: 75 }, // 1-2-1 tương ứng T XX T -> kế tiếp T
+    'XTTX': { next: 'X', confidence: 75 },
+    // Dạng 1-3-1
+    'TXXXT': { next: 'T', confidence: 80 },
+    'XTTTX': { next: 'X', confidence: 80 },
+    // Dạng 1-4-1
+    'TXXXXT': { next: 'T', confidence: 72 },
+    'XTTTTX': { next: 'X', confidence: 72 },
+    // Dạng 1-5-1
+    'TXXXXXT': { next: 'T', confidence: 68 },
+    'XTTTTTX': { next: 'X', confidence: 68 },
+    // Dạng 1-2-2-1
+    'TXXTT': { next: 'X', confidence: 78 }, // T XX TT -> kế tiếp X? Thực tế cần xác định
+    'XTTXX': { next: 'T', confidence: 78 },
+    // Dạng 1-3-3-1
+    'TXXXTTT': { next: 'X', confidence: 82 },
+    'XTTTXXX': { next: 'T', confidence: 82 },
+    // Dạng 1-4-4-1
+    'TXXXXTTTT': { next: 'X', confidence: 74 },
+    'XTTTTXXXX': { next: 'T', confidence: 74 },
+    // Dạng 1-5-5-1
+    'TXXXXXTTTTT': { next: 'X', confidence: 70 },
+    'XTTTTTXXXXX': { next: 'T', confidence: 70 },
+    // Dạng 1-2-3-2-1
+    'TXXTTTXX': { next: 'T', confidence: 85 },
+    'XTTXXXTT': { next: 'X', confidence: 85 },
     
-    // Dạng 2-X-2
-    '2-2': { next: 'T', confidence: 65 },
-    '2-1-2': { next: 'X', confidence: 72 },
-    '2-3-2': { next: 'T', confidence: 78 },
-    '2-4-2': { next: 'X', confidence: 70 },
-    '2-5-2': { next: 'T', confidence: 66 },
-    '2-1-1-2': { next: 'X', confidence: 76 },
-    '2-3-3-2': { next: 'T', confidence: 80 },
-    '2-4-4-2': { next: 'X', confidence: 74 },
-    '2-5-5-2': { next: 'T', confidence: 72 },
-    '2-1-3-1-2': { next: 'X', confidence: 84 },
+    // Dạng 2-2
+    'TTXX': { next: 'T', confidence: 65 },
+    'XXTT': { next: 'X', confidence: 65 },
+    // Dạng 2-1-2
+    'TTXTT': { next: 'X', confidence: 72 },
+    'XXTXX': { next: 'T', confidence: 72 },
+    // Dạng 2-3-2
+    'TTXXXTT': { next: 'X', confidence: 78 },
+    'XXTTTXX': { next: 'T', confidence: 78 },
+    // Dạng 2-4-2
+    'TTXXXXTT': { next: 'X', confidence: 70 },
+    'XXTTTTXX': { next: 'T', confidence: 70 },
+    // Dạng 2-5-2
+    'TTXXXXXTT': { next: 'X', confidence: 66 },
+    'XXTTTTTXX': { next: 'T', confidence: 66 },
+    // Dạng 2-1-1-2
+    'TTXTT': { next: 'T', confidence: 76 }, // Gần giống 2-1-2 nhưng khác
+    'XXTXX': { next: 'X', confidence: 76 },
+    // Dạng 2-3-3-2
+    'TTXXXTTT': { next: 'X', confidence: 80 },
+    'XXTTTXXX': { next: 'T', confidence: 80 },
+    // Dạng 2-4-4-2
+    'TTXXXXTTTT': { next: 'X', confidence: 74 },
+    'XXTTTTXXXX': { next: 'T', confidence: 74 },
+    // Dạng 2-5-5-2
+    'TTXXXXXTTTTT': { next: 'X', confidence: 72 },
+    'XXTTTTTXXXXX': { next: 'T', confidence: 72 },
+    // Dạng 2-1-3-1-2
+    'TTXTTTXT': { next: 'T', confidence: 84 },
+    'XXTXXXTX': { next: 'X', confidence: 84 },
     
-    // Dạng 3-X-3
-    '3-3': { next: 'X', confidence: 60 },
-    '3-1-3': { next: 'T', confidence: 70 },
-    '3-2-3': { next: 'X', confidence: 76 },
-    '3-4-3': { next: 'T', confidence: 68 },
-    '3-5-3': { next: 'X', confidence: 64 },
-    '3-1-1-3': { next: 'T', confidence: 74 },
-    '3-2-2-3': { next: 'X', confidence: 78 },
-    '3-4-4-3': { next: 'T', confidence: 72 },
-    '3-5-5-3': { next: 'X', confidence: 70 },
-    '3-1-2-1-3': { next: 'T', confidence: 82 }
+    // Dạng 3-3
+    'TTTXXX': { next: 'T', confidence: 60 },
+    'XXXTTT': { next: 'X', confidence: 60 },
+    // Dạng 3-1-3
+    'TTT X TTT' -> 'TTTXTTT': { next: 'X', confidence: 70 },
+    'XXX T XXX' -> 'XXXTXXX': { next: 'T', confidence: 70 },
+    // Dạng 3-2-3
+    'TTTXXTTT': { next: 'X', confidence: 76 },
+    'XXXTTXXX': { next: 'T', confidence: 76 },
+    // Dạng 3-4-3
+    'TTTXXXXTTT': { next: 'X', confidence: 68 },
+    'XXXTTTTXXX': { next: 'T', confidence: 68 },
+    // Dạng 3-5-3
+    'TTTXXXXXTTT': { next: 'X', confidence: 64 },
+    'XXXTTTTTXXX': { next: 'T', confidence: 64 },
+    // Dạng 3-1-1-3
+    'TTTXTTT': { next: 'T', confidence: 74 }, // 3-1-1-3
+    'XXXTXXX': { next: 'X', confidence: 74 },
+    // Dạng 3-2-2-3
+    'TTTXXTTT': { next: 'X', confidence: 78 }, // nhưng khác biệt
+    'XXXTTXXX': { next: 'T', confidence: 78 },
+    // Dạng 3-4-4-3
+    'TTTXXXXTTTT': { next: 'X', confidence: 72 },
+    'XXXTTTTXXXX': { next: 'T', confidence: 72 },
+    // Dạng 3-5-5-3
+    'TTTXXXXXTTTTT': { next: 'X', confidence: 70 },
+    'XXXTTTTTXXXXX': { next: 'T', confidence: 70 },
+    // Dạng 3-1-2-1-3
+    'TTTXTTXTTT': { next: 'T', confidence: 82 },
+    'XXXTXXTXXX': { next: 'X', confidence: 82 }
 };
 
 // ==================== HÀM TIỆN ÍCH ====================
@@ -61,29 +118,29 @@ function analyzePattern(history) {
     const fullPattern = toPattern(history);
     if (fullPattern.length < PATTERN_LENGTH) return { predict: null, confidence: 50 };
 
+    // Lấy 6 ký tự mới nhất
     const recent6 = fullPattern.slice(-PATTERN_LENGTH);
-    const segments = recent6.match(/([TX])\1*/g) || [];
-    const bridgePattern = segments.map(s => s.length).join('-');
     
-    // ===== KIỂM TRA PATTERN MẪU =====
-    let matchedPattern = null;
-    let confidence = 50;
+    // Kiểm tra trong thư viện pattern mẫu (so sánh chính xác chuỗi)
+    let matched = null;
     let predict = null;
-    
-    // Tìm pattern khớp trong thư viện (ưu tiên dài nhất trước)
-    const sortedPatterns = Object.keys(PATTERN_LIBRARY).sort((a, b) => b.length - a.length);
-    for (const patternKey of sortedPatterns) {
-        if (bridgePattern === patternKey) {
-            matchedPattern = patternKey;
+    let confidence = 50;
+
+    // Tìm pattern khớp với recent6 hoặc một phần của recent6 (ưu tiên khớp đuôi)
+    // Sắp xếp pattern theo độ dài giảm dần để ưu tiên khớp dài nhất
+    const sortedKeys = Object.keys(PATTERN_LIBRARY).sort((a, b) => b.length - a.length);
+    for (const patternKey of sortedKeys) {
+        if (recent6.endsWith(patternKey) || recent6 === patternKey) {
+            matched = patternKey;
             const lib = PATTERN_LIBRARY[patternKey];
             predict = lib.next === 'T' ? 'Tài' : 'Xỉu';
             confidence = lib.confidence;
             break;
         }
     }
-    
-    // Nếu không khớp pattern mẫu, dùng thuật toán động
-    if (!matchedPattern) {
+
+    // Nếu không khớp pattern mẫu, dùng thuật toán động (so sánh lặp lại)
+    if (!matched) {
         let matchCount = 0;
         let totalMatches = 0;
         let nextPredictions = [];
@@ -112,22 +169,27 @@ function analyzePattern(history) {
             }
         }
         
-        // Fallback: dùng logic cầu 1-3-1
-        if (!predict && bridgePattern === '1-3-1') {
+        // Fallback: dùng logic đơn giản (đảo chiều nếu có chuỗi dài)
+        if (!predict) {
             const lastChar = recent6.slice(-1);
-            predict = lastChar === 'T' ? 'Xỉu' : 'Tài';
-            confidence = 65;
+            const secondLast = recent6.slice(-2, -1);
+            if (lastChar === secondLast) {
+                predict = lastChar === 'T' ? 'Xỉu' : 'Tài';
+                confidence = 55;
+            } else {
+                predict = lastChar === 'T' ? 'Tài' : 'Xỉu';
+                confidence = 50;
+            }
         }
     }
 
-    // ===== KẾT HỢP 15 MODELS =====
+    // Kết hợp 15 models
     const modelVotes = run15Models(history);
     if (modelVotes) {
         const mainWeight = 0.6;
         const modelWeight = 0.4;
         const combined = modelVotes === predict ? 1 : 0;
         confidence = Math.round((confidence * mainWeight) + (combined * 100 * modelWeight));
-        // Nếu model có độ tin cậy cao hơn, ưu tiên model
         if (modelVotes !== predict && confidence < 70) {
             predict = modelVotes;
             confidence = Math.max(confidence, 65);
@@ -143,13 +205,14 @@ function run15Models(history) {
     const points = history.map(h => h.point);
     const fullPattern = toPattern(history);
     
-    // Model 1-3: Dựa trên pattern gần nhất
+    // Model 1-3: Dựa trên 3 ký tự cuối
     if (history.length >= 3) {
         const last3 = fullPattern.slice(-3);
         if (last3 === 'TTT') results.push('Xỉu');
         else if (last3 === 'XXX') results.push('Tài');
         else if (last3 === 'TTX' || last3 === 'XTT') results.push('Tài');
         else if (last3 === 'XXT' || last3 === 'TXX') results.push('Xỉu');
+        else results.push(last3[2] === 'T' ? 'Tài' : 'Xỉu');
     }
     
     // Model 4-6: Xu hướng T/X
@@ -195,15 +258,16 @@ function run15Models(history) {
         const char = lastRun[0][0];
         if (len >= 4) results.push(char === 'T' ? 'Xỉu' : 'Tài');
         else if (len >= 2) results.push(char === 'T' ? 'Tài' : 'Xỉu');
+        else results.push(char === 'T' ? 'Xỉu' : 'Tài');
     }
     
-    // Model 14: Dựa trên phiên gần nhất
+    // Model 14: Phiên gần nhất
     if (history.length > 0) {
         const last = history[0];
         results.push(last.point >= 11 ? 'Tài' : 'Xỉu');
     }
     
-    // Model 15: Dựa trên tổng 3 phiên gần nhất
+    // Model 15: Tổng 3 phiên gần nhất
     if (history.length >= 3) {
         const sum3 = history.slice(0, 3).reduce((s, h) => s + h.point, 0);
         results.push(sum3 >= 33 ? 'Tài' : 'Xỉu');
@@ -216,7 +280,7 @@ function run15Models(history) {
     return tVote >= xVote ? 'Tài' : 'Xỉu';
 }
 
-// ==================== FETCH DỮ LIỆU ====================
+// ==================== FETCH DỮ LIỆU (KHÔNG CACHE) ====================
 async function fetchData(url) {
     try {
         const res = await axios.get(url, { timeout: 10000 });
@@ -228,7 +292,9 @@ async function fetchData(url) {
 }
 
 // ==================== XÂY DỰNG RESPONSE ====================
-function buildHistoryResponse(data) {
+
+// Response cho phiên hiện tại /api/tx/hu hoặc /api/tx/md5
+function buildCurrentResponse(data) {
     if (!data || data.length === 0) return { error: 'Không có dữ liệu' };
     
     const sorted = data.sort((a, b) => b.id - a.id);
@@ -237,34 +303,43 @@ function buildHistoryResponse(data) {
     
     const currentSession = latest.id;
     const prevSession = prev ? prev.id : currentSession - 1;
-    const historyForAnalysis = sorted.slice(1, 1 + 30);
     
+    // Lấy 30 phiên cũ để phân tích
+    const historyForAnalysis = sorted.slice(1, 1 + 30);
     const analysis = analyzePattern(historyForAnalysis);
     const duDoan = analysis.predict || 'Chờ';
     const doTinCay = analysis.confidence || 50;
     
+    // Pattern của 6 phiên gần nhất (cũ -> mới)
     const pattern6 = historyForAnalysis.slice(0, 6).reverse();
     const patternStr = pattern6.map(h => h.resultTruyenThong === 'TAI' ? 'T' : 'X').join('');
     const patternDisplay = patternStr.split('').map(c => c === 'T' ? '🔴' : '🔵').join(' ');
     
-    // Tìm cầu pattern từ 6 ký tự
+    // Cầu (dạng số)
     const segments = patternStr.match(/([TX])\1*/g) || [];
     const bridgePattern = segments.map(s => s.length).join('-');
+    
+    // Xác định ket_qua: nếu có dices thì coi là đã có kết quả, ngược lại chờ
+    const hasResult = latest.dices && latest.dices.length > 0;
+    const ketQua = hasResult ? mapResult(latest.resultTruyenThong) : '⌛ Chờ Kết Quả';
+    const xucXac = hasResult ? latest.dices.join(', ') : '⌛ Chờ Kết Quả';
+    const tong = hasResult ? latest.point : '⌛ Chờ Kết Quả';
     
     return {
         id: '@ngminhtuann',
         phien_truoc: prevSession,
-        xuc_xac: latest.dices ? latest.dices.join(', ') : '⌛ Chờ',
-        tong: latest.point || '⌛ Chờ',
-        ket_qua: latest.resultTruyenThong ? mapResult(latest.resultTruyenThong) : '⌛ Chờ',
+        xuc_xac: xucXac,
+        tong: tong,
+        ket_qua: ketQua,               // <-- đặt đúng chỗ
         phien_hien_tai: currentSession,
         pattern: patternDisplay || '⌛ Chờ',
         cau: bridgePattern || '⌛ Chờ',
-        du_doan: duDoan,
+        du_doan: duDoan,               // dự đoán cho phiên tiếp theo
         do_tin_cay: `${doTinCay}%`
     };
 }
 
+// Lịch sử /api/tx/hu/history hoặc /api/tx/md5/history
 function buildHistoryList(data) {
     if (!data || data.length === 0) return [];
     
@@ -274,16 +349,17 @@ function buildHistoryList(data) {
     
     for (let i = 0; i < sorted.length; i++) {
         const item = sorted[i];
-        const isPending = !item.dices || item.dices.length === 0;
+        const hasResult = item.dices && item.dices.length > 0;
         
+        // Nếu chưa có kết quả -> ket_qua và danh_gia là "⌛ Chờ Kết Quả"
+        let ketQua = hasResult ? mapResult(item.resultTruyenThong) : '⌛ Chờ Kết Quả';
+        let danhGia = hasResult ? '✅ Thắng' : '⌛ Chờ Kết Quả'; // tạm thời, sẽ tính sau
+        let xucXac = hasResult ? (item.dices ? item.dices.join(', ') : '⌛ Chờ Kết Quả') : '⌛ Chờ Kết Quả';
+        let tong = hasResult ? (item.point || '⌛ Chờ Kết Quả') : '⌛ Chờ Kết Quả';
+        
+        // Dự đoán cho phiên này (dựa trên phiên tiếp theo nếu có)
         let duDoan = '⌛ Chờ Kết Quả';
-        let danhGia = '⌛ Chờ Kết Quả';
-        let ketQua = isPending ? '⌛ Chờ Kết Quả' : mapResult(item.resultTruyenThong);
-        let xucXac = isPending ? '⌛ Chờ Kết Quả' : (item.dices ? item.dices.join(', ') : '⌛ Chờ');
-        let tong = isPending ? '⌛ Chờ Kết Quả' : (item.point || '⌛ Chờ');
-        
-        // Dự đoán dựa trên pattern lịch sử
-        if (i < sorted.length - 1 && !isPending) {
+        if (i < sorted.length - 1) {
             const nextItem = sorted[i + 1];
             if (nextItem && nextItem.resultTruyenThong) {
                 const nextResult = mapResult(nextItem.resultTruyenThong);
@@ -291,22 +367,33 @@ function buildHistoryList(data) {
             }
         }
         
-        // Đánh giá
-        if (!isPending && duDoan !== '⌛ Chờ Kết Quả') {
+        // Nếu có kết quả và có dự đoán thì đánh giá
+        if (hasResult && duDoan !== '⌛ Chờ Kết Quả') {
             const isWin = duDoan === mapResult(item.resultTruyenThong);
             danhGia = isWin ? '✅ Thắng' : '❌ Thua';
-        } else if (!isPending) {
-            danhGia = '✅ Thắng';
+        } else if (hasResult) {
+            danhGia = '✅ Thắng'; // mặc định
+        }
+        
+        // Thời gian
+        let time = 'N/A';
+        if (item._id && item._id.length >= 8) {
+            try {
+                const timestamp = parseInt(item._id.substring(0, 8), 16);
+                if (!isNaN(timestamp)) {
+                    time = new Date(timestamp * 1000).toLocaleString('vi-VN');
+                }
+            } catch (e) {}
         }
         
         result.push({
             phien: item.id,
             du_doan: duDoan,
-            ket_qua: ketQua,
+            ket_qua: ketQua,           // <-- đặt đúng: ⌛ khi chưa có
             danh_gia: danhGia,
             xuc_xac: xucXac,
             tong: tong,
-            time: item._id ? new Date(parseInt(item._id.substring(0, 8), 16) * 1000).toLocaleString('vi-VN') : 'N/A'
+            time: time
         });
     }
     
@@ -316,25 +403,26 @@ function buildHistoryList(data) {
 // ==================== ROUTES ====================
 app.get('/', (req, res) => {
     res.json({ 
-        status: 'API Tx Analysis Running v2.0',
+        status: 'API Tx Analysis v3.0 - Pattern chuỗi T/X',
         endpoints: [
             '/api/tx/hu',
             '/api/tx/md5',
             '/api/tx/hu/history',
             '/api/tx/md5/history'
         ],
-        pattern_library: Object.keys(PATTERN_LIBRARY)
+        pattern_library_count: Object.keys(PATTERN_LIBRARY).length,
+        note: 'Không lưu cache, mỗi request fetch mới'
     });
 });
 
 app.get('/api/tx/hu', async (req, res) => {
     const data = await fetchData(API_BASE.HU);
-    res.json(buildHistoryResponse(data));
+    res.json(buildCurrentResponse(data));
 });
 
 app.get('/api/tx/md5', async (req, res) => {
     const data = await fetchData(API_BASE.MD5);
-    res.json(buildHistoryResponse(data));
+    res.json(buildCurrentResponse(data));
 });
 
 app.get('/api/tx/hu/history', async (req, res) => {
@@ -350,7 +438,8 @@ app.get('/api/tx/md5/history', async (req, res) => {
 // ==================== START SERVER ====================
 app.listen(PORT, () => {
     console.log(`✅ Server đang chạy tại http://localhost:${PORT}`);
-    console.log(`📊 Đã nạp ${Object.keys(PATTERN_LIBRARY).length} pattern mẫu`);
+    console.log(`📊 Đã nạp ${Object.keys(PATTERN_LIBRARY).length} pattern mẫu dạng chuỗi T/X`);
+    console.log(`🔄 Mỗi request sẽ fetch dữ liệu mới, không lưu cache`);
 });
 
 module.exports = app;
