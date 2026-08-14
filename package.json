@@ -1,18 +1,15 @@
 {
-  "name": "scrapi",
-  "version": "1.0.0",
-  "description": "",
+  "name": "ai-taixiu-lc79",
+  "version": "3.0.0",
+  "description": "AI Tài Xỉu MD5 Pro - Pattern Master",
   "main": "lc79.js",
+  "type": "module", 
   "scripts": {
     "start": "node lc79.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "axios": "^1.19.0",
-    "cors": "^2.8.6",
-    "express": "^5.2.1"
+    "fastify": "^4.x.x",
+    "@fastify/cors": "^8.x.x",
+    "node-fetch": "^3.x.x"
   }
 }
