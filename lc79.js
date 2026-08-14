@@ -1002,7 +1002,7 @@ class SEIUEnsemble {
 //  PATTERN ANALYSIS - LẤY 60 PHIÊN GẦN NHẤT
 // ================================
 function getComplexPattern(history) {
-    const minHistory = 60; // Đổi từ 15 lên 60
+    const minHistory = 20; // Đổi từ 15 lên 60
     if (history.length < minHistory) return "n/a";
     const historyTx = history.map(h => h.tx);
     return historyTx.slice(-minHistory).join('').toLowerCase();
