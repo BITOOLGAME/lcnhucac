@@ -12,7 +12,7 @@ const API_URL = "https://wtxmd52.tele68.com/v1/txmd5/sessions";
 let txHistory = [];
 let currentSessionId = null;
 let fetchInterval = null;
-let currentPattern = "n/a"; // Sẽ lưu chuỗi cầu 15 ký tự
+let currentPattern = "n/a"; // Lưu chuỗi 60 phiên
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -95,7 +95,7 @@ function extractFeatures(history) {
 }
 
 // ================================
-//  PHÁT HIỆN 30+ MẪU CẦU
+//  PHÁT HIỆN 30+ MẪU CẦU (cho thuật toán)
 // ================================
 function detectPatternType(runs) {
     if (runs.length < 3) return null;
@@ -353,7 +353,7 @@ function predictNextFromPattern(patternType, runs, lastTx) {
 }
 
 // ================================
-//  10 THUẬT TOÁN CŨ (GIỮ NGUYÊN)
+//  10 THUẬT TOÁN CŨ
 // ================================
 function algo5_freqRebalance(history) {
     if (history.length < 20) return null;
@@ -999,10 +999,10 @@ class SEIUEnsemble {
 }
 
 // ================================
-//  PATTERN ANALYSIS (LẤY 15 KÝ TỰ CUỐI)
+//  PATTERN ANALYSIS - LẤY 60 PHIÊN GẦN NHẤT
 // ================================
 function getComplexPattern(history) {
-    const minHistory = 15;
+    const minHistory = 60; // Đổi từ 15 lên 60
     if (history.length < minHistory) return "n/a";
     const historyTx = history.map(h => h.tx);
     return historyTx.slice(-minHistory).join('').toLowerCase();
@@ -1040,10 +1040,8 @@ class SEIUManager {
         this.ensemble.fitInitial(this.history);
         this.calculateInitialStats();
         this.currentPrediction = this.getPrediction();
-        
-        // Lưu chuỗi cầu 15 ký tự cuối vào currentPattern
+        // Lưu chuỗi 60 phiên vào currentPattern
         currentPattern = getComplexPattern(this.history);
-        
         console.log("📦 Đã tải lịch sử. Hệ thống AI sẵn sàng.");
         const nextSession = this.history.at(-1) ? this.history.at(-1).session + 1 : 'N/A';
         console.log(`🔮 Dự đoán phiên ${nextSession}: ${this.currentPrediction.prediction} (${(this.currentPrediction.confidence * 100).toFixed(0)}%)`);
@@ -1061,10 +1059,8 @@ class SEIUManager {
         this.currentPrediction = this.getPrediction();
         const features = extractFeatures(this.history);
         const patternType = detectPatternType(features.runs);
-        
-        // Cập nhật chuỗi cầu 15 ký tự cuối
+        // Cập nhật chuỗi 60 phiên
         currentPattern = getComplexPattern(this.history);
-        
         if (patternType) {
             this.patternHistory.push(patternType);
             if (this.patternHistory.length > 20) this.patternHistory.shift();
@@ -1129,7 +1125,6 @@ console.log(`🔄 Đang chạy với chu kỳ 5 giây.`);
 app.get("/api/taixiumd5/lc79", async () => {
     const lastResult = txHistory.at(-1) || null;
     const currentPrediction = seiuManager.currentPrediction;
-    
     if (!lastResult || !currentPrediction) {
         return {
             id: "@ngminhtuann",
@@ -1145,11 +1140,9 @@ app.get("/api/taixiumd5/lc79", async () => {
             do_tin_cay: "0%"
         };
     }
-    
     // Làm tròn độ tin cậy thành số chẵn
     const rawConfidence = currentPrediction.confidence * 100;
     const evenConfidence = Math.round(rawConfidence / 2) * 2;
-    
     return {
         id: "@ngminhtuann",
         phien_truoc: lastResult.session,
@@ -1158,7 +1151,7 @@ app.get("/api/taixiumd5/lc79", async () => {
         xuc_xac3: lastResult.dice[2],
         tong: lastResult.total,
         ket_qua: lastResult.result.toLowerCase(),
-        pattern: currentPattern,   // Trả về chuỗi cầu 15 ký tự
+        pattern: currentPattern,   // 60 phiên gần nhất
         phien_hien_tai: lastResult.session + 1,
         du_doan: currentPrediction.prediction,
         do_tin_cay: `${evenConfidence}%`
