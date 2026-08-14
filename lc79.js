@@ -21,8 +21,8 @@ app.use(cors());
 app.use(express.json());
 
 // ---------- CẤU HÌNH ----------
-const API_HU = '';
-const API_MD5 = '';
+const API_HU = 'https://wtx.tele68.com/v1/tx/sessions';
+const API_MD5 = 'https://wtxmd52.tele68.com/v1/txmd5/sessions';
 const TIMEOUT = 20000;
 const RETRY_COUNT = 3;
 const MAX_HISTORY = 300;
