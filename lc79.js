@@ -9,7 +9,7 @@ const API_BASE = {
     MD5: 'https://wtxmd52.tele68.com/v1/txmd5/sessions'
 };
 const PATTERN_LENGTH = 6;
-const HISTORY_LIMIT = 50; // Số phiên hiển thị trong lịch sử
+const HISTORY_LIMIT = 50;
 
 // ==================== THƯ VIỆN PATTERN ====================
 const PATTERN_LIBRARY = {
@@ -231,33 +231,31 @@ function buildCurrentResponse(data) {
     if (!data || data.length === 0) return { error: 'Không có dữ liệu' };
 
     const sorted = data.sort((a, b) => b.id - a.id);
-    const latest = sorted[0];
-    const prev = sorted[1] || null;
+    const latest = sorted[0]; // phiên gần nhất có kết quả
 
-    const currentSession = latest.id;
-    const prevSession = prev ? prev.id : currentSession - 1;
+    // Phiên hiện tại = phiên mới nhất + 1 (vì id tăng dần)
+    const currentSession = latest.id + 1;
+    const prevSession = latest.id; // phiên trước đó chính là phiên mới nhất có kết quả
 
+    // Phân tích dự đoán dựa trên 30 phiên cũ (bỏ phiên mới nhất)
     const historyForAnalysis = sorted.slice(1, 1 + 30);
     const analysis = analyzePattern(historyForAnalysis);
     const duDoan = analysis.predict || 'Chờ';
     const doTinCay = analysis.confidence || 50;
 
-    const pattern6 = historyForAnalysis.slice(0, 6);
+    // Pattern 6 phiên gần nhất (tính từ phiên mới nhất có kết quả trở về trước)
+    const pattern6 = sorted.slice(0, 6);
     const patternStr = pattern6.map(h => h.resultTruyenThong === 'TAI' ? 'T' : 'X').join('');
     const segments = patternStr.match(/([TX])\1*/g) || [];
     const bridgePattern = segments.map(s => s.length).join('-');
 
-    const hasResult = latest.dices && latest.dices.length > 0;
-    const ketQua = hasResult ? mapResult(latest.resultTruyenThong) : '⌛ Chờ Kết Quả';
-    const xucXac = hasResult ? latest.dices.join(', ') : '⌛ Chờ Kết Quả';
-    const tong = hasResult ? latest.point : '⌛ Chờ Kết Quả';
-
+    // Phiên hiện tại chưa có kết quả → tất cả đều là chờ
     return {
         id: '@ngminhtuann',
         phien_truoc: prevSession,
-        xuc_xac: xucXac,
-        tong: tong,
-        ket_qua: ketQua,
+        xuc_xac: '⌛ Chờ Kết Quả',
+        tong: '⌛ Chờ Kết Quả',
+        ket_qua: '⌛ Chờ Kết Quả',
         phien_hien_tai: currentSession,
         pattern: patternStr || '⌛ Chờ',
         cau: bridgePattern || '⌛ Chờ',
@@ -266,12 +264,11 @@ function buildCurrentResponse(data) {
     };
 }
 
-// Lịch sử (giới hạn số lượng)
+// Lịch sử
 function buildHistoryList(data) {
     if (!data || data.length === 0) return [];
 
     const sorted = data.sort((a, b) => b.id - a.id);
-    // Chỉ lấy HISTORY_LIMIT phiên gần nhất
     const limited = sorted.slice(0, HISTORY_LIMIT);
     const result = [];
 
@@ -279,13 +276,11 @@ function buildHistoryList(data) {
         const item = limited[i];
         const hasResult = item.dices && item.dices.length > 0;
 
-        // ket_qua chỉ chờ nếu thực sự chưa có dices
         let ketQua = hasResult ? mapResult(item.resultTruyenThong) : '⌛ Chờ Kết Quả';
         let xucXac = hasResult ? (item.dices ? item.dices.join(', ') : '⌛ Chờ Kết Quả') : '⌛ Chờ Kết Quả';
         let tong = hasResult ? (item.point || '⌛ Chờ Kết Quả') : '⌛ Chờ Kết Quả';
         let danhGia = hasResult ? '✅ Thắng' : '⌛ Chờ Kết Quả';
 
-        // Dự đoán: nếu có phiên tiếp theo (i+1) thì dựa vào đó, ngược lại là chờ
         let duDoan = '⌛ Chờ Kết Quả';
         if (i < limited.length - 1) {
             const nextItem = limited[i + 1];
@@ -295,12 +290,11 @@ function buildHistoryList(data) {
             }
         }
 
-        // Nếu có kết quả và có dự đoán thì đánh giá thắng/thua
         if (hasResult && duDoan !== '⌛ Chờ Kết Quả') {
             const isWin = duDoan === mapResult(item.resultTruyenThong);
             danhGia = isWin ? '✅ Thắng' : '❌ Thua';
         } else if (hasResult) {
-            danhGia = '✅ Thắng'; // fallback
+            danhGia = '✅ Thắng';
         }
 
         let time = 'N/A';
@@ -330,7 +324,7 @@ function buildHistoryList(data) {
 // ==================== ROUTES ====================
 app.get('/', (req, res) => {
     res.json({
-        status: 'API Tx Analysis v5.0 - History giới hạn 50 phiên',
+        status: 'API Tx Analysis v6.0 - Sửa phiên trước/hiện tại',
         endpoints: [
             '/api/tx/hu',
             '/api/tx/md5',
@@ -366,4 +360,7 @@ app.listen(PORT, () => {
     console.log(`✅ Server chạy tại http://localhost:${PORT}`);
     console.log(`📊 Đã nạp ${Object.keys(PATTERN_LIBRARY).length} pattern mẫu`);
     console.log(`📜 Lịch sử giới hạn ${HISTORY_LIMIT} phiên gần nhất`);
+    console.log(`🔢 Logic: phien_hien_tai = latest.id + 1, phien_truoc = latest.id`);
 });
+
+module.exports = app;
