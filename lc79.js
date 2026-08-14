@@ -12,11 +12,12 @@ const API_URL = "https://wtxmd52.tele68.com/v1/txmd5/sessions";
 let txHistory = [];
 let currentSessionId = null;
 let fetchInterval = null;
+let currentPattern = "n/a"; // LƯU PATTERN CỐ ĐỊNH
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// --- UTILITIES TỐI ƯU ---
+// --- UTILITIES ---
 function parseLines(data) {
     if (!data || !Array.isArray(data.list)) return [];
     const sortedList = data.list.sort((a, b) => b.id - a.id);
@@ -94,7 +95,7 @@ function extractFeatures(history) {
 }
 
 // ================================
-//  PHÁT HIỆN 30+ MẪU CẦU (MỚI)
+//  PHÁT HIỆN 30+ MẪU CẦU
 // ================================
 function detectPatternType(runs) {
     if (runs.length < 3) return null;
@@ -102,7 +103,6 @@ function detectPatternType(runs) {
     const lengths = lastRuns.map(r => r.len);
     const values = lastRuns.map(r => r.val);
 
-    // --- Các mẫu cơ bản ---
     if (lengths.every(l => l === 1)) {
         const isAlternating = values.every((v, i) => i === 0 || v !== values[i-1]);
         if (isAlternating) return '1_1_pattern';
@@ -124,7 +124,6 @@ function detectPatternType(runs) {
         if (isAlternating) return '5_5_pattern';
     }
 
-    // --- Mẫu kết hợp 2 số ---
     if (lengths.length >= 3 && lengths[0] === 2 && lengths[1] === 1 && lengths[2] === 2) {
         if (runs.length >= 5 && runs[runs.length-5].len === 2 && runs[runs.length-4].len === 1 && runs[runs.length-3].len === 2)
             return '2_1_pattern';
@@ -158,7 +157,6 @@ function detectPatternType(runs) {
             return '2_4_pattern';
     }
 
-    // --- Mẫu kết hợp 3 số ---
     if (lengths.length >= 5 &&
         lengths[0] === 2 && lengths[1] === 1 && lengths[2] === 2 && lengths[3] === 1 && lengths[4] === 2) {
         return '2_1_2_pattern';
@@ -220,14 +218,12 @@ function detectPatternType(runs) {
         return '1_3_2_pattern';
     }
 
-    // --- Cầu bệt dài ---
     const lastRun = lastRuns[lastRuns.length - 1];
     if (lastRun && lastRun.len >= 5) return 'long_run_pattern';
 
     return 'random_pattern';
 }
 
-// --- DỰ ĐOÁN THEO PATTERN (MỞ RỘNG) ---
 function predictNextFromPattern(patternType, runs, lastTx) {
     if (!patternType) return null;
     const lastRun = runs[runs.length - 1];
@@ -359,8 +355,6 @@ function predictNextFromPattern(patternType, runs, lastTx) {
 // ================================
 //  10 THUẬT TOÁN CŨ (GIỮ NGUYÊN)
 // ================================
-
-// 1. ULTRA FREQUENCY BALANCER
 function algo5_freqRebalance(history) {
     if (history.length < 20) return null;
     const features = extractFeatures(history);
@@ -390,7 +384,6 @@ function algo5_freqRebalance(history) {
     return null;
 }
 
-// 2. QUANTUM MARKOV CHAIN
 function algoA_markov(history) {
     if (history.length < 15) return null;
     const tx = history.map(h => h.tx);
@@ -429,7 +422,6 @@ function algoA_markov(history) {
     return bestPred;
 }
 
-// 3. HYPER N-GRAM
 function algoB_ngram(history) {
     if (history.length < 30) return null;
     const tx = history.map(h => h.tx);
@@ -471,7 +463,6 @@ function algoB_ngram(history) {
     return bestConfidence > 0.3 ? bestPred : null;
 }
 
-// 4. QUANTUM PATTERN DETECTOR
 function algoS_NeoPattern(history) {
     if (history.length < 25) return null;
     const features = extractFeatures(history);
@@ -491,7 +482,6 @@ function algoS_NeoPattern(history) {
     return null;
 }
 
-// 5. DEEP NEURAL SIMULATION
 function algoF_SuperDeepAnalysis(history) {
     if (history.length < 60) return null;
     const timeframes = [
@@ -533,7 +523,6 @@ function algoF_SuperDeepAnalysis(history) {
     return null;
 }
 
-// 6. TRANSFORMER XL
 function algoE_Transformer(history) {
     if (history.length < 100) return null;
     const tx = history.map(h => h.tx);
@@ -571,10 +560,9 @@ function algoE_Transformer(history) {
     return null;
 }
 
-// 7. ADAPTIVE BRIDGE BREAKER
 function algoG_SuperBridgePredictor(history) {
     const features = extractFeatures(history);
-    const { runs, tx } = features;
+    const { runs } = features;
     if (runs.length < 4) return null;
     const lastRun = runs[runs.length - 1];
     let prediction = null;
@@ -624,7 +612,6 @@ function algoG_SuperBridgePredictor(history) {
     return confidence > 0.55 ? prediction : null;
 }
 
-// 8. HYBRID ADAPTIVE MARKOV
 function algoH_AdaptiveMarkov(history) {
     if (history.length < 25) return null;
     const tx = history.map(h => h.tx);
@@ -692,7 +679,6 @@ function algoH_AdaptiveMarkov(history) {
     return null;
 }
 
-// 9. PATTERN MASTER (cũ)
 function algoI_PatternMaster(history) {
     if (history.length < 35) return null;
     const features = extractFeatures(history);
@@ -753,7 +739,6 @@ function algoI_PatternMaster(history) {
     return null;
 }
 
-// 10. QUANTUM ENTROPY
 function algoJ_QuantumEntropy(history) {
     if (history.length < 40) return null;
     const features = extractFeatures(history);
@@ -800,10 +785,8 @@ function algoJ_QuantumEntropy(history) {
 }
 
 // ================================
-//  2 THUẬT TOÁN MỚI (MỞ RỘNG)
+//  2 THUẬT TOÁN MỚI
 // ================================
-
-// 11. PATTERN HUNTER (chuyên nhận diện 30+ pattern)
 function algoK_PatternHunter(history) {
     if (history.length < 25) return null;
     const features = extractFeatures(history);
@@ -823,7 +806,6 @@ function algoK_PatternHunter(history) {
     return null;
 }
 
-// 12. CYCLE DETECTOR (phát hiện chu kỳ lặp)
 function algoL_CycleDetector(history) {
     if (history.length < 30) return null;
     const tx = history.map(h => h.tx);
@@ -847,7 +829,7 @@ function algoL_CycleDetector(history) {
 }
 
 // ================================
-//  DANH SÁCH THUẬT TOÁN (12 ALGS)
+//  DANH SÁCH 12 THUẬT TOÁN
 // ================================
 const ALL_ALGS = [
     { id: 'algo5_freqrebalance', fn: algo5_freqRebalance },
@@ -865,7 +847,7 @@ const ALL_ALGS = [
 ];
 
 // ================================
-//  ENSEMBLE CLASSIFIER (NÂNG CẤP)
+//  ENSEMBLE CLASSIFIER
 // ================================
 class SEIUEnsemble {
     constructor(algorithms, opts = {}) {
@@ -1017,7 +999,7 @@ class SEIUEnsemble {
 }
 
 // ================================
-//  PATTERN ANALYSIS (ĐƠN GIẢN)
+//  PATTERN ANALYSIS
 // ================================
 function getComplexPattern(history) {
     const minHistory = 15;
@@ -1058,6 +1040,12 @@ class SEIUManager {
         this.ensemble.fitInitial(this.history);
         this.calculateInitialStats();
         this.currentPrediction = this.getPrediction();
+        
+        // Cập nhật pattern toàn cục
+        const features = extractFeatures(this.history);
+        const patternType = detectPatternType(features.runs);
+        currentPattern = patternType ? patternType : "random";
+        
         console.log("📦 Đã tải lịch sử. Hệ thống AI sẵn sàng.");
         const nextSession = this.history.at(-1) ? this.history.at(-1).session + 1 : 'N/A';
         console.log(`🔮 Dự đoán phiên ${nextSession}: ${this.currentPrediction.prediction} (${(this.currentPrediction.confidence * 100).toFixed(0)}%)`);
@@ -1075,6 +1063,10 @@ class SEIUManager {
         this.currentPrediction = this.getPrediction();
         const features = extractFeatures(this.history);
         const patternType = detectPatternType(features.runs);
+        
+        // Cập nhật pattern toàn cục
+        currentPattern = patternType ? patternType : "random";
+        
         if (patternType) {
             this.patternHistory.push(patternType);
             if (this.patternHistory.length > 20) this.patternHistory.shift();
@@ -1139,10 +1131,10 @@ console.log(`🔄 Đang chạy với chu kỳ 5 giây.`);
 app.get("/api/taixiumd5/lc79", async () => {
     const lastResult = txHistory.at(-1) || null;
     const currentPrediction = seiuManager.currentPrediction;
-    const pattern = getComplexPattern(seiuManager.history);
+    
     if (!lastResult || !currentPrediction) {
         return {
-            id: "GiaThinhzZz Lc79",
+            id: "@ngminhtuann",
             phien_truoc: null,
             xuc_xac1: null,
             xuc_xac2: null,
@@ -1155,18 +1147,23 @@ app.get("/api/taixiumd5/lc79", async () => {
             do_tin_cay: "0%"
         };
     }
+    
+    // Làm tròn độ tin cậy thành số chẵn
+    const rawConfidence = currentPrediction.confidence * 100;
+    const evenConfidence = Math.round(rawConfidence / 2) * 2;
+    
     return {
-        id: "GiaThinhzZz Lc79",
+        id: "@ngminhtuann",
         phien_truoc: lastResult.session,
         xuc_xac1: lastResult.dice[0],
         xuc_xac2: lastResult.dice[1],
         xuc_xac3: lastResult.dice[2],
         tong: lastResult.total,
         ket_qua: lastResult.result.toLowerCase(),
-        pattern: pattern,
+        pattern: currentPattern,   // dùng pattern đã lưu, không thay đổi khi F5
         phien_hien_tai: lastResult.session + 1,
         du_doan: currentPrediction.prediction,
-        do_tin_cay: `${(currentPrediction.confidence * 100).toFixed(0)}%`
+        do_tin_cay: `${evenConfidence}%`
     };
 });
 
