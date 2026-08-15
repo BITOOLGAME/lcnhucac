@@ -1,15 +1,15 @@
 {
-  "name": "ai-taixiu-lc79",
-  "version": "3.0.0",
-  "description": "AI Tài Xỉu MD5 Pro - Pattern Master",
-  "main": "lc79.js",
-  "type": "module", 
+  "name": "taixiumd5-api",
+  "version": "1.0.0",
+  "description": "Tai Xiu MD5 prediction API",
+  "main": "server.js",
   "scripts": {
-    "start": "node lc79.js"
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
-    "fastify": "^4.x.x",
-    "@fastify/cors": "^8.x.x",
-    "node-fetch": "^3.x.x"
+    "express": "^5.1.0"
   }
 }
