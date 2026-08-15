@@ -503,60 +503,125 @@ function calculatePrediction(history) {
     };
 }
 
+function buildPattern(history) {
+
+    return history
+
+        .slice(-MAX_PATTERN_HISTORY)
+
+        .map(item => tx(item.ket_qua))
+
+        .join("");
+
+}
+
 async function getData() {
+
     const now = Date.now();
 
     if (
+
         cache.prediction &&
+
         now - cache.time < CACHE_MS
+
     ) {
+
         return cache;
+
     }
 
     const history = await fetchHistory();
 
     if (!history.length) {
+
         throw new Error("Không lấy được lịch sử");
+
     }
 
     const prediction = calculatePrediction(history);
 
+    const pattern = buildPattern(history);
+
     cache = {
+
         time: now,
+
         history,
-        prediction
+
+        prediction,
+
+        pattern
+
     };
 
     return cache;
+
 }
 
-// =====================================================
-// API CHÍNH
-// =====================================================
-
 app.get("/api/taixiumd5", async (req, res) => {
+
     try {
-        const { history, prediction } = await getData();
-        const latest = history[history.length - 1];
+
+        const {
+
+            history,
+
+            prediction,
+
+            pattern
+
+        } = await getData();
+
+        const latest =
+
+            history[history.length - 1];
 
         res.json({
+
             phien: latest.phien,
+
             xuc_xac: latest.xuc_xac,
+
             tong: latest.tong,
+
             ket_qua: latest.ket_qua,
-            phien_hien_tai: latest.phien + 1,
-            du_doan: prediction.du_doan,
-            do_tin_cay: prediction.do_tin_cay
+
+            phien_hien_tai:
+
+                latest.phien + 1,
+
+            pattern: pattern,
+
+            du_doan:
+
+                prediction.du_doan,
+
+            do_tin_cay:
+
+                prediction.do_tin_cay
+
         });
+
     } catch (error) {
-        console.error("API ERROR:", error.message);
+
+        console.error(
+
+            "API ERROR:",
+
+            error.message
+
+        );
 
         res.status(500).json({
-            error: error.message
-        });
-    }
-});
 
+            error: error.message
+
+        });
+
+    }
+
+});
 // =====================================================
 // API CHI TIẾT
 // =====================================================
