@@ -1806,6 +1806,59 @@ function getLearningScore(pattern) {
 }
 
 /* =========================================================
+   PATTERN QUALITY (TÍN HIỆU BÁO TOOL)
+========================================================= */
+
+function isPatternGood(prediction) {
+    const pattern = prediction.pattern_chinh;
+    if (!pattern) return false;
+
+    const conf = pattern.do_tin_cay ? parseFloat(pattern.do_tin_cay) : 0;
+    const samples = pattern.so_lan_gap || 0;
+    const agree = prediction.agreement || 0;
+
+    // Ngưỡng: pattern có độ tin cậy >= 65%, số mẫu >= 5, agreement >= 70%
+    return conf >= 65 && samples >= 5 && agree >= 70;
+}
+
+function getRecommendation(prediction) {
+    const du_doan = prediction.du_doan;      // "Tài" hoặc "Xỉu"
+    const do_tin_cay = prediction.confidence || 50; // %
+    const side = prediction.side;            // "T" hoặc "X"
+
+    // 1. Nếu độ tin cậy >= 65% → THEO
+    if (do_tin_cay >= 65) {
+        return {
+            khuyen_nghi: "THEO",
+            giai_thich: `Độ tin cậy ${do_tin_cay}% >= 65%, theo dự đoán ${du_doan}`,
+            side_theo: side,
+            side_bo: side === "T" ? "X" : "T"
+        };
+    }
+
+    // 2. Độ tin cậy < 65% → xét pattern
+    const good = isPatternGood(prediction);
+    if (good) {
+        return {
+            khuyen_nghi: "THEO",
+            giai_thich: `Độ tin cậy ${do_tin_cay}% < 65%, nhưng pattern đẹp → theo dự đoán ${du_doan}`,
+            side_theo: side,
+            side_bo: side === "T" ? "X" : "T"
+        };
+    } else {
+        // pattern xấu → BẺ (đánh ngược)
+        const side_bo = side === "T" ? "X" : "T";
+        const du_doan_bo = side_bo === "T" ? "Tài" : "Xỉu";
+        return {
+            khuyen_nghi: "BẺ",
+            giai_thich: `Độ tin cậy ${do_tin_cay}% < 65% và pattern xấu → bẻ sang ${du_doan_bo}`,
+            side_theo: side_bo,
+            side_bo: side
+        };
+    }
+}
+
+/* =========================================================
    MAIN PREDICTION
 ========================================================= */
 
@@ -1822,7 +1875,7 @@ function calculatePrediction(history) {
                 0
             );
 
-        return {
+        const resultObj = {
             du_doan:
                 result(randomSide),
 
@@ -1851,6 +1904,17 @@ function calculatePrediction(history) {
 
             evidence: []
         };
+
+        // Tích hợp tín hiệu
+        resultObj.recommendation = getRecommendation({
+            du_doan: resultObj.du_doan,
+            side: resultObj.side,
+            confidence: resultObj.confidence,
+            pattern_chinh: null,
+            agreement: 0
+        });
+
+        return resultObj;
     }
 
     const mined =
@@ -2410,7 +2474,7 @@ function calculatePrediction(history) {
                 score.X
             );
 
-        return {
+        const resultObj = {
             du_doan:
                 result(randomSide),
 
@@ -2442,6 +2506,16 @@ function calculatePrediction(history) {
 
             evidence
         };
+
+        resultObj.recommendation = getRecommendation({
+            du_doan: resultObj.du_doan,
+            side: resultObj.side,
+            confidence: resultObj.confidence,
+            pattern_chinh: main,
+            agreement: 0
+        });
+
+        return resultObj;
     }
 
     /* -----------------------------------------------------
@@ -2645,7 +2719,7 @@ function calculatePrediction(history) {
             );
     }
 
-    return {
+    const resultObj = {
         du_doan:
             result(side),
 
@@ -2781,6 +2855,17 @@ function calculatePrediction(history) {
 
         evidence
     };
+
+    // Tích hợp tín hiệu
+    resultObj.recommendation = getRecommendation({
+        du_doan: resultObj.du_doan,
+        side: resultObj.side,
+        confidence: resultObj.confidence,
+        pattern_chinh: main,
+        agreement: resultObj.agreement
+    });
+
+    return resultObj;
 }
 
 /* =========================================================
@@ -3158,6 +3243,10 @@ app.get(
                     data.prediction
                         .evidence,
 
+                tin_hieu:
+                    data.prediction
+                        .recommendation,
+
                 next_prediction:
                     data.next,
 
@@ -3399,12 +3488,42 @@ app.get(
 
                 evidence:
                     data.prediction
-                        .evidence
+                        .evidence,
+
+                tin_hieu:
+                    data.prediction
+                        .recommendation
             });
         } catch (error) {
             res.status(500).json({
                 error:
                     error.message
+            });
+        }
+    }
+);
+
+/* =========================================================
+   /api/txmd5/signal (Tín hiệu riêng)
+========================================================= */
+
+app.get(
+    "/api/txmd5/signal",
+    async (req, res) => {
+        try {
+            const data =
+                await getData();
+
+            res.json({
+                du_doan: data.prediction.du_doan,
+                do_tin_cay: data.prediction.do_tin_cay,
+                pattern_chinh: data.prediction.pattern_chinh,
+                agreement: data.prediction.agreement,
+                tin_hieu: data.prediction.recommendation
+            });
+        } catch (error) {
+            res.status(500).json({
+                error: error.message
             });
         }
     }
@@ -3551,7 +3670,8 @@ app.get(
                 "Alternating",
                 "Bayesian",
                 "Self Learning",
-                "Light Random"
+                "Light Random",
+                "Tín hiệu báo tool (THEO/BẺ)"
             ],
 
             endpoints: [
@@ -3560,6 +3680,7 @@ app.get(
                 "/api/txmd5/history",
                 "/api/txmd5/pattern",
                 "/api/txmd5/analyze",
+                "/api/txmd5/signal",
                 "/api/txmd5/learning"
             ]
         });
@@ -3618,6 +3739,10 @@ app.listen(
 
         console.log(
             "      LIGHT RANDOM: ENABLED"
+        );
+
+        console.log(
+            "      TÍN HIỆU BÁO TOOL: ENABLED"
         );
 
         console.log(
