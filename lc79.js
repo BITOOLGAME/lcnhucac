@@ -5,6 +5,7 @@ const path = require("path");
 const app = express();
 
 const PORT = process.env.PORT || 3000;
+
 const SOURCE_API =
     "https://wtxmd52.tele68.com/v1/txmd5/sessions";
 
@@ -18,7 +19,6 @@ const MIN_PATTERN_LENGTH = 2;
 const MAX_PATTERN_LENGTH = 15;
 
 const MIN_EXACT_SAMPLES = 2;
-const MIN_STRONG_SAMPLES = 3;
 
 const PREDICTION_FILE =
     path.join(__dirname, "predictions.json");
@@ -34,7 +34,8 @@ let cache = {
 let predictionHistory =
     loadPredictions();
 
-let learnedPatterns = new Map();
+let learnedPatterns =
+    new Map();
 
 /* =========================================================
    UTIL
@@ -54,11 +55,19 @@ function round(value, digits = 2) {
 }
 
 function tx(value) {
-    return value === "Tài" ||
-        value === "TAI" ||
-        value === "T"
-        ? "T"
-        : "X";
+    const v =
+        String(value || "")
+            .toUpperCase();
+
+    if (
+        v === "TAI" ||
+        v === "T" ||
+        v === "TÀI"
+    ) {
+        return "T";
+    }
+
+    return "X";
 }
 
 function result(value) {
@@ -73,17 +82,6 @@ function opposite(value) {
         : "T";
 }
 
-function invertPattern(pattern) {
-    return pattern
-        .split("")
-        .map(char =>
-            char === "T"
-                ? "X"
-                : "T"
-        )
-        .join("");
-}
-
 function safeArray(value) {
     return Array.isArray(value)
         ? value
@@ -91,7 +89,53 @@ function safeArray(value) {
 }
 
 /* =========================================================
-   PERSISTENCE
+   RANDOM NHẸ
+========================================================= */
+
+function lightRandomPrediction(
+    scoreT,
+    scoreX
+) {
+    const total =
+        scoreT + scoreX;
+
+    /*
+     * Không có tín hiệu:
+     * random 50/50
+     */
+    if (total <= 0) {
+        return Math.random() < 0.5
+            ? "T"
+            : "X";
+    }
+
+    /*
+     * Vẫn dựa trên score hiện tại
+     */
+    const probabilityT =
+        scoreT / total;
+
+    /*
+     * Noise nhẹ ±5%
+     */
+    const noise =
+        (Math.random() - 0.5) * 0.10;
+
+    const adjusted =
+        clamp(
+            probabilityT + noise,
+            0.05,
+            0.95
+        );
+
+    return Math.random() <
+        adjusted
+        ? "T"
+        : "X";
+}
+
+/* =========================================================
+   FILE
 ========================================================= */
 
 function loadPredictions() {
@@ -134,7 +178,7 @@ function loadPredictions() {
             );
     } catch (error) {
         console.error(
-            "LOAD PREDICTIONS ERROR:",
+            "LOAD ERROR:",
             error.message
         );
 
@@ -166,14 +210,14 @@ function savePredictions() {
         );
     } catch (error) {
         console.error(
-            "SAVE PREDICTIONS ERROR:",
+            "SAVE ERROR:",
             error.message
         );
     }
 }
 
 /* =========================================================
-   FETCH SOURCE
+   FETCH API GỐC
 ========================================================= */
 
 async function fetchHistory() {
@@ -184,6 +228,7 @@ async function fetchHistory() {
                 headers: {
                     Accept:
                         "application/json",
+
                     "User-Agent":
                         "Mozilla/5.0"
                 }
@@ -204,7 +249,7 @@ async function fetchHistory() {
         !Array.isArray(data.list)
     ) {
         throw new Error(
-            "Source API không có list"
+            "API nguồn không có list"
         );
     }
 
@@ -213,18 +258,8 @@ async function fetchHistory() {
             const dices =
                 safeArray(
                     item.dices
-                ).map(Number);
-
-            const point =
-                Number(
-                    item.point
-                );
-
-            const rawResult =
-                String(
-                    item.resultTruyenThong ||
-                        ""
-                ).toUpperCase();
+                )
+                    .map(Number);
 
             return {
                 phien:
@@ -234,10 +269,14 @@ async function fetchHistory() {
                     dices,
 
                 tong:
-                    point,
+                    Number(item.point),
 
                 ket_qua:
-                    rawResult === "TAI"
+                    String(
+                        item.resultTruyenThong ||
+                            ""
+                    ).toUpperCase() ===
+                    "TAI"
                         ? "Tài"
                         : "Xỉu"
             };
@@ -265,7 +304,7 @@ async function fetchHistory() {
 }
 
 /* =========================================================
-   BASIC HISTORY
+   HISTORY / PATTERN
 ========================================================= */
 
 function getSides(history) {
@@ -283,7 +322,7 @@ function buildPattern(history) {
 }
 
 /* =========================================================
-   BAYESIAN
+   BAYES
 ========================================================= */
 
 function bayesianRate(
@@ -335,7 +374,7 @@ function distributionConfidence(
 }
 
 /* =========================================================
-   PATTERN STATISTICS
+   EXACT PATTERN
 ========================================================= */
 
 function getPatternStats(
@@ -345,10 +384,10 @@ function getPatternStats(
     const values =
         getSides(history);
 
-    const matches = [];
-
     let tai = 0;
     let xiu = 0;
+
+    const matches = [];
 
     for (
         let i = 0;
@@ -375,16 +414,16 @@ function getPatternStats(
                 i + pattern.length
             ];
 
-        matches.push({
-            index: i,
-            next
-        });
-
         if (next === "T") {
             tai++;
         } else {
             xiu++;
         }
+
+        matches.push({
+            index: i,
+            next
+        });
     }
 
     const total =
@@ -442,6 +481,10 @@ function getPatternStats(
                 pX * 100
             ),
 
+        pT,
+
+        pX,
+
         prediction:
             pT >= pX
                 ? "T"
@@ -465,16 +508,13 @@ function minePatterns(history) {
     const values =
         getSides(history);
 
-    const currentLength =
-        values.length;
-
-    const output = [];
-
     const maxLength =
         Math.min(
             MAX_PATTERN_LENGTH,
-            currentLength - 1
+            values.length - 1
         );
+
+    const patterns = [];
 
     for (
         let length =
@@ -526,10 +566,8 @@ function minePatterns(history) {
             lengthFactor *
             confidenceFactor;
 
-        output.push({
+        patterns.push({
             ...stats,
-
-            current: true,
 
             strength:
                 round(
@@ -539,7 +577,7 @@ function minePatterns(history) {
         });
     }
 
-    return output.sort(
+    return patterns.sort(
         (a, b) =>
             b.strength -
             a.strength
@@ -547,13 +585,10 @@ function minePatterns(history) {
 }
 
 /* =========================================================
-   SIMILAR PATTERN MINER
+   SIMILAR PATTERN
 ========================================================= */
 
-function similarity(
-    a,
-    b
-) {
+function similarity(a, b) {
     if (
         a.length !==
         b.length
@@ -690,14 +725,7 @@ function mineSimilarPatterns(
             matches.length,
 
         examples:
-            matches
-                .slice(-20),
-
-        tai:
-            round(tai, 4),
-
-        xiu:
-            round(xiu, 4),
+            matches.slice(-20),
 
         pT:
             tai / total,
@@ -719,22 +747,32 @@ function mineSimilarPatterns(
 }
 
 /* =========================================================
-   PATTERN TRANSFORMATIONS
+   PATTERN TRANSFORM
 ========================================================= */
 
-function reversePattern(
-    pattern
-) {
+function invertPattern(pattern) {
+    return pattern
+        .split("")
+        .map(
+            x =>
+                x === "T"
+                    ? "X"
+                    : "T"
+        )
+        .join("");
+}
+
+function reversePattern(pattern) {
     return pattern
         .split("")
         .reverse()
         .join("");
 }
 
-function rotatePattern(
-    pattern
-) {
-    if (pattern.length < 2) {
+function rotatePattern(pattern) {
+    if (
+        pattern.length < 2
+    ) {
         return pattern;
     }
 
@@ -744,29 +782,25 @@ function rotatePattern(
     );
 }
 
-function patternTransforms(
-    pattern
-) {
-    const resultSet =
+function patternTransforms(pattern) {
+    const set =
         new Set();
 
-    resultSet.add(
-        pattern
-    );
+    set.add(pattern);
 
-    resultSet.add(
+    set.add(
         invertPattern(
             pattern
         )
     );
 
-    resultSet.add(
+    set.add(
         reversePattern(
             pattern
         )
     );
 
-    resultSet.add(
+    set.add(
         invertPattern(
             reversePattern(
                 pattern
@@ -777,32 +811,27 @@ function patternTransforms(
     if (
         pattern.length >= 3
     ) {
-        resultSet.add(
+        set.add(
             rotatePattern(
                 pattern
             )
         );
     }
 
-    return [
-        ...resultSet
-    ];
+    return [...set];
 }
 
 function analyzeTransformedPatterns(
     history,
     pattern
 ) {
-    const transformed =
-        patternTransforms(
-            pattern
-        );
-
-    const data = [];
+    const output = [];
 
     for (
         const item
-        of transformed
+        of patternTransforms(
+            pattern
+        )
     ) {
         if (
             item === pattern
@@ -824,14 +853,16 @@ function analyzeTransformedPatterns(
             continue;
         }
 
-        data.push(stats);
+        output.push(
+            stats
+        );
     }
 
-    return data;
+    return output;
 }
 
 /* =========================================================
-   RUN PATTERNS
+   RUN PATTERN
 ========================================================= */
 
 function getRuns(history) {
@@ -880,20 +911,17 @@ function getRuns(history) {
     return runs;
 }
 
-function getRunSignature(
-    history
-) {
+function getRunSignature(history) {
     return getRuns(history)
         .slice(-10)
-        .map(item =>
-            item.count
+        .map(
+            item =>
+                item.count
         )
         .join("-");
 }
 
-function analyzeRunPattern(
-    history
-) {
+function analyzeRunPattern(history) {
     const runs =
         getRuns(history);
 
@@ -977,7 +1005,7 @@ function analyzeRunPattern(
     }
 
     /*
-     * DANH SÁCH CẦU PHỨC TẠP
+     * NHIỀU CẦU ĐẶC BIỆT
      */
     const specialPatterns = [
         ["1-1", 0.82],
@@ -1078,13 +1106,13 @@ function analyzeRunPattern(
         ]
         of specialPatterns
     ) {
-        const length =
-            pattern.split("-")
-                .length;
-
         const current =
             lengths
-                .slice(-length)
+                .slice(
+                    -pattern
+                        .split("-")
+                        .length
+                )
                 .join("-");
 
         if (
@@ -1101,8 +1129,7 @@ function analyzeRunPattern(
     }
 
     /*
-     * TỰ ĐỘNG PHÁT HIỆN
-     * CHUỖI TĂNG / GIẢM
+     * TĂNG
      */
     if (
         lengths.length >= 3
@@ -1161,7 +1188,6 @@ function analyzeRunPattern(
     }
 
     /*
-     * TỰ ĐỘNG PHÁT HIỆN
      * ĐỐI XỨNG
      */
     for (
@@ -1196,7 +1222,7 @@ function analyzeRunPattern(
     }
 
     /*
-     * LẶP CHU KỲ RUN
+     * CHU KỲ RUN
      */
     for (
         let period = 2;
@@ -1258,9 +1284,7 @@ function analyzeRunPattern(
    MARKOV 1
 ========================================================= */
 
-function analyzeMarkov1(
-    history
-) {
+function analyzeMarkov1(history) {
     const values =
         getSides(history);
 
@@ -1270,7 +1294,7 @@ function analyzeMarkov1(
         return null;
     }
 
-    const current =
+    const key =
         values[
             values.length - 1
         ];
@@ -1286,7 +1310,7 @@ function analyzeMarkov1(
     ) {
         if (
             values[i] !==
-            current
+            key
         ) {
             continue;
         }
@@ -1309,12 +1333,9 @@ function analyzeMarkov1(
     }
 
     return {
-        key: current,
-
+        key,
         total,
-
         tai,
-
         xiu,
 
         pT:
@@ -1335,9 +1356,7 @@ function analyzeMarkov1(
    MARKOV 2
 ========================================================= */
 
-function analyzeMarkov2(
-    history
-) {
+function analyzeMarkov2(history) {
     const values =
         getSides(history);
 
@@ -1394,11 +1413,8 @@ function analyzeMarkov2(
 
     return {
         key,
-
         total,
-
         tai,
-
         xiu,
 
         pT:
@@ -1419,9 +1435,7 @@ function analyzeMarkov2(
    MARKOV 3
 ========================================================= */
 
-function analyzeMarkov3(
-    history
-) {
+function analyzeMarkov3(history) {
     const values =
         getSides(history);
 
@@ -1478,11 +1492,8 @@ function analyzeMarkov3(
 
     return {
         key,
-
         total,
-
         tai,
-
         xiu,
 
         pT:
@@ -1503,9 +1514,7 @@ function analyzeMarkov3(
    CYCLE
 ========================================================= */
 
-function analyzeCycles(
-    history
-) {
+function analyzeCycles(history) {
     const values =
         getSides(history);
 
@@ -1533,8 +1542,7 @@ function analyzeCycles(
 
         for (
             let i = period;
-            i <
-            values.length;
+            i < values.length;
             i++
         ) {
             const previous =
@@ -1584,15 +1592,10 @@ function analyzeCycles(
 
         signals.push({
             period,
-
             total,
-
             tai,
-
             xiu,
-
             pT,
-
             pX,
 
             prediction:
@@ -1615,9 +1618,7 @@ function analyzeCycles(
    STREAK
 ========================================================= */
 
-function analyzeStreak(
-    history
-) {
+function analyzeStreak(history) {
     const values =
         getSides(history);
 
@@ -1673,9 +1674,7 @@ function analyzeStreak(
    ALTERNATING
 ========================================================= */
 
-function analyzeAlternating(
-    history
-) {
+function analyzeAlternating(history) {
     const values =
         getSides(history);
 
@@ -1725,7 +1724,7 @@ function analyzeAlternating(
 }
 
 /* =========================================================
-   LEARNING
+   SELF LEARNING
 ========================================================= */
 
 function rebuildLearning() {
@@ -1745,20 +1744,17 @@ function rebuildLearning() {
             continue;
         }
 
-        const pattern =
-            item.pattern;
-
-        if (!pattern) {
+        if (!item.pattern) {
             continue;
         }
 
         if (
             !learnedPatterns.has(
-                pattern
+                item.pattern
             )
         ) {
             learnedPatterns.set(
-                pattern,
+                item.pattern,
                 {
                     total: 0,
                     win: 0,
@@ -1769,7 +1765,7 @@ function rebuildLearning() {
 
         const data =
             learnedPatterns.get(
-                pattern
+                item.pattern
             );
 
         data.total++;
@@ -1785,9 +1781,7 @@ function rebuildLearning() {
     }
 }
 
-function getLearningScore(
-    pattern
-) {
+function getLearningScore(pattern) {
     const data =
         learnedPatterns.get(
             pattern
@@ -1797,45 +1791,58 @@ function getLearningScore(
         return null;
     }
 
-    const winRate =
-        data.total > 0
-            ? data.win /
-              data.total
-            : 0.5;
-
     return {
         ...data,
 
         win_rate:
-            round(
-                winRate * 100
-            )
+            data.total
+                ? round(
+                      data.win /
+                          data.total *
+                          100
+                  )
+                : 0
     };
 }
 
 /* =========================================================
-   ENSEMBLE PREDICTION
+   MAIN PREDICTION
 ========================================================= */
 
-function calculatePrediction(
-    history
-) {
+function calculatePrediction(history) {
     const values =
         getSides(history);
 
     if (
         values.length < 5
     ) {
+        const randomSide =
+            lightRandomPrediction(
+                0,
+                0
+            );
+
         return {
             du_doan:
-                "Không rõ cầu",
+                result(randomSide),
+
+            side:
+                randomSide,
 
             do_tin_cay:
                 "50.00%",
 
-            confidence: 50,
+            confidence:
+                50,
 
-            pattern_chinh: null,
+            trang_thai:
+                "Chưa đủ dữ liệu - Random nhẹ",
+
+            random:
+                true,
+
+            pattern_chinh:
+                null,
 
             score: {
                 tai: 0,
@@ -1857,22 +1864,25 @@ function calculatePrediction(
             : null;
 
     const currentPattern =
+        values
+            .slice(-6)
+            .join("");
+
+    const patternForAnalysis =
         main
             ? main.pattern
-            : values
-                  .slice(-6)
-                  .join("");
+            : currentPattern;
 
     const similar =
         mineSimilarPatterns(
             history,
-            currentPattern
+            patternForAnalysis
         );
 
     const transformed =
         analyzeTransformedPatterns(
             history,
-            currentPattern
+            patternForAnalysis
         );
 
     const markov1 =
@@ -1917,9 +1927,10 @@ function calculatePrediction(
 
     const evidence = [];
 
-    /*
-     * PATTERN CHÍNH
-     */
+    /* -----------------------------------------------------
+       PATTERN CHÍNH
+    ----------------------------------------------------- */
+
     if (main) {
         const weight =
             clamp(
@@ -1980,9 +1991,10 @@ function calculatePrediction(
         });
     }
 
-    /*
-     * PATTERN TƯƠNG TỰ
-     */
+    /* -----------------------------------------------------
+       PATTERN TƯƠNG TỰ
+    ----------------------------------------------------- */
+
     if (
         similar &&
         similar.matches >=
@@ -2025,9 +2037,10 @@ function calculatePrediction(
         });
     }
 
-    /*
-     * PATTERN ĐẢO / ĐỐI XỨNG
-     */
+    /* -----------------------------------------------------
+       PATTERN ĐẢO / GƯƠNG
+    ----------------------------------------------------- */
+
     for (
         const item
         of transformed
@@ -2072,9 +2085,10 @@ function calculatePrediction(
         });
     }
 
-    /*
-     * MARKOV 1
-     */
+    /* -----------------------------------------------------
+       MARKOV 1
+    ----------------------------------------------------- */
+
     if (markov1) {
         const weight = 1.8;
 
@@ -2108,9 +2122,10 @@ function calculatePrediction(
         });
     }
 
-    /*
-     * MARKOV 2
-     */
+    /* -----------------------------------------------------
+       MARKOV 2
+    ----------------------------------------------------- */
+
     if (markov2) {
         const weight = 2.2;
 
@@ -2144,9 +2159,10 @@ function calculatePrediction(
         });
     }
 
-    /*
-     * MARKOV 3
-     */
+    /* -----------------------------------------------------
+       MARKOV 3
+    ----------------------------------------------------- */
+
     if (markov3) {
         const weight = 2.5;
 
@@ -2180,9 +2196,10 @@ function calculatePrediction(
         });
     }
 
-    /*
-     * RUN / CẦU ĐẶC BIỆT
-     */
+    /* -----------------------------------------------------
+       RUN / CẦU ĐẶC BIỆT
+    ----------------------------------------------------- */
+
     if (
         run &&
         run.signals.length
@@ -2215,9 +2232,10 @@ function calculatePrediction(
         }
     }
 
-    /*
-     * STREAK
-     */
+    /* -----------------------------------------------------
+       STREAK
+    ----------------------------------------------------- */
+
     if (streak) {
         score[
             streak.prediction
@@ -2241,9 +2259,10 @@ function calculatePrediction(
         });
     }
 
-    /*
-     * ALTERNATING
-     */
+    /* -----------------------------------------------------
+       ALTERNATING
+    ----------------------------------------------------- */
+
     if (alternating) {
         score[
             alternating.prediction
@@ -2267,9 +2286,10 @@ function calculatePrediction(
         });
     }
 
-    /*
-     * CYCLE
-     */
+    /* -----------------------------------------------------
+       CYCLE
+    ----------------------------------------------------- */
+
     for (
         const cycle
         of cycles
@@ -2310,16 +2330,17 @@ function calculatePrediction(
         });
     }
 
-    /*
-     * LEARNING
-     */
+    /* -----------------------------------------------------
+       SELF LEARNING
+    ----------------------------------------------------- */
+
     const learning =
         getLearningScore(
-            currentPattern
+            patternForAnalysis
         );
 
     if (learning) {
-        const learningWeight =
+        const weight =
             clamp(
                 0.5 +
                     learning.total *
@@ -2329,30 +2350,25 @@ function calculatePrediction(
             );
 
         const prediction =
-            learning.win_rate >=
-            50
-                ? (
-                      main
-                          ? main.prediction
-                          : "T"
-                  )
+            main
+                ? main.prediction
                 : (
-                      main
-                          ? opposite(
-                                main.prediction
-                            )
+                      score.T >=
+                      score.X
+                          ? "T"
                           : "X"
                   );
 
-        score[prediction] +=
-            learningWeight;
+        score[
+            prediction
+        ] += weight;
 
         evidence.push({
             type:
                 "self_learning",
 
             pattern:
-                currentPattern,
+                patternForAnalysis,
 
             total:
                 learning.total,
@@ -2372,45 +2388,101 @@ function calculatePrediction(
                 ),
 
             weight:
-                round(
-                    learningWeight
-                )
+                round(weight)
         });
     }
 
-    /*
-     * FINAL SCORE
-     */
+    /* -----------------------------------------------------
+       TOTAL SCORE
+    ----------------------------------------------------- */
+
     const total =
         score.T +
         score.X;
 
+    /*
+     * KHÔNG CÓ TÍN HIỆU
+     */
     if (!total) {
+        const randomSide =
+            lightRandomPrediction(
+                score.T,
+                score.X
+            );
+
         return {
             du_doan:
-                "Không rõ cầu",
+                result(randomSide),
+
+            side:
+                randomSide,
 
             do_tin_cay:
                 "50.00%",
 
-            confidence: 50,
+            confidence:
+                50,
+
+            trang_thai:
+                "Không rõ cầu - Random nhẹ",
+
+            random:
+                true,
 
             pattern_chinh:
                 main,
 
             score: {
-                tai: 0,
-                xiu: 0
+                tai:
+                    round(score.T, 4),
+
+                xiu:
+                    round(score.X, 4)
             },
 
             evidence
         };
     }
 
-    const side =
-        score.T >= score.X
-            ? "T"
-            : "X";
+    /* -----------------------------------------------------
+       MARGIN
+    ----------------------------------------------------- */
+
+    const margin =
+        Math.abs(
+            score.T -
+                score.X
+        ) / total;
+
+    /*
+     * DỰ ĐOÁN
+     *
+     * Nếu hai bên quá cân bằng:
+     * random nhẹ
+     */
+    let side;
+    let random = false;
+
+    if (
+        margin < 0.05
+    ) {
+        side =
+            lightRandomPrediction(
+                score.T,
+                score.X
+            );
+
+        random = true;
+    } else {
+        side =
+            score.T >= score.X
+                ? "T"
+                : "X";
+    }
+
+    /* -----------------------------------------------------
+       PROBABILITY
+    ----------------------------------------------------- */
 
     const probability =
         Math.max(
@@ -2418,9 +2490,10 @@ function calculatePrediction(
             score.X
         ) / total;
 
-    /*
-     * Đồng thuận
-     */
+    /* -----------------------------------------------------
+       VOTES
+    ----------------------------------------------------- */
+
     const votes = {
         T: 0,
         X: 0
@@ -2458,9 +2531,10 @@ function calculatePrediction(
               voteTotal
             : 0.5;
 
-    /*
-     * Confidence ensemble
-     */
+    /* -----------------------------------------------------
+       MAIN CONFIDENCE
+    ----------------------------------------------------- */
+
     const mainConfidence =
         main
             ? Math.max(
@@ -2484,8 +2558,9 @@ function calculatePrediction(
         100;
 
     /*
-     * Giới hạn theo số mẫu
+     * GIỚI HẠN THEO SỐ MẪU
      */
+
     if (!main) {
         confidence =
             Math.min(
@@ -2519,13 +2594,8 @@ function calculatePrediction(
     }
 
     /*
-     * Margin thấp => giảm confidence
+     * MARGIN THẤP
      */
-    const margin =
-        Math.abs(
-            score.T -
-                score.X
-        ) / total;
 
     if (
         margin < 0.05
@@ -2542,8 +2612,9 @@ function calculatePrediction(
     }
 
     /*
-     * Đồng thuận thấp
+     * AGREEMENT THẤP
      */
+
     if (
         agreement < 0.55
     ) {
@@ -2562,6 +2633,18 @@ function calculatePrediction(
             confidence
         );
 
+    /*
+     * Nếu random:
+     * Không cho confidence giả quá cao
+     */
+    if (random) {
+        confidence =
+            Math.min(
+                confidence,
+                60
+            );
+    }
+
     return {
         du_doan:
             result(side),
@@ -2572,6 +2655,18 @@ function calculatePrediction(
             `${confidence.toFixed(2)}%`,
 
         confidence,
+
+        trang_thai:
+            random
+                ? "Tín hiệu yếu - Random nhẹ"
+                : "Phân tích Pattern",
+
+        random,
+
+        margin:
+            round(
+                margin * 100
+            ),
 
         score: {
             tai:
@@ -2653,9 +2748,6 @@ function calculatePrediction(
                   }
                 : null,
 
-        /*
-         * Top các pattern tìm được
-         */
         pattern_candidates:
             mined
                 .slice(0, 20)
@@ -2692,7 +2784,7 @@ function calculatePrediction(
 }
 
 /* =========================================================
-   UPDATE KẾT QUẢ DỰ ĐOÁN
+   UPDATE RESULT
 ========================================================= */
 
 function updatePredictionResults(
@@ -2752,7 +2844,7 @@ function updatePredictionResults(
 }
 
 /* =========================================================
-   CREATE NEXT PREDICTION
+   NEXT PREDICTION
 ========================================================= */
 
 function createNextPrediction(
@@ -2807,6 +2899,12 @@ function createNextPrediction(
 
             pattern,
 
+            random:
+                analysis.random,
+
+            trang_thai:
+                analysis.trang_thai,
+
             created_at:
                 new Date().toISOString()
         };
@@ -2823,6 +2921,12 @@ function createNextPrediction(
 
         record.pattern =
             pattern;
+
+        record.random =
+            analysis.random;
+
+        record.trang_thai =
+            analysis.trang_thai;
     }
 
     savePredictions();
@@ -2887,7 +2991,7 @@ async function getData() {
 }
 
 /* =========================================================
-   API: /api/taixiumd5
+   /api/taixiumd5
 ========================================================= */
 
 app.get(
@@ -2932,15 +3036,26 @@ app.get(
                 pattern:
                     data.pattern,
 
+                pattern_direction:
+                    "Cũ bên trái - Mới bên phải",
+
                 du_doan:
                     data.prediction.du_doan,
 
                 do_tin_cay:
-                    data.prediction.do_tin_cay
+                    data.prediction.do_tin_cay,
+
+                trang_thai:
+                    data.prediction
+                        .trang_thai,
+
+                random:
+                    data.prediction
+                        .random
             });
         } catch (error) {
             console.error(
-                "TAIXIUMD5 ERROR:",
+                "TAIXIUMD5:",
                 error.message
             );
 
@@ -2953,7 +3068,7 @@ app.get(
 );
 
 /* =========================================================
-   API: /api/taixiumd5/detail
+   /api/taixiumd5/detail
 ========================================================= */
 
 app.get(
@@ -2996,10 +3111,24 @@ app.get(
                     "Cũ bên trái - Mới bên phải",
 
                 du_doan:
-                    data.prediction.du_doan,
+                    data.prediction
+                        .du_doan,
 
                 do_tin_cay:
-                    data.prediction.do_tin_cay,
+                    data.prediction
+                        .do_tin_cay,
+
+                trang_thai:
+                    data.prediction
+                        .trang_thai,
+
+                random:
+                    data.prediction
+                        .random,
+
+                margin:
+                    data.prediction
+                        .margin,
 
                 pattern_chinh:
                     data.prediction
@@ -3010,7 +3139,8 @@ app.get(
                         .pattern_candidates,
 
                 score:
-                    data.prediction.score,
+                    data.prediction
+                        .score,
 
                 probability:
                     data.prediction
@@ -3021,10 +3151,12 @@ app.get(
                         .agreement,
 
                 votes:
-                    data.prediction.votes,
+                    data.prediction
+                        .votes,
 
                 evidence:
-                    data.prediction.evidence,
+                    data.prediction
+                        .evidence,
 
                 next_prediction:
                     data.next,
@@ -3044,7 +3176,7 @@ app.get(
 );
 
 /* =========================================================
-   API: /api/txmd5/history
+   /api/txmd5/history
 ========================================================= */
 
 app.get(
@@ -3058,17 +3190,17 @@ app.get(
                 data.history
             );
 
-            const records =
+            const output =
                 predictionHistory
                     .slice()
                     .sort(
                         (a, b) =>
-                            Number(
-                                b.phien
-                            ) -
-                            Number(
-                                a.phien
-                            )
+                            Number(b.phien) -
+                            Number(a.phien)
+                    )
+                    .slice(
+                        0,
+                        MAX_PREDICTION_HISTORY
                     )
                     .map(item => ({
                         phien:
@@ -3092,7 +3224,7 @@ app.get(
 
             if (
                 data.next &&
-                !records.some(
+                !output.some(
                     item =>
                         Number(
                             item.phien
@@ -3102,7 +3234,7 @@ app.get(
                         )
                 )
             ) {
-                records.unshift({
+                output.unshift({
                     phien:
                         data.next.phien,
 
@@ -3123,14 +3255,14 @@ app.get(
             }
 
             res.json(
-                records.slice(
+                output.slice(
                     0,
                     MAX_PREDICTION_HISTORY
                 )
             );
         } catch (error) {
             console.error(
-                "HISTORY ERROR:",
+                "HISTORY:",
                 error.message
             );
 
@@ -3143,7 +3275,7 @@ app.get(
 );
 
 /* =========================================================
-   API: /api/txmd5/pattern
+   /api/txmd5/pattern
 ========================================================= */
 
 app.get(
@@ -3159,12 +3291,6 @@ app.get(
 
                 length:
                     data.pattern.length,
-
-                old_left:
-                    true,
-
-                new_right:
-                    true,
 
                 direction:
                     "Cũ bên trái - Mới bên phải",
@@ -3185,10 +3311,13 @@ app.get(
                     data.prediction
                         .do_tin_cay,
 
-                history:
-                    data.history.slice(
-                        -MAX_PATTERN_HISTORY
-                    )
+                trang_thai:
+                    data.prediction
+                        .trang_thai,
+
+                random:
+                    data.prediction
+                        .random
             });
         } catch (error) {
             res.status(500).json({
@@ -3200,7 +3329,89 @@ app.get(
 );
 
 /* =========================================================
-   API: /api/txmd5/learning
+   /api/txmd5/analyze
+========================================================= */
+
+app.get(
+    "/api/txmd5/analyze",
+    async (req, res) => {
+        try {
+            const data =
+                await getData();
+
+            res.json({
+                phien:
+                    data.history[
+                        data.history.length - 1
+                    ].phien,
+
+                phien_hien_tai:
+                    data.next
+                        ? data.next.phien
+                        : null,
+
+                pattern:
+                    data.pattern,
+
+                du_doan:
+                    data.prediction
+                        .du_doan,
+
+                do_tin_cay:
+                    data.prediction
+                        .do_tin_cay,
+
+                trang_thai:
+                    data.prediction
+                        .trang_thai,
+
+                random:
+                    data.prediction
+                        .random,
+
+                margin:
+                    data.prediction
+                        .margin,
+
+                pattern_chinh:
+                    data.prediction
+                        .pattern_chinh,
+
+                pattern_candidates:
+                    data.prediction
+                        .pattern_candidates,
+
+                score:
+                    data.prediction
+                        .score,
+
+                probability:
+                    data.prediction
+                        .probability,
+
+                agreement:
+                    data.prediction
+                        .agreement,
+
+                votes:
+                    data.prediction
+                        .votes,
+
+                evidence:
+                    data.prediction
+                        .evidence
+            });
+        } catch (error) {
+            res.status(500).json({
+                error:
+                    error.message
+            });
+        }
+    }
+);
+
+/* =========================================================
+   /api/txmd5/learning
 ========================================================= */
 
 app.get(
@@ -3240,7 +3451,7 @@ app.get(
             };
         }
 
-        const total =
+        const finished =
             predictionHistory.filter(
                 item =>
                     item.danh_gia ===
@@ -3250,14 +3461,14 @@ app.get(
             );
 
         const wins =
-            total.filter(
+            finished.filter(
                 item =>
                     item.danh_gia ===
                     "✅ Thắng"
             ).length;
 
         const loses =
-            total.filter(
+            finished.filter(
                 item =>
                     item.danh_gia ===
                     "❌ Thua"
@@ -3265,17 +3476,17 @@ app.get(
 
         res.json({
             total_predictions:
-                total.length,
+                finished.length,
 
             wins,
 
             loses,
 
             win_rate:
-                total.length
+                finished.length
                     ? round(
                           wins /
-                              total.length *
+                              finished.length *
                               100
                       )
                     : 0,
@@ -3287,74 +3498,6 @@ app.get(
 
             patterns
         });
-    }
-);
-
-/* =========================================================
-   API: /api/txmd5/analyze
-========================================================= */
-
-app.get(
-    "/api/txmd5/analyze",
-    async (req, res) => {
-        try {
-            const data =
-                await getData();
-
-            res.json({
-                phien:
-                    data.history[
-                        data.history.length -
-                            1
-                    ].phien,
-
-                phien_hien_tai:
-                    data.next
-                        ? data.next.phien
-                        : null,
-
-                pattern:
-                    data.pattern,
-
-                du_doan:
-                    data.prediction
-                        .du_doan,
-
-                do_tin_cay:
-                    data.prediction
-                        .do_tin_cay,
-
-                pattern_chinh:
-                    data.prediction
-                        .pattern_chinh,
-
-                pattern_candidates:
-                    data.prediction
-                        .pattern_candidates,
-
-                score:
-                    data.prediction.score,
-
-                probability:
-                    data.prediction
-                        .probability,
-
-                agreement:
-                    data.prediction
-                        .agreement,
-
-                votes:
-                    data.prediction.votes,
-
-                evidence:
-                    data.prediction.evidence
-            });
-        } catch (error) {
-            res.status(500).json({
-                error:
-                    error.message
-            });
-        }
     }
 );
 
@@ -3378,6 +3521,9 @@ app.get(
             pattern:
                 "20 phiên - cũ bên trái - mới bên phải",
 
+            random:
+                "Random nhẹ khi tín hiệu yếu",
+
             algorithm: [
                 "Dynamic Pattern Miner",
                 "Exact Pattern",
@@ -3387,19 +3533,25 @@ app.get(
                 "Markov 2",
                 "Markov 3",
                 "Run Pattern",
+                "Cầu 1-1",
+                "Cầu 1-2",
+                "Cầu 1-2-1",
+                "Cầu 1-2-3",
                 "Cầu 1-2-3-4",
-                "Cầu tăng giảm",
+                "Cầu 1-2-3-4-5",
+                "Cầu tăng",
+                "Cầu giảm",
                 "Cầu đối xứng",
                 "Cầu kim tự tháp",
                 "Cầu răng cưa",
-                "Cầu lặp",
                 "Cầu kép",
                 "Cầu gương",
                 "Cycle",
                 "Streak",
                 "Alternating",
-                "Bayesian Confidence",
-                "Self Learning"
+                "Bayesian",
+                "Self Learning",
+                "Light Random"
             ],
 
             endpoints: [
@@ -3424,7 +3576,7 @@ setInterval(
             await getData();
         } catch (error) {
             console.error(
-                "AUTO UPDATE ERROR:",
+                "AUTO UPDATE:",
                 error.message
             );
         }
@@ -3441,31 +3593,35 @@ app.listen(
     "0.0.0.0",
     () => {
         console.log(
-            "===================================="
+            "======================================"
         );
 
         console.log(
-            "   TAI XIU MD5 API ONLINE"
+            "      TAI XIU MD5 API ONLINE"
         );
 
         console.log(
-            `   PORT: ${PORT}`
+            `      PORT: ${PORT}`
         );
 
         console.log(
-            `   SOURCE: ${SOURCE_API}`
+            `      SOURCE: ${SOURCE_API}`
         );
 
         console.log(
-            `   PATTERN: ${MAX_PATTERN_HISTORY} PHIEN`
+            "      PATTERN: 20 PHIEN"
         );
 
         console.log(
-            "   OLD -> LEFT | NEW -> RIGHT"
+            "      OLD -> LEFT | NEW -> RIGHT"
         );
 
         console.log(
-            "===================================="
+            "      LIGHT RANDOM: ENABLED"
+        );
+
+        console.log(
+            "======================================"
         );
     }
 );
