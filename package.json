@@ -2,9 +2,9 @@
   "name": "taixiumd5-api",
   "version": "1.0.0",
   "description": "Tai Xiu MD5 prediction API",
-  "main": "server.js",
+  "main": "lc79.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node lc79.js"
   },
   "engines": {
     "node": ">=18"
