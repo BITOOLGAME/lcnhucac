@@ -3,8 +3,8 @@ const fs = require("fs");
 const path = require("path");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
+const PORT = process.env.PORT || 3000;
 const SOURCE_API = "https://wtxmd52.tele68.com/v1/txmd5/sessions";
 
 const MAX_SOURCE_HISTORY = 50;
@@ -13,43 +13,116 @@ const MAX_ANALYZE_PATTERN = 12;
 const MAX_PREDICTION_HISTORY = 50;
 
 const CACHE_MS = 3000;
-const PREDICTION_FILE = path.join(__dirname, "predictions.json");
+const PREDICTION_FILE = path.join(
+    __dirname,
+    "predictions.json"
+);
 
 let cache = {
     time: 0,
     history: [],
     pattern: "",
-    prediction: null
+    prediction: null,
+    next: null
 };
 
 let predictionHistory = loadPredictions();
 
-const learnedPatterns = new Map();
+/*
+|--------------------------------------------------------------------------
+| UTIL
+|--------------------------------------------------------------------------
+*/
+
+function clamp(value, min, max) {
+    return Math.max(
+        min,
+        Math.min(max, value)
+    );
+}
+
+function tx(value) {
+    return value === "Tài"
+        ? "T"
+        : "X";
+}
+
+function result(value) {
+    return value === "T"
+        ? "Tài"
+        : "Xỉu";
+}
+
+function opposite(value) {
+    return value === "T"
+        ? "X"
+        : "T";
+}
+
+function invertPattern(pattern) {
+    return pattern
+        .split("")
+        .map(v =>
+            v === "T"
+                ? "X"
+                : "T"
+        )
+        .join("");
+}
+
+function sleep(ms) {
+    return new Promise(resolve =>
+        setTimeout(resolve, ms)
+    );
+}
+
+/*
+|--------------------------------------------------------------------------
+| PERSISTENCE
+|--------------------------------------------------------------------------
+*/
 
 function loadPredictions() {
     try {
-        if (!fs.existsSync(PREDICTION_FILE)) {
+        if (
+            !fs.existsSync(
+                PREDICTION_FILE
+            )
+        ) {
             fs.writeFileSync(
                 PREDICTION_FILE,
                 "[]",
                 "utf8"
             );
+
             return [];
         }
 
-        const data = fs.readFileSync(
-            PREDICTION_FILE,
-            "utf8"
-        );
+        const raw =
+            fs.readFileSync(
+                PREDICTION_FILE,
+                "utf8"
+            );
 
-        const parsed = JSON.parse(data);
+        const data =
+            JSON.parse(raw);
 
-        return Array.isArray(parsed)
-            ? parsed.slice(-MAX_PREDICTION_HISTORY)
-            : [];
+        if (!Array.isArray(data)) {
+            return [];
+        }
+
+        return data
+            .sort(
+                (a, b) =>
+                    Number(a.phien) -
+                    Number(b.phien)
+            )
+            .slice(
+                -MAX_PREDICTION_HISTORY
+            );
     } catch (error) {
         console.error(
-            "LOAD PREDICTIONS ERROR:",
+            "LOAD ERROR:",
             error.message
         );
 
@@ -75,73 +148,35 @@ function savePredictions() {
         );
     } catch (error) {
         console.error(
-            "SAVE PREDICTIONS ERROR:",
+            "SAVE ERROR:",
             error.message
         );
     }
 }
 
-function tx(value) {
-    return value === "Tài" ? "T" : "X";
-}
+/*
+|--------------------------------------------------------------------------
+| SOURCE API
+|--------------------------------------------------------------------------
+*/
 
-function result(value) {
-    return value === "T"
-        ? "Tài"
-        : "Xỉu";
-}
-
-function opposite(value) {
-    return value === "T"
-        ? "X"
-        : "T";
-}
-
-function invertPattern(pattern) {
-    return pattern
-        .split("")
-        .map(value =>
-            value === "T" ? "X" : "T"
-        )
-        .join("");
-}
-
-function clamp(value, min, max) {
-    return Math.max(
-        min,
-        Math.min(max, value)
-    );
-}
-
-function patternWeight(length) {
-    if (length >= 12) return 3.2;
-    if (length === 11) return 3.0;
-    if (length === 10) return 2.8;
-    if (length === 9) return 2.6;
-    if (length === 8) return 2.4;
-    if (length === 7) return 2.2;
-    if (length === 6) return 2.0;
-    if (length === 5) return 1.8;
-    if (length === 4) return 1.5;
-    if (length === 3) return 1.25;
-
-    return 1;
-}
-
-async function fetchHistory() {
-    const response = await fetch(
-        SOURCE_API,
-        {
-            headers: {
-                Accept: "application/json",
-                "User-Agent": "Mozilla/5.0"
+async function fetchSource() {
+    const response =
+        await fetch(
+            SOURCE_API,
+            {
+                headers: {
+                    Accept:
+                        "application/json",
+                    "User-Agent":
+                        "Mozilla/5.0"
+                }
             }
-        }
-    );
+        );
 
     if (!response.ok) {
         throw new Error(
-            `Source API HTTP ${response.status}`
+            `SOURCE HTTP ${response.status}`
         );
     }
 
@@ -159,19 +194,26 @@ async function fetchHistory() {
 
     return data.list
         .map(item => ({
-            phien: Number(item.id),
+            phien:
+                Number(item.id),
 
             xuc_xac:
-                Array.isArray(item.dices)
-                    ? item.dices.map(Number)
+                Array.isArray(
+                    item.dices
+                )
+                    ? item.dices.map(
+                          Number
+                      )
                     : [],
 
-            tong: Number(item.point),
+            tong:
+                Number(item.point),
 
             ket_qua:
                 String(
                     item.resultTruyenThong
-                ).toUpperCase() === "TAI"
+                ).toUpperCase() ===
+                "TAI"
                     ? "Tài"
                     : "Xỉu"
         }))
@@ -179,7 +221,8 @@ async function fetchHistory() {
             Number.isFinite(
                 item.phien
             ) &&
-            item.xuc_xac.length === 3 &&
+            item.xuc_xac.length ===
+                3 &&
             item.xuc_xac.every(
                 Number.isFinite
             ) &&
@@ -196,6 +239,12 @@ async function fetchHistory() {
         );
 }
 
+/*
+|--------------------------------------------------------------------------
+| PATTERN HISTORY
+|--------------------------------------------------------------------------
+*/
+
 function buildPattern(history) {
     return history
         .slice(
@@ -207,18 +256,86 @@ function buildPattern(history) {
         .join("");
 }
 
-function analyzePattern(
+function getValues(history) {
+    return history.map(item =>
+        tx(item.ket_qua)
+    );
+}
+
+/*
+|--------------------------------------------------------------------------
+| BAYESIAN CONFIDENCE
+|--------------------------------------------------------------------------
+|
+| Không cho pattern 1/1 = 100%.
+|
+| alpha/beta = prior.
+|--------------------------------------------------------------------------
+*/
+
+function bayesianRate(
+    success,
+    total
+) {
+    const alpha = 2;
+    const beta = 2;
+
+    return (
+        (success + alpha) /
+        (total + alpha + beta)
+    );
+}
+
+function confidenceFromDistribution(
+    tai,
+    xiu,
+    total
+) {
+    if (total <= 0) {
+        return 50;
+    }
+
+    const pT =
+        bayesianRate(
+            tai,
+            total
+        );
+
+    const pX =
+        bayesianRate(
+            xiu,
+            total
+        );
+
+    const maxP =
+        Math.max(pT, pX);
+
+    const confidence =
+        maxP * 100;
+
+    return Number(
+        clamp(
+            confidence,
+            50,
+            97
+        ).toFixed(2)
+    );
+}
+
+/*
+|--------------------------------------------------------------------------
+| PATTERN EXACT MATCH
+|--------------------------------------------------------------------------
+*/
+
+function findPatternMatches(
     history,
     pattern
 ) {
     const values =
-        history.map(item =>
-            tx(item.ket_qua)
-        );
+        getValues(history);
 
-    let total = 0;
-    let tai = 0;
-    let xiu = 0;
+    const matches = [];
 
     for (
         let i = 0;
@@ -234,16 +351,44 @@ function analyzePattern(
                 )
                 .join("");
 
-        if (current !== pattern) {
+        if (
+            current !== pattern
+        ) {
             continue;
         }
 
-        total++;
-
-        if (
+        const next =
             values[
                 i + pattern.length
-            ] === "T"
+            ];
+
+        matches.push({
+            index: i,
+            next
+        });
+    }
+
+    return matches;
+}
+
+function analyzeExactPattern(
+    history,
+    pattern
+) {
+    const matches =
+        findPatternMatches(
+            history,
+            pattern
+        );
+
+    let tai = 0;
+    let xiu = 0;
+
+    for (
+        const match of matches
+    ) {
+        if (
+            match.next === "T"
         ) {
             tai++;
         } else {
@@ -251,37 +396,72 @@ function analyzePattern(
         }
     }
 
+    const total =
+        tai + xiu;
+
     if (!total) {
         return null;
     }
+
+    const pT =
+        bayesianRate(
+            tai,
+            total
+        );
+
+    const pX =
+        bayesianRate(
+            xiu,
+            total
+        );
 
     return {
         pattern,
         total,
         tai,
         xiu,
-        pT: tai / total,
-        pX: xiu / total
+        pT,
+        pX,
+        rawTai:
+            total
+                ? tai / total
+                : 0,
+        rawXiu:
+            total
+                ? xiu / total
+                : 0,
+        confidence:
+            confidenceFromDistribution(
+                tai,
+                xiu,
+                total
+            )
     };
 }
 
-function getCurrentPatterns(history) {
+/*
+|--------------------------------------------------------------------------
+| PATTERN CHÍNH
+|--------------------------------------------------------------------------
+*/
+
+function analyzeMainPattern(
+    history
+) {
     const values =
-        history.map(item =>
-            tx(item.ket_qua)
-        );
+        getValues(history);
 
-    const output = [];
-
-    const maxLength =
+    const max =
         Math.min(
             MAX_ANALYZE_PATTERN,
             values.length - 1
         );
 
+    const all = [];
+
     for (
         let length = 2;
-        length <= maxLength;
+        length <= max;
         length++
     ) {
         const pattern =
@@ -289,196 +469,274 @@ function getCurrentPatterns(history) {
                 .slice(-length)
                 .join("");
 
-        const reversed =
-            invertPattern(pattern);
-
-        const main =
-            analyzePattern(
+        const data =
+            analyzeExactPattern(
                 history,
                 pattern
             );
 
-        if (
-            main &&
-            main.total >= 2
-        ) {
-            output.push({
-                ...main,
-                mode: "chinh"
+        if (data) {
+            all.push({
+                ...data,
+                length,
+                isCurrent: true
             });
         }
+    }
 
-        const reverse =
-            analyzePattern(
-                history,
-                reversed
+    if (!all.length) {
+        return {
+            pattern: "",
+            total: 0,
+            tai: 0,
+            xiu: 0,
+            confidence: 50,
+            prediction: null,
+            samples: []
+        };
+    }
+
+    /*
+     * Pattern dài hơn được ưu tiên,
+     * nhưng phải có đủ mẫu.
+     */
+    all.sort(
+        (a, b) => {
+            const scoreA =
+                a.length *
+                1.4 +
+                Math.log2(
+                    a.total + 1
+                ) *
+                    1.8;
+
+            const scoreB =
+                b.length *
+                1.4 +
+                Math.log2(
+                    b.total + 1
+                ) *
+                    1.8;
+
+            return scoreB - scoreA;
+        }
+    );
+
+    const best =
+        all[0];
+
+    const prediction =
+        best.pT >= best.pX
+            ? "T"
+            : "X";
+
+    return {
+        ...best,
+
+        prediction,
+
+        samples:
+            all.slice(
+                0,
+                10
+            )
+    };
+}
+
+/*
+|--------------------------------------------------------------------------
+| SIMILAR PATTERN
+|--------------------------------------------------------------------------
+*/
+
+function similarity(
+    a,
+    b
+) {
+    if (
+        a.length !==
+        b.length
+    ) {
+        return 0;
+    }
+
+    let same = 0;
+
+    for (
+        let i = 0;
+        i < a.length;
+        i++
+    ) {
+        if (
+            a[i] === b[i]
+        ) {
+            same++;
+        }
+    }
+
+    return (
+        same / a.length
+    );
+}
+
+function findSimilarPatterns(
+    history,
+    currentPattern
+) {
+    const values =
+        getValues(history);
+
+    const output = [];
+
+    const length =
+        currentPattern.length;
+
+    if (length < 3) {
+        return output;
+    }
+
+    for (
+        let i = 0;
+        i + length <
+        values.length;
+        i++
+    ) {
+        const candidate =
+            values
+                .slice(
+                    i,
+                    i + length
+                )
+                .join("");
+
+        const score =
+            similarity(
+                currentPattern,
+                candidate
             );
 
         if (
-            reverse &&
-            reverse.total >= 2 &&
-            reversed !== pattern
-        ) {
-            output.push({
-                ...reverse,
-                mode: "dao"
-            });
-        }
-    }
-
-    return output;
-}
-
-function analyzeMarkov(history) {
-    const values =
-        history.map(item =>
-            tx(item.ket_qua)
-        );
-
-    if (values.length < 5) {
-        return null;
-    }
-
-    const current =
-        values[
-            values.length - 1
-        ];
-
-    let total = 0;
-    let tai = 0;
-    let xiu = 0;
-
-    for (
-        let i = 0;
-        i < values.length - 1;
-        i++
-    ) {
-        if (
-            values[i] !== current
+            score < 0.75
         ) {
             continue;
         }
 
-        total++;
+        const next =
+            values[
+                i + length
+            ];
 
-        if (
-            values[i + 1] === "T"
-        ) {
-            tai++;
-        } else {
-            xiu++;
-        }
+        output.push({
+            pattern:
+                candidate,
+
+            similarity:
+                score,
+
+            next,
+
+            index: i
+        });
     }
 
-    if (!total) {
-        return null;
-    }
-
-    return {
-        total,
-        pT: tai / total,
-        pX: xiu / total
-    };
-}
-
-function analyzeMarkov2(history) {
-    const values =
-        history.map(item =>
-            tx(item.ket_qua)
-        );
-
-    if (values.length < 7) {
-        return null;
-    }
-
-    const key =
-        values
-            .slice(-2)
-            .join("");
-
-    let total = 0;
     let tai = 0;
     let xiu = 0;
 
     for (
-        let i = 0;
-        i < values.length - 2;
-        i++
+        const item of output
     ) {
-        const pair =
-            values
-                .slice(i, i + 2)
-                .join("");
-
-        if (pair !== key) {
-            continue;
-        }
-
-        total++;
+        const weight =
+            Math.pow(
+                item.similarity,
+                3
+            );
 
         if (
-            values[i + 2] === "T"
+            item.next === "T"
         ) {
-            tai++;
+            tai += weight;
         } else {
-            xiu++;
+            xiu += weight;
         }
     }
 
-    if (!total) {
-        return null;
-    }
+    const total =
+        tai + xiu;
 
     return {
-        key,
+        matches:
+            output.length,
+
+        tai,
+        xiu,
+
         total,
-        pT: tai / total,
-        pX: xiu / total
+
+        pT:
+            total
+                ? tai / total
+                : 0.5,
+
+        pX:
+            total
+                ? xiu / total
+                : 0.5,
+
+        confidence:
+            total
+                ? confidenceFromDistribution(
+                      tai,
+                      xiu,
+                      output.length
+                  )
+                : 50
     };
 }
 
-function analyzeStreak(history) {
-    const values =
-        history.map(item =>
-            tx(item.ket_qua)
-        );
+/*
+|--------------------------------------------------------------------------
+| PATTERN ĐẢO
+|--------------------------------------------------------------------------
+*/
 
-    if (!values.length) {
+function analyzeInversePattern(
+    history,
+    mainPattern
+) {
+    if (!mainPattern) {
         return null;
     }
 
-    const side =
-        values[
-            values.length - 1
-        ];
+    const inverse =
+        invertPattern(
+            mainPattern
+        );
 
-    let length = 1;
+    const data =
+        analyzeExactPattern(
+            history,
+            inverse
+        );
 
-    for (
-        let i = values.length - 2;
-        i >= 0;
-        i--
-    ) {
-        if (
-            values[i] !== side
-        ) {
-            break;
-        }
-
-        length++;
+    if (!data) {
+        return null;
     }
 
     return {
-        side,
-        length
+        ...data,
+        inverse
     };
 }
 
-function getRunLengths(history) {
+/*
+|--------------------------------------------------------------------------
+| RUN / CẦU
+|--------------------------------------------------------------------------
+*/
+
+function getRuns(history) {
     const values =
-        history.map(item =>
-            tx(item.ket_qua)
-        );
+        getValues(history);
 
     const runs = [];
 
@@ -486,7 +744,9 @@ function getRunLengths(history) {
         return runs;
     }
 
-    let side = values[0];
+    let side =
+        values[0];
+
     let count = 1;
 
     for (
@@ -494,7 +754,10 @@ function getRunLengths(history) {
         i < values.length;
         i++
     ) {
-        if (values[i] === side) {
+        if (
+            values[i] ===
+            side
+        ) {
             count++;
         } else {
             runs.push({
@@ -502,7 +765,9 @@ function getRunLengths(history) {
                 count
             });
 
-            side = values[i];
+            side =
+                values[i];
+
             count = 1;
         }
     }
@@ -515,809 +780,1197 @@ function getRunLengths(history) {
     return runs;
 }
 
+function runSignature(history) {
+    return getRuns(history)
+        .slice(-6)
+        .map(run =>
+            run.count
+        )
+        .join("-");
+}
+
 function analyzeRunPattern(
     history
 ) {
     const runs =
-        getRunLengths(history);
+        getRuns(history);
 
-    if (runs.length < 3) {
+    if (
+        runs.length < 2
+    ) {
         return null;
     }
 
     const recent =
-        runs.slice(-5);
+        runs.slice(-8);
 
     const lengths =
-        recent.map(run =>
-            run.count
+        recent.map(
+            r => r.count
         );
 
     const last =
-        runs[runs.length - 1];
+        recent[
+            recent.length - 1
+        ];
 
     const previous =
-        runs[runs.length - 2];
+        recent[
+            recent.length - 2
+        ];
 
-    return {
-        runs: recent,
-        lengths,
-        last,
-        previous
-    };
-}
-
-function specialPatterns(history) {
-    const values =
-        history.map(item =>
-            tx(item.ket_qua)
-        );
-
-    const output = [];
-
-    if (values.length < 4) {
-        return output;
-    }
-
-    const p4 =
-        values.slice(-4).join("");
-
-    const p5 =
-        values.slice(-5).join("");
-
-    const p6 =
-        values.slice(-6).join("");
-
-    const p7 =
-        values.slice(-7).join("");
-
-    const p8 =
-        values.slice(-8).join("");
-
-    const p10 =
-        values.slice(-10).join("");
-
-    const p12 =
-        values.slice(-12).join("");
-
-    const last =
-        values[values.length - 1];
-
-    const next =
-        opposite(last);
+    const result = [];
 
     function add(
-        type,
+        name,
         prediction,
-        strength
+        weight
     ) {
-        output.push({
-            type,
+        result.push({
+            name,
             prediction,
-            strength
+            weight
         });
     }
 
-    const patterns = [
-        [
-            "1-1",
-            [
-                "TXTXTX",
-                "XTXTXT"
-            ],
-            0.89
-        ],
-        [
-            "2-2",
-            [
-                "TTXXTTXX",
-                "XXTTXXTT"
-            ],
-            0.86
-        ],
-        [
-            "3-3",
-            [
-                "TTTXXX",
-                "XXXTTT"
-            ],
-            0.84
-        ],
-        [
-            "1-2-1",
-            [
-                "TXXT",
-                "XTTX"
-            ],
-            0.82
-        ],
-        [
-            "2-1-2",
-            [
-                "TTXTT",
-                "XXTXX"
-            ],
-            0.82
-        ],
-        [
-            "1-3-1",
-            [
-                "XTTTX",
-                "TXXXT"
-            ],
-            0.80
-        ],
-        [
-            "1-2",
-            [
-                "TXXTXX",
-                "XTTXTT"
-            ],
-            0.81
-        ],
-        [
-            "2-1",
-            [
-                "TTXTTX",
-                "XXTXXT"
-            ],
-            0.81
-        ],
-        [
-            "3-2",
-            [
-                "TTTXX",
-                "XXXTT"
-            ],
-            0.77
-        ],
-        [
-            "2-3",
-            [
-                "TTXXX",
-                "XXTTT"
-            ],
-            0.77
-        ],
-        [
-            "4-1",
-            [
-                "TTTTX",
-                "XXXXT"
-            ],
-            0.76
-        ],
-        [
-            "1-4",
-            [
-                "XTTTT",
-                "TXXXX"
-            ],
-            0.76
-        ],
-        [
-            "4-2",
-            [
-                "TTTTXX",
-                "XXXXTT"
-            ],
-            0.75
-        ],
-        [
-            "2-4",
-            [
-                "TTXXXX",
-                "XXTTTT"
-            ],
-            0.75
-        ],
-        [
-            "5-1",
-            [
-                "TTTTTX",
-                "XXXXXT"
-            ],
-            0.72
-        ],
-        [
-            "1-5",
-            [
-                "XTTTTT",
-                "TXXXXX"
-            ],
-            0.72
-        ],
-        [
-            "6-1",
-            [
-                "TTTTTTX",
-                "XXXXXXT"
-            ],
-            0.70
-        ],
-        [
-            "1-6",
-            [
-                "XTTTTTT",
-                "TXXXXXX"
-            ],
-            0.70
-        ],
-        [
-            "2-2-2",
-            [
-                "TTXXTT",
-                "XXTTXX"
-            ],
-            0.82
-        ],
-        [
-            "3-2-1",
-            [
-                "TTTXXT",
-                "XXXTTX"
-            ],
-            0.73
-        ],
-        [
-            "1-2-3",
-            [
-                "TXXTTT",
-                "XTTXXX"
-            ],
-            0.73
-        ]
-    ];
-
-    for (const [
-        name,
-        samples,
-        strength
-    ] of patterns) {
-        if (
-            samples.includes(p4) ||
-            samples.includes(p5) ||
-            samples.includes(p6) ||
-            samples.includes(p7) ||
-            samples.includes(p8)
-        ) {
-            add(
-                name,
-                next,
-                strength
-            );
-        }
-    }
-
+    /*
+     * 1-1
+     */
     if (
-        /^(TX)+T?$/.test(p8) ||
-        /^(XT)+X?$/.test(p8)
+        lengths
+            .slice(-6)
+            .every(v => v === 1)
     ) {
         add(
-            "dao",
-            next,
-            0.85
+            "1-1",
+            opposite(last.side),
+            0.90
         );
     }
 
+    /*
+     * 2-2
+     */
     if (
-        p6.slice(0, 3) ===
-        p6.slice(3)
+        lengths.length >= 4 &&
+        lengths
+            .slice(-4)
+            .every(v => v === 2)
     ) {
         add(
-            "chu-ky-3",
-            next,
+            "2-2",
+            opposite(last.side),
+            0.88
+        );
+    }
+
+    /*
+     * 3-3
+     */
+    if (
+        lengths.length >= 4 &&
+        lengths
+            .slice(-4)
+            .every(v => v === 3)
+    ) {
+        add(
+            "3-3",
+            opposite(last.side),
+            0.86
+        );
+    }
+
+    /*
+     * 1-2-1
+     */
+    if (
+        lengths
+            .slice(-3)
+            .join("-") ===
+        "1-2-1"
+    ) {
+        add(
+            "1-2-1",
+            opposite(last.side),
+            0.84
+        );
+    }
+
+    /*
+     * 2-1-2
+     */
+    if (
+        lengths
+            .slice(-3)
+            .join("-") ===
+        "2-1-2"
+    ) {
+        add(
+            "2-1-2",
+            opposite(last.side),
+            0.84
+        );
+    }
+
+    /*
+     * 1-3-1
+     */
+    if (
+        lengths
+            .slice(-3)
+            .join("-") ===
+        "1-3-1"
+    ) {
+        add(
+            "1-3-1",
+            opposite(last.side),
+            0.82
+        );
+    }
+
+    /*
+     * 3-1-3
+     */
+    if (
+        lengths
+            .slice(-3)
+            .join("-") ===
+        "3-1-3"
+    ) {
+        add(
+            "3-1-3",
+            opposite(last.side),
+            0.82
+        );
+    }
+
+    /*
+     * 1-2
+     */
+    if (
+        lengths
+            .slice(-4)
+            .join("-") ===
+        "1-2-1-2"
+    ) {
+        add(
+            "1-2",
+            opposite(last.side),
+            0.83
+        );
+    }
+
+    /*
+     * 2-1
+     */
+    if (
+        lengths
+            .slice(-4)
+            .join("-") ===
+        "2-1-2-1"
+    ) {
+        add(
+            "2-1",
+            opposite(last.side),
+            0.83
+        );
+    }
+
+    /*
+     * 2-2-2
+     */
+    if (
+        lengths
+            .slice(-3)
+            .join("-") ===
+        "2-2-2"
+    ) {
+        add(
+            "2-2-2",
+            opposite(last.side),
+            0.86
+        );
+    }
+
+    /*
+     * 3-2-1
+     */
+    if (
+        lengths
+            .slice(-3)
+            .join("-") ===
+        "3-2-1"
+    ) {
+        add(
+            "3-2-1",
+            opposite(last.side),
             0.78
         );
     }
 
+    /*
+     * 1-2-3
+     */
     if (
-        p8.slice(0, 4) ===
-        p8.slice(4)
+        lengths
+            .slice(-3)
+            .join("-") ===
+        "1-2-3"
     ) {
         add(
-            "chu-ky-4",
-            next,
-            0.79
+            "1-2-3",
+            opposite(last.side),
+            0.78
         );
     }
 
+    /*
+     * 4-1
+     */
     if (
-        p8 ===
-        p8.split("")
-            .reverse()
-            .join("")
+        lengths
+            .slice(-2)
+            .join("-") ===
+        "4-1"
     ) {
         add(
-            "doi-xung",
-            next,
-            0.80
+            "4-1",
+            opposite(last.side),
+            0.76
         );
     }
 
+    /*
+     * 1-4
+     */
     if (
-        p6 === "TTTXXT" ||
-        p6 === "XXXTTX" ||
-        p6 === "TTXXXT" ||
-        p6 === "XXTTTX"
+        lengths
+            .slice(-2)
+            .join("-") ===
+        "1-4"
     ) {
         add(
-            "cau-gay",
-            last,
-            0.70
+            "1-4",
+            opposite(last.side),
+            0.76
         );
     }
 
+    /*
+     * 5-1
+     */
     if (
-        p10 === "TXXTTXXXTT"
+        lengths
+            .slice(-2)
+            .join("-") ===
+        "5-1"
     ) {
         add(
-            "cau-tang",
-            "T",
+            "5-1",
+            opposite(last.side),
+            0.74
+        );
+    }
+
+    /*
+     * 1-5
+     */
+    if (
+        lengths
+            .slice(-2)
+            .join("-") ===
+        "1-5"
+    ) {
+        add(
+            "1-5",
+            opposite(last.side),
+            0.74
+        );
+    }
+
+    /*
+     * Cầu bệt
+     */
+    if (
+        last.count >= 3
+    ) {
+        add(
+            "bet",
+            last.side,
+            clamp(
+                0.62 +
+                    last.count *
+                        0.04,
+                0.62,
+                0.82
+            )
+        );
+    }
+
+    /*
+     * Cầu gãy
+     */
+    if (
+        previous.count >= 3 &&
+        last.count === 1
+    ) {
+        add(
+            "gay",
+            last.side,
             0.72
         );
     }
 
-    if (
-        p10 === "TTTXXXTTXX"
-    ) {
-        add(
-            "cau-giam",
-            "X",
-            0.72
-        );
-    }
+    return {
+        signature:
+            runSignature(
+                history
+            ),
 
-    if (
-        p12 === "TXTTXTXTTXTX"
-    ) {
-        add(
-            "special-12-A",
-            "T",
-            0.90
-        );
-    }
+        runs: recent,
 
-    if (
-        p12 === "XTTXTXTTXTTX"
-    ) {
-        add(
-            "special-12-B",
-            "X",
-            0.90
-        );
-    }
-
-    return output;
+        signals: result
+    };
 }
 
-function getLearnData(pattern) {
-    if (!learnedPatterns.has(pattern)) {
-        learnedPatterns.set(
-            pattern,
-            {
-                total: 0,
-                win: 0,
-                lose: 0
-            }
-        );
-    }
+/*
+|--------------------------------------------------------------------------
+| CHU KỲ
+|--------------------------------------------------------------------------
+*/
 
-    return learnedPatterns.get(
-        pattern
-    );
-}
+function analyzeCycles(history) {
+    const values =
+        getValues(history);
 
-function getLearnRate(pattern) {
-    const data =
-        learnedPatterns.get(pattern);
+    const signals = [];
 
-    if (
-        !data ||
-        data.total === 0
-    ) {
-        return 50;
-    }
-
-    return (
-        (
-            (data.win + 1) /
-            (data.total + 2)
-        ) * 100
-    );
-}
-
-function learnFromHistory(history) {
     for (
-        const record
-        of predictionHistory
+        let period = 2;
+        period <= 6;
+        period++
     ) {
         if (
-            record.danh_gia !==
-            "✅ Thắng" &&
-            record.danh_gia !==
-            "❌ Thua"
+            values.length <
+            period * 3
         ) {
             continue;
         }
 
-        if (
-            !record.pattern
-        ) {
-            continue;
-        }
-
-        const data =
-            getLearnData(
-                record.pattern
+        const recent =
+            values.slice(
+                -period
             );
 
-        const already =
-            data._sessions || [];
+        let matches = 0;
 
+        let total = 0;
+
+        for (
+            let i = period;
+            i < values.length;
+            i++
+        ) {
+            const previous =
+                values.slice(
+                    i - period,
+                    i
+                );
+
+            const current =
+                values[i];
+
+            if (
+                previous.join("") ===
+                recent.join("")
+            ) {
+                total++;
+
+                if (
+                    current ===
+                    recent[
+                        recent.length -
+                            1
+                    ]
+                ) {
+                    matches++;
+                }
+            }
+        }
+
+        if (total < 2) {
+            continue;
+        }
+
+        const p =
+            matches /
+            total;
+
+        const prediction =
+            p >= 0.5
+                ? recent[
+                      recent.length - 1
+                  ]
+                : opposite(
+                      recent[
+                          recent.length -
+                              1
+                      ]
+                  );
+
+        signals.push({
+            period,
+            total,
+            p,
+            prediction
+        });
+    }
+
+    return signals;
+}
+
+/*
+|--------------------------------------------------------------------------
+| MARKOV 1
+|--------------------------------------------------------------------------
+*/
+
+function analyzeMarkov1(
+    history
+) {
+    const values =
+        getValues(history);
+
+    if (
+        values.length < 5
+    ) {
+        return null;
+    }
+
+    const current =
+        values[
+            values.length - 1
+        ];
+
+    let tai = 0;
+    let xiu = 0;
+
+    for (
+        let i = 0;
+        i < values.length - 1;
+        i++
+    ) {
         if (
-            already.includes(
-                record.phien
-            )
+            values[i] !==
+            current
         ) {
             continue;
         }
 
-        already.push(
-            record.phien
-        );
-
-        data._sessions =
-            already.slice(-100);
-
-        data.total++;
-
         if (
-            record.danh_gia ===
-            "✅ Thắng"
+            values[i + 1] ===
+            "T"
         ) {
-            data.win++;
+            tai++;
         } else {
-            data.lose++;
+            xiu++;
         }
     }
+
+    const total =
+        tai + xiu;
+
+    if (!total) {
+        return null;
+    }
+
+    return {
+        tai,
+        xiu,
+        total,
+
+        pT:
+            bayesianRate(
+                tai,
+                total
+            ),
+
+        pX:
+            bayesianRate(
+                xiu,
+                total
+            )
+    };
 }
+
+/*
+|--------------------------------------------------------------------------
+| MARKOV 2
+|--------------------------------------------------------------------------
+*/
+
+function analyzeMarkov2(
+    history
+) {
+    const values =
+        getValues(history);
+
+    if (
+        values.length < 7
+    ) {
+        return null;
+    }
+
+    const key =
+        values
+            .slice(-2)
+            .join("");
+
+    let tai = 0;
+    let xiu = 0;
+
+    for (
+        let i = 0;
+        i < values.length - 2;
+        i++
+    ) {
+        const pair =
+            values
+                .slice(
+                    i,
+                    i + 2
+                )
+                .join("");
+
+        if (
+            pair !== key
+        ) {
+            continue;
+        }
+
+        if (
+            values[i + 2] ===
+            "T"
+        ) {
+            tai++;
+        } else {
+            xiu++;
+        }
+    }
+
+    const total =
+        tai + xiu;
+
+    if (!total) {
+        return null;
+    }
+
+    return {
+        key,
+        tai,
+        xiu,
+        total,
+
+        pT:
+            bayesianRate(
+                tai,
+                total
+            ),
+
+        pX:
+            bayesianRate(
+                xiu,
+                total
+            )
+    };
+}
+
+/*
+|--------------------------------------------------------------------------
+| ENSEMBLE
+|--------------------------------------------------------------------------
+*/
 
 function calculatePrediction(
     history
 ) {
-    learnFromHistory(history);
-
-    const score = {
-        T: 0,
-        X: 0
-    };
-
-    const evidence = [];
-
-    const patterns =
-        getCurrentPatterns(
+    const main =
+        analyzeMainPattern(
             history
         );
 
-    for (
-        const item of patterns
-    ) {
-        const learnRate =
-            getLearnRate(
-                item.pattern
-            );
+    const inverse =
+        analyzeInversePattern(
+            history,
+            main.pattern
+        );
 
-        const lengthFactor =
-            patternWeight(
-                item.pattern.length
-            );
-
-        const occurrenceFactor =
-            Math.min(
-                2.5,
-                Math.log2(
-                    item.total + 1
-                )
-            );
-
-        const learningFactor =
-            0.5 +
-            learnRate / 100;
-
-        const modeFactor =
-            item.mode === "chinh"
-                ? 1
-                : 0.85;
-
-        const recencyFactor =
-            item.pattern ===
-            history
-                .slice(
-                    -item.pattern.length
-                )
-                .map(v =>
-                    tx(v.ket_qua)
-                )
-                .join("")
-                ? 1.25
-                : 1;
-
-        const weight =
-            lengthFactor *
-            occurrenceFactor *
-            learningFactor *
-            modeFactor *
-            recencyFactor;
-
-        score.T +=
-            item.pT * weight;
-
-        score.X +=
-            item.pX * weight;
-
-        evidence.push({
-            type: "pattern",
-            pattern:
-                item.pattern,
-            mode:
-                item.mode,
-            total:
-                item.total,
-            tai:
-                Number(
-                    (
-                        item.pT * 100
-                    ).toFixed(2)
-                ),
-            xiu:
-                Number(
-                    (
-                        item.pX * 100
-                    ).toFixed(2)
-                ),
-            hoc:
-                Number(
-                    learnRate.toFixed(2)
-                ),
-            weight:
-                Number(
-                    weight.toFixed(3)
-                )
-        });
-    }
-
-    const markov =
-        analyzeMarkov(history);
-
-    if (markov) {
-        score.T +=
-            markov.pT * 3.2;
-
-        score.X +=
-            markov.pX * 3.2;
-
-        evidence.push({
-            type: "markov",
-            total:
-                markov.total,
-            tai:
-                Number(
-                    (
-                        markov.pT * 100
-                    ).toFixed(2)
-                ),
-            xiu:
-                Number(
-                    (
-                        markov.pX * 100
-                    ).toFixed(2)
-                )
-        });
-    }
-
-    const markov2 =
-        analyzeMarkov2(history);
-
-    if (markov2) {
-        score.T +=
-            markov2.pT * 4;
-
-        score.X +=
-            markov2.pX * 4;
-
-        evidence.push({
-            type: "markov2",
-            pattern:
-                markov2.key,
-            total:
-                markov2.total,
-            tai:
-                Number(
-                    (
-                        markov2.pT * 100
-                    ).toFixed(2)
-                ),
-            xiu:
-                Number(
-                    (
-                        markov2.pX * 100
-                    ).toFixed(2)
-                )
-        });
-    }
-
-    const streak =
-        analyzeStreak(history);
-
-    if (streak) {
-        let weight = 0.7;
-
-        if (
-            streak.length >= 3
-        ) {
-            weight = 1.5;
-        }
-
-        if (
-            streak.length >= 4
-        ) {
-            weight = 2.0;
-        }
-
-        if (
-            streak.length >= 5
-        ) {
-            weight = 2.4;
-        }
-
-        if (
-            streak.length >= 6
-        ) {
-            weight = 2.8;
-        }
-
-        score[
-            streak.side
-        ] += weight;
-
-        evidence.push({
-            type: "streak",
-            result:
-                result(
-                    streak.side
-                ),
-            length:
-                streak.length,
-            weight
-        });
-    }
+    const similar =
+        findSimilarPatterns(
+            history,
+            main.pattern
+        );
 
     const run =
         analyzeRunPattern(
             history
         );
 
-    if (run) {
-        const last =
-            run.last;
-
-        const previous =
-            run.previous;
-
-        if (
-            last.count ===
-            previous.count
-        ) {
-            score[
-                opposite(
-                    last.side
-                )
-            ] += 1.6;
-
-            evidence.push({
-                type:
-                    "run-repeat",
-                prediction:
-                    result(
-                        opposite(
-                            last.side
-                        )
-                    ),
-                strength: 1.6
-            });
-        }
-
-        if (
-            last.count >
-            previous.count
-        ) {
-            score[
-                opposite(
-                    last.side
-                )
-            ] += 1.2;
-
-            evidence.push({
-                type:
-                    "run-increase",
-                prediction:
-                    result(
-                        opposite(
-                            last.side
-                        )
-                    ),
-                strength: 1.2
-            });
-        }
-    }
-
-    const special =
-        specialPatterns(
+    const cycles =
+        analyzeCycles(
             history
         );
 
-    for (
-        const item
-        of special
-    ) {
-        score[
-            item.prediction
-        ] +=
-            item.strength * 3;
+    const markov1 =
+        analyzeMarkov1(
+            history
+        );
 
-        evidence.push({
+    const markov2 =
+        analyzeMarkov2(
+            history
+        );
+
+    const score = {
+        T: 0,
+        X: 0
+    };
+
+    const signals = [];
+
+    /*
+     * PATTERN CHÍNH
+     *
+     * Đây là tín hiệu quan trọng nhất.
+     */
+    if (
+        main.total > 0
+    ) {
+        const weight =
+            clamp(
+                3 +
+                    main.length *
+                        0.45 +
+                    Math.log2(
+                        main.total + 1
+                    ),
+                3,
+                9
+            );
+
+        score.T +=
+            main.pT * weight;
+
+        score.X +=
+            main.pX * weight;
+
+        signals.push({
             type:
-                item.type,
-            prediction:
-                result(
-                    item.prediction
+                "pattern_chinh",
+
+            pattern:
+                main.pattern,
+
+            length:
+                main.length,
+
+            samples:
+                main.total,
+
+            tai:
+                main.tai,
+
+            xiu:
+                main.xiu,
+
+            ty_le_tai:
+                Number(
+                    (
+                        main.rawTai *
+                        100
+                    ).toFixed(2)
                 ),
-            strength:
-                item.strength
+
+            ty_le_xiu:
+                Number(
+                    (
+                        main.rawXiu *
+                        100
+                    ).toFixed(2)
+                ),
+
+            bayes_tai:
+                Number(
+                    (
+                        main.pT *
+                        100
+                    ).toFixed(2)
+                ),
+
+            bayes_xiu:
+                Number(
+                    (
+                        main.pX *
+                        100
+                    ).toFixed(2)
+                ),
+
+            do_tin_cay:
+                `${main.confidence}%`,
+
+            weight
         });
     }
 
-    const total =
-        score.T + score.X;
+    /*
+     * PATTERN ĐẢO
+     */
+    if (inverse) {
+        const weight =
+            1.5;
 
-    if (total <= 0) {
+        score.T +=
+            inverse.pT *
+            weight;
+
+        score.X +=
+            inverse.pX *
+            weight;
+
+        signals.push({
+            type:
+                "pattern_dao",
+
+            pattern:
+                inverse.inverse,
+
+            samples:
+                inverse.total,
+
+            tai:
+                inverse.tai,
+
+            xiu:
+                inverse.xiu,
+
+            weight
+        });
+    }
+
+    /*
+     * PATTERN TƯƠNG TỰ
+     */
+    if (
+        similar &&
+        similar.total > 0
+    ) {
+        const weight =
+            clamp(
+                1.5 +
+                    similar.matches *
+                        0.12,
+                1.5,
+                3
+            );
+
+        score.T +=
+            similar.pT *
+            weight;
+
+        score.X +=
+            similar.pX *
+            weight;
+
+        signals.push({
+            type:
+                "pattern_tuong_tu",
+
+            matches:
+                similar.matches,
+
+            tai:
+                Number(
+                    (
+                        similar.pT *
+                        100
+                    ).toFixed(2)
+                ),
+
+            xiu:
+                Number(
+                    (
+                        similar.pX *
+                        100
+                    ).toFixed(2)
+                ),
+
+            weight
+        });
+    }
+
+    /*
+     * MARKOV 1
+     */
+    if (markov1) {
+        const weight = 2;
+
+        score.T +=
+            markov1.pT *
+            weight;
+
+        score.X +=
+            markov1.pX *
+            weight;
+
+        signals.push({
+            type:
+                "markov_1",
+
+            samples:
+                markov1.total,
+
+            tai:
+                markov1.tai,
+
+            xiu:
+                markov1.xiu,
+
+            weight
+        });
+    }
+
+    /*
+     * MARKOV 2
+     */
+    if (markov2) {
+        const weight = 2.5;
+
+        score.T +=
+            markov2.pT *
+            weight;
+
+        score.X +=
+            markov2.pX *
+            weight;
+
+        signals.push({
+            type:
+                "markov_2",
+
+            pattern:
+                markov2.key,
+
+            samples:
+                markov2.total,
+
+            tai:
+                markov2.tai,
+
+            xiu:
+                markov2.xiu,
+
+            weight
+        });
+    }
+
+    /*
+     * RUN
+     */
+    if (
+        run &&
+        run.signals.length
+    ) {
+        for (
+            const signal
+            of run.signals
+        ) {
+            score[
+                signal.prediction
+            ] +=
+                signal.weight * 1.7;
+
+            signals.push({
+                type:
+                    "run",
+
+                pattern:
+                    signal.name,
+
+                prediction:
+                    result(
+                        signal.prediction
+                    ),
+
+                strength:
+                    signal.weight
+            });
+        }
+    }
+
+    /*
+     * CYCLE
+     */
+    for (
+        const cycle
+        of cycles
+    ) {
+        const weight =
+            clamp(
+                0.8 +
+                    cycle.total *
+                        0.08,
+                0.8,
+                1.8
+            );
+
+        score[
+            cycle.prediction
+        ] += weight;
+
+        signals.push({
+            type:
+                "cycle",
+
+            period:
+                cycle.period,
+
+            samples:
+                cycle.total,
+
+            prediction:
+                result(
+                    cycle.prediction
+                ),
+
+            weight
+        });
+    }
+
+    /*
+     * FINAL
+     */
+    const total =
+        score.T +
+        score.X;
+
+    if (!total) {
         return {
             du_doan:
                 "Không rõ cầu",
+
+            side: null,
+
             do_tin_cay:
-                "0.00%",
-            score,
-            evidence
+                "50.00%",
+
+            confidence: 50,
+
+            pattern_chinh:
+                main,
+
+            signals
         };
     }
 
-    const prediction =
+    const side =
         score.T >= score.X
             ? "T"
             : "X";
 
-    const raw =
-        (
-            Math.max(
-                score.T,
-                score.X
-            ) / total
-        ) * 100;
+    /*
+     * Độ đồng thuận.
+     */
+    const votes = {
+        T: 0,
+        X: 0
+    };
 
-    const margin =
-        Math.abs(
-            score.T - score.X
+    for (
+        const signal
+        of signals
+    ) {
+        let prediction = null;
+
+        if (
+            signal.type ===
+            "pattern_chinh"
+        ) {
+            prediction =
+                main.prediction;
+        }
+
+        if (
+            signal.type ===
+            "pattern_dao"
+        ) {
+            prediction =
+                inverse.pT >=
+                inverse.pX
+                    ? "T"
+                    : "X";
+        }
+
+        if (
+            signal.type ===
+            "pattern_tuong_tu"
+        ) {
+            prediction =
+                similar.pT >=
+                similar.pX
+                    ? "T"
+                    : "X";
+        }
+
+        if (
+            signal.type ===
+            "markov_1"
+        ) {
+            prediction =
+                markov1.pT >=
+                markov1.pX
+                    ? "T"
+                    : "X";
+        }
+
+        if (
+            signal.type ===
+            "markov_2"
+        ) {
+            prediction =
+                markov2.pT >=
+                markov2.pX
+                    ? "T"
+                    : "X";
+        }
+
+        if (
+            signal.type ===
+            "run"
+        ) {
+            prediction =
+                signal.prediction;
+        }
+
+        if (
+            signal.type ===
+            "cycle"
+        ) {
+            prediction =
+                signal.prediction;
+        }
+
+        if (prediction) {
+            votes[prediction]++;
+        }
+    }
+
+    const voteTotal =
+        votes.T +
+        votes.X;
+
+    const agreement =
+        voteTotal
+            ? Math.max(
+                  votes.T,
+                  votes.X
+              ) /
+              voteTotal
+            : 0.5;
+
+    /*
+     * Confidence ensemble:
+     *
+     * 55% score model
+     * 30% pattern chính
+     * 15% đồng thuận
+     */
+    const scoreConfidence =
+        Math.max(
+            score.T,
+            score.X
         ) / total;
 
+    const mainConfidence =
+        main.total > 0
+            ? Math.max(
+                  main.pT,
+                  main.pX
+              )
+            : 0.5;
+
     let confidence =
-        50 + margin * 50;
+        (
+            scoreConfidence *
+                0.55 +
+            mainConfidence *
+                0.30 +
+            agreement *
+                0.15
+        ) * 100;
+
+    /*
+     * Không cho confidence cao nếu
+     * pattern chính có quá ít dữ liệu.
+     */
+    if (
+        main.total === 0
+    ) {
+        confidence =
+            Math.min(
+                confidence,
+                65
+            );
+    } else if (
+        main.total < 3
+    ) {
+        confidence =
+            Math.min(
+                confidence,
+                68
+            );
+    } else if (
+        main.total < 5
+    ) {
+        confidence =
+            Math.min(
+                confidence,
+                75
+            );
+    } else if (
+        main.total < 8
+    ) {
+        confidence =
+            Math.min(
+                confidence,
+                84
+            );
+    }
+
+    /*
+     * Nếu mô hình chia rất sát nhau
+     * thì giảm confidence.
+     */
+    const margin =
+        Math.abs(
+            score.T -
+                score.X
+        ) / total;
+
+    if (
+        margin < 0.08
+    ) {
+        confidence -= 8;
+    } else if (
+        margin < 0.15
+    ) {
+        confidence -= 4;
+    }
 
     confidence =
         clamp(
             confidence,
             50,
-            98
+            97
         );
 
     confidence =
@@ -1327,123 +1980,104 @@ function calculatePrediction(
 
     return {
         du_doan:
-            result(prediction),
+            result(side),
 
-        side:
-            prediction,
+        side,
 
         do_tin_cay:
             `${confidence.toFixed(2)}%`,
 
         confidence,
 
-        raw:
-            Number(
-                raw.toFixed(2)
-            ),
-
         score: {
             tai:
                 Number(
                     score.T.toFixed(4)
                 ),
+
             xiu:
                 Number(
                     score.X.toFixed(4)
                 )
         },
 
-        evidence
+        agreement:
+            Number(
+                (
+                    agreement * 100
+                ).toFixed(2)
+            ),
+
+        votes,
+
+        pattern_chinh: {
+            pattern:
+                main.pattern,
+
+            length:
+                main.length,
+
+            so_lan_gap:
+                main.total,
+
+            tai_sau_pattern:
+                main.tai,
+
+            xiu_sau_pattern:
+                main.xiu,
+
+            ty_le_tai:
+                Number(
+                    (
+                        main.rawTai *
+                        100
+                    ).toFixed(2)
+                ),
+
+            ty_le_xiu:
+                Number(
+                    (
+                        main.rawXiu *
+                        100
+                    ).toFixed(2)
+                ),
+
+            bayes_tai:
+                Number(
+                    (
+                        main.pT *
+                        100
+                    ).toFixed(2)
+                ),
+
+            bayes_xiu:
+                Number(
+                    (
+                        main.pX *
+                        100
+                    ).toFixed(2)
+                ),
+
+            du_doan:
+                main.prediction
+                    ? result(
+                          main.prediction
+                      )
+                    : "Không rõ",
+
+            do_tin_cay:
+                `${main.confidence}%`
+        },
+
+        signals
     };
 }
 
-function findPrediction(
-    phien
-) {
-    return predictionHistory.find(
-        item =>
-            Number(item.phien) ===
-            Number(phien)
-    );
-}
-
-function createPrediction(
-    history,
-    prediction,
-    pattern
-) {
-    const latest =
-        history[
-            history.length - 1
-        ];
-
-    const nextPhien =
-        latest.phien + 1;
-
-    const existing =
-        findPrediction(
-            nextPhien
-        );
-
-    if (existing) {
-        if (
-            existing.ket_qua ===
-            "⌛ Chờ Kết Quả"
-        ) {
-            existing.du_doan =
-                prediction.du_doan;
-
-            existing.do_tin_cay =
-                prediction.do_tin_cay;
-
-            existing.pattern =
-                pattern;
-
-            savePredictions();
-        }
-
-        return existing;
-    }
-
-    const record = {
-        phien:
-            nextPhien,
-
-        du_doan:
-            prediction.du_doan,
-
-        do_tin_cay:
-            prediction.do_tin_cay,
-
-        ket_qua:
-            "⌛ Chờ Kết Quả",
-
-        danh_gia:
-            "⌛ Chờ",
-
-        xuc_xac: [],
-
-        tong:
-            "⌛ Chờ",
-
-        pattern,
-        created_at:
-            new Date().toISOString()
-    };
-
-    predictionHistory.push(
-        record
-    );
-
-    predictionHistory =
-        predictionHistory.slice(
-            -MAX_PREDICTION_HISTORY
-        );
-
-    savePredictions();
-
-    return record;
-}
+/*
+|--------------------------------------------------------------------------
+| UPDATE PREDICTION HISTORY
+|--------------------------------------------------------------------------
+*/
 
 function updatePredictionResults(
     sourceHistory
@@ -1451,11 +2085,11 @@ function updatePredictionResults(
     let changed = false;
 
     for (
-        const record
+        const prediction
         of predictionHistory
     ) {
         if (
-            record.ket_qua !==
+            prediction.ket_qua !==
             "⌛ Chờ Kết Quả"
         ) {
             continue;
@@ -1468,7 +2102,7 @@ function updatePredictionResults(
                         item.phien
                     ) ===
                     Number(
-                        record.phien
+                        prediction.phien
                     )
             );
 
@@ -1476,17 +2110,17 @@ function updatePredictionResults(
             continue;
         }
 
-        record.ket_qua =
+        prediction.ket_qua =
             actual.ket_qua;
 
-        record.xuc_xac =
+        prediction.xuc_xac =
             actual.xuc_xac;
 
-        record.tong =
+        prediction.tong =
             actual.tong;
 
-        record.danh_gia =
-            record.du_doan ===
+        prediction.danh_gia =
+            prediction.du_doan ===
             actual.ket_qua
                 ? "✅ Thắng"
                 : "❌ Thua";
@@ -1499,8 +2133,168 @@ function updatePredictionResults(
     }
 }
 
+/*
+|--------------------------------------------------------------------------
+| SELF LEARNING
+|--------------------------------------------------------------------------
+*/
+
+const learned = new Map();
+
+function learnPattern(
+    pattern,
+    won
+) {
+    if (!pattern) {
+        return;
+    }
+
+    if (
+        !learned.has(
+            pattern
+        )
+    ) {
+        learned.set(
+            pattern,
+            {
+                total: 0,
+                win: 0,
+                lose: 0
+            }
+        );
+    }
+
+    const data =
+        learned.get(pattern);
+
+    data.total++;
+
+    if (won) {
+        data.win++;
+    } else {
+        data.lose++;
+    }
+}
+
+function rebuildLearning() {
+    learned.clear();
+
+    for (
+        const item
+        of predictionHistory
+    ) {
+        if (
+            item.danh_gia !==
+            "✅ Thắng" &&
+            item.danh_gia !==
+            "❌ Thua"
+        ) {
+            continue;
+        }
+
+        learnPattern(
+            item.pattern,
+            item.danh_gia ===
+                "✅ Thắng"
+        );
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| CREATE NEXT PREDICTION
+|--------------------------------------------------------------------------
+*/
+
+function createNextPrediction(
+    history,
+    analysis,
+    pattern
+) {
+    const latest =
+        history[
+            history.length - 1
+        ];
+
+    const nextPhien =
+        latest.phien + 1;
+
+    let record =
+        predictionHistory.find(
+            item =>
+                Number(
+                    item.phien
+                ) ===
+                Number(nextPhien)
+        );
+
+    if (!record) {
+        record = {
+            phien:
+                nextPhien,
+
+            du_doan:
+                analysis.du_doan,
+
+            do_tin_cay:
+                analysis.do_tin_cay,
+
+            ket_qua:
+                "⌛ Chờ Kết Quả",
+
+            danh_gia:
+                "⌛ Chờ",
+
+            xuc_xac: [],
+
+            tong:
+                "⌛ Chờ",
+
+            pattern,
+
+            created_at:
+                new Date().toISOString()
+        };
+
+        predictionHistory.push(
+            record
+        );
+    } else {
+        record.du_doan =
+            analysis.du_doan;
+
+        record.do_tin_cay =
+            analysis.do_tin_cay;
+
+        record.pattern =
+            pattern;
+    }
+
+    predictionHistory =
+        predictionHistory
+            .sort(
+                (a, b) =>
+                    Number(a.phien) -
+                    Number(b.phien)
+            )
+            .slice(
+                -MAX_PREDICTION_HISTORY
+            );
+
+    savePredictions();
+
+    return record;
+}
+
+/*
+|--------------------------------------------------------------------------
+| MAIN DATA
+|--------------------------------------------------------------------------
+*/
+
 async function getData() {
-    const now = Date.now();
+    const now =
+        Date.now();
 
     if (
         cache.prediction &&
@@ -1511,11 +2305,13 @@ async function getData() {
     }
 
     const history =
-        await fetchHistory();
+        await fetchSource();
 
     updatePredictionResults(
         history
     );
+
+    rebuildLearning();
 
     const pattern =
         buildPattern(
@@ -1528,7 +2324,7 @@ async function getData() {
         );
 
     const next =
-        createPrediction(
+        createNextPrediction(
             history,
             prediction,
             pattern
@@ -1536,18 +2332,24 @@ async function getData() {
 
     cache = {
         time: now,
+
         history,
+
         pattern,
+
         prediction,
+
         next
     };
 
     return cache;
 }
 
-// ============================================================
-// API: /api/taixiumd5
-// ============================================================
+/*
+|--------------------------------------------------------------------------
+| API /api/taixiumd5
+|--------------------------------------------------------------------------
+*/
 
 app.get(
     "/api/taixiumd5",
@@ -1591,7 +2393,7 @@ app.get(
             });
         } catch (error) {
             console.error(
-                "TAIXIUMD5 ERROR:",
+                "TAIXIUMD5:",
                 error.message
             );
 
@@ -1603,9 +2405,92 @@ app.get(
     }
 );
 
-// ============================================================
-// API: /api/txmd5/history
-// ============================================================
+/*
+|--------------------------------------------------------------------------
+| API /api/taixiumd5/detail
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+    "/api/taixiumd5/detail",
+    async (req, res) => {
+        try {
+            const {
+                history,
+                pattern,
+                prediction,
+                next
+            } = await getData();
+
+            const latest =
+                history[
+                    history.length - 1
+                ];
+
+            res.json({
+                phien:
+                    latest.phien,
+
+                xuc_xac:
+                    latest.xuc_xac,
+
+                tong:
+                    latest.tong,
+
+                ket_qua:
+                    latest.ket_qua,
+
+                phien_hien_tai:
+                    latest.phien + 1,
+
+                pattern,
+
+                pattern_length:
+                    pattern.length,
+
+                du_doan:
+                    prediction.du_doan,
+
+                do_tin_cay:
+                    prediction.do_tin_cay,
+
+                pattern_chinh:
+                    prediction.pattern_chinh,
+
+                score:
+                    prediction.score,
+
+                agreement:
+                    prediction.agreement,
+
+                votes:
+                    prediction.votes,
+
+                signals:
+                    prediction.signals,
+
+                next_prediction:
+                    next,
+
+                history:
+                    history.slice(
+                        -MAX_PATTERN_HISTORY
+                    )
+            });
+        } catch (error) {
+            res.status(500).json({
+                error:
+                    error.message
+            });
+        }
+    }
+);
+
+/*
+|--------------------------------------------------------------------------
+| API /api/txmd5/history
+|--------------------------------------------------------------------------
+*/
 
 app.get(
     "/api/txmd5/history",
@@ -1620,13 +2505,15 @@ app.get(
                 history
             );
 
-            const records =
+            rebuildLearning();
+
+            const output =
                 predictionHistory
                     .slice()
                     .sort(
                         (a, b) =>
-                            b.phien -
-                            a.phien
+                            Number(b.phien) -
+                            Number(a.phien)
                     )
                     .slice(
                         0,
@@ -1652,8 +2539,8 @@ app.get(
                             item.tong
                     }));
 
-            const hasNext =
-                records.some(
+            const exists =
+                output.some(
                     item =>
                         Number(
                             item.phien
@@ -1663,8 +2550,8 @@ app.get(
                         )
                 );
 
-            if (!hasNext) {
-                records.unshift({
+            if (!exists) {
+                output.unshift({
                     phien:
                         next.phien,
 
@@ -1685,14 +2572,14 @@ app.get(
             }
 
             res.json(
-                records.slice(
+                output.slice(
                     0,
                     MAX_PREDICTION_HISTORY
                 )
             );
         } catch (error) {
             console.error(
-                "HISTORY ERROR:",
+                "HISTORY:",
                 error.message
             );
 
@@ -1704,49 +2591,102 @@ app.get(
     }
 );
 
-// ============================================================
-// API DETAIL
-// ============================================================
+/*
+|--------------------------------------------------------------------------
+| API /api/txmd5/learning
+|--------------------------------------------------------------------------
+*/
 
 app.get(
-    "/api/taixiumd5/detail",
+    "/api/txmd5/learning",
+    (req, res) => {
+        rebuildLearning();
+
+        const patterns = {};
+
+        for (
+            const [
+                pattern,
+                data
+            ]
+            of learned
+        ) {
+            const winRate =
+                data.total > 0
+                    ? (
+                          data.win /
+                          data.total
+                      ) * 100
+                    : 0;
+
+            patterns[
+                pattern
+            ] = {
+                total:
+                    data.total,
+
+                win:
+                    data.win,
+
+                lose:
+                    data.lose,
+
+                win_rate:
+                    Number(
+                        winRate.toFixed(
+                            2
+                        )
+                    )
+            };
+        }
+
+        res.json({
+            total_patterns:
+                Object.keys(
+                    patterns
+                ).length,
+
+            patterns
+        });
+    }
+);
+
+/*
+|--------------------------------------------------------------------------
+| API /api/txmd5/pattern
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+    "/api/txmd5/pattern",
     async (req, res) => {
         try {
             const {
                 history,
                 pattern,
-                prediction,
-                next
+                prediction
             } = await getData();
 
             res.json({
-                phien:
-                    history[
-                        history.length - 1
-                    ].phien,
-
-                phien_hien_tai:
-                    next.phien,
-
                 pattern,
 
-                pattern_length:
+                length:
                     pattern.length,
+
+                cu_ben_trai:
+                    true,
+
+                moi_ben_phai:
+                    true,
+
+                pattern_chinh:
+                    prediction.pattern_chinh,
 
                 du_doan:
                     prediction.du_doan,
 
                 do_tin_cay:
                     prediction.do_tin_cay,
-
-                score:
-                    prediction.score,
-
-                evidence:
-                    prediction.evidence,
-
-                next_prediction:
-                    next,
 
                 history:
                     history.slice(
@@ -1762,55 +2702,11 @@ app.get(
     }
 );
 
-// ============================================================
-// API LEARNING
-// ============================================================
-
-app.get(
-    "/api/txmd5/learning",
-    (req, res) => {
-        const data = {};
-
-        for (
-            const [
-                pattern,
-                value
-            ]
-            of learnedPatterns
-        ) {
-            data[pattern] = {
-                total:
-                    value.total,
-
-                win:
-                    value.win,
-
-                lose:
-                    value.lose,
-
-                win_rate:
-                    Number(
-                        getLearnRate(
-                            pattern
-                        ).toFixed(2)
-                    )
-            };
-        }
-
-        res.json({
-            total_patterns:
-                Object.keys(data)
-                    .length,
-
-            patterns:
-                data
-        });
-    }
-);
-
-// ============================================================
-// API HEALTH
-// ============================================================
+/*
+|--------------------------------------------------------------------------
+| HEALTH
+|--------------------------------------------------------------------------
+*/
 
 app.get(
     "/",
@@ -1820,10 +2716,7 @@ app.get(
                 "online",
 
             service:
-                "TAI XIU MD5 API",
-
-            source:
-                SOURCE_API,
+                "TAI XIU MD5",
 
             pattern:
                 "20 phiên - cũ trái, mới phải",
@@ -1832,15 +2725,18 @@ app.get(
                 "/api/taixiumd5",
                 "/api/taixiumd5/detail",
                 "/api/txmd5/history",
+                "/api/txmd5/pattern",
                 "/api/txmd5/learning"
             ]
         });
     }
 );
 
-// ============================================================
-// AUTO REFRESH
-// ============================================================
+/*
+|--------------------------------------------------------------------------
+| AUTO UPDATE
+|--------------------------------------------------------------------------
+*/
 
 setInterval(
     async () => {
@@ -1848,7 +2744,7 @@ setInterval(
             await getData();
         } catch (error) {
             console.error(
-                "AUTO UPDATE ERROR:",
+                "AUTO UPDATE:",
                 error.message
             );
         }
@@ -1856,24 +2752,26 @@ setInterval(
     CACHE_MS
 );
 
-// ============================================================
-// START
-// ============================================================
+/*
+|--------------------------------------------------------------------------
+| START
+|--------------------------------------------------------------------------
+*/
 
 app.listen(
     PORT,
     "0.0.0.0",
     () => {
         console.log(
-            `TAI XIU MD5 API running on port ${PORT}`
+            `TAI XIU MD5 API running :${PORT}`
         );
 
         console.log(
-            `Source: ${SOURCE_API}`
+            `SOURCE: ${SOURCE_API}`
         );
 
         console.log(
-            `Pattern: ${MAX_PATTERN_HISTORY} phiên`
+            `PATTERN: ${MAX_PATTERN_HISTORY} phiên`
         );
     }
 );
