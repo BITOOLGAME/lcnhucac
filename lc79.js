@@ -1853,6 +1853,55 @@ function calculatePrediction(history) {
         };
     }
 
+/* =========================================================
+TÍN HIỆU THEO / BẺ
+========================================================= */
+
+function getSignalMode(predictionSide, confidence) {
+    /*
+     * 60% trở lên:
+     * THEO tín hiệu
+     */
+    if (confidence >= 60) {
+        return {
+            mode: "THEO",
+            signal: result(predictionSide),
+            action: predictionSide,
+            description:
+                `Báo ${result(predictionSide)} ${confidence}% → THEO`
+        };
+    }
+
+    /*
+     * 50% - 59%:
+     * BẺ tín hiệu
+     */
+    if (confidence >= 50) {
+        const breakSide =
+            opposite(predictionSide);
+
+        return {
+            mode: "BẺ",
+            signal: result(predictionSide),
+            action: breakSide,
+            description:
+                `Báo ${result(predictionSide)} ${confidence}% → BẺ sang ${result(breakSide)}`
+        };
+    }
+
+    /*
+     * < 50%:
+     * Không rõ
+     */
+    return {
+        mode: "KHÔNG RÕ",
+        signal: result(predictionSide),
+        action: predictionSide,
+        description:
+            `Tín hiệu yếu ${confidence}%`
+    };
+}
+
     const mined =
         minePatterns(
             history
