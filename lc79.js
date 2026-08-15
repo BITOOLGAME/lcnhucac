@@ -13,8 +13,8 @@ let txHistory = [];
 let currentSessionId = null;
 let fetchInterval = null;
 let currentPattern = "n/a"; // Lưu chuỗi 60 phiên
-let predictionHistory = []; // Lưu lịch sử dự đoán
-let predictionMap = {};    // Map: session -> 'T'/'X' (dự đoán)
+let predictionHistory = []; // Mảng lưu các bản ghi dự đoán
+let predictionMap = {};    // Map: session -> 'T'/'X' (dự đoán raw)
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1004,7 +1004,7 @@ class SEIUEnsemble {
 //  PATTERN ANALYSIS - LẤY 60 PHIÊN GẦN NHẤT
 // ================================
 function getComplexPattern(history) {
-    const minHistory = 60; // Đổi thành 60 phiên
+    const minHistory = 20; // Số phiên hiển thị
     if (history.length < minHistory) return "n/a";
     const historyTx = history.map(h => h.tx);
     return historyTx.slice(-minHistory).join('').toLowerCase();
@@ -1043,13 +1043,13 @@ class SEIUManager {
         this.calculateInitialStats();
         this.currentPrediction = this.getPrediction();
 
-        // === Tạo bản ghi tạm cho phiên tiếp theo ===
+        // Tạo bản ghi tạm cho phiên tiếp theo
         const nextSession = this.history.at(-1) ? this.history.at(-1).session + 1 : null;
         if (nextSession && this.currentPrediction) {
             predictionMap[nextSession] = this.currentPrediction.rawPrediction;
             predictionHistory.push({
                 session: nextSession,
-                du_doan: this.currentPrediction.prediction,
+                du_doan: this.currentPrediction.prediction, // "tài" hoặc "xỉu"
                 ket_qua: "⌛ Chờ Kết Quả",
                 danh_gia: "⌛ Chờ",
                 xuc_xac: [],
