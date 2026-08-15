@@ -1288,7 +1288,7 @@ class SEIUManagerV23 {
     }
 
     calculateInitialStats() {
-        const minStart = 20;
+        const minStart = 15;
         if (this.history.length < minStart) return;
         const trainSamples = Math.min(60, this.history.length - minStart);
         const startIdx = this.history.length - trainSamples;
