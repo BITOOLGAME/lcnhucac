@@ -13,6 +13,8 @@ let txHistory = [];
 let currentSessionId = null;
 let fetchInterval = null;
 let currentPattern = "n/a"; // Lưu chuỗi 60 phiên
+let predictionHistory = []; // Lưu lịch sử dự đoán
+let predictionMap = {};    // Map: session -> 'T'/'X' (dự đoán)
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1002,7 +1004,7 @@ class SEIUEnsemble {
 //  PATTERN ANALYSIS - LẤY 60 PHIÊN GẦN NHẤT
 // ================================
 function getComplexPattern(history) {
-    const minHistory = 20; // Đổi từ 15 lên 60
+    const minHistory = 60; // Đổi thành 60 phiên
     if (history.length < minHistory) return "n/a";
     const historyTx = history.map(h => h.tx);
     return historyTx.slice(-minHistory).join('').toLowerCase();
@@ -1040,14 +1042,61 @@ class SEIUManager {
         this.ensemble.fitInitial(this.history);
         this.calculateInitialStats();
         this.currentPrediction = this.getPrediction();
-        // Lưu chuỗi 60 phiên vào currentPattern
+
+        // === Tạo bản ghi tạm cho phiên tiếp theo ===
+        const nextSession = this.history.at(-1) ? this.history.at(-1).session + 1 : null;
+        if (nextSession && this.currentPrediction) {
+            predictionMap[nextSession] = this.currentPrediction.rawPrediction;
+            predictionHistory.push({
+                session: nextSession,
+                du_doan: this.currentPrediction.prediction,
+                ket_qua: "⌛ Chờ Kết Quả",
+                danh_gia: "⌛ Chờ",
+                xuc_xac: [],
+                tong: "⌛ Chờ"
+            });
+        }
+
         currentPattern = getComplexPattern(this.history);
         console.log("📦 Đã tải lịch sử. Hệ thống AI sẵn sàng.");
-        const nextSession = this.history.at(-1) ? this.history.at(-1).session + 1 : 'N/A';
-        console.log(`🔮 Dự đoán phiên ${nextSession}: ${this.currentPrediction.prediction} (${(this.currentPrediction.confidence * 100).toFixed(0)}%)`);
+        const nextSessionDisplay = this.history.at(-1) ? this.history.at(-1).session + 1 : 'N/A';
+        console.log(`🔮 Dự đoán phiên ${nextSessionDisplay}: ${this.currentPrediction.prediction} (${(this.currentPrediction.confidence * 100).toFixed(0)}%)`);
     }
 
     pushRecord(record) {
+        // --- 1. Cập nhật bản ghi tạm cho phiên này (nếu có) ---
+        const index = predictionHistory.findIndex(item => item.session === record.session && item.ket_qua === "⌛ Chờ Kết Quả");
+        if (index !== -1) {
+            const isCorrect = (predictionMap[record.session] === record.tx);
+            predictionHistory[index] = {
+                ...predictionHistory[index],
+                ket_qua: record.tx === 'T' ? 'Tài' : 'Xỉu',
+                danh_gia: isCorrect ? "✅ Thắng" : "❌ Thua",
+                xuc_xac: record.dice,
+                tong: record.total
+            };
+            delete predictionMap[record.session];
+        } else {
+            // Trường hợp không có bản ghi tạm (ít xảy ra), tạo mới
+            const duDoan = predictionMap[record.session] || null;
+            const isCorrect = (duDoan === record.tx);
+            predictionHistory.push({
+                session: record.session,
+                du_doan: duDoan ? (duDoan === 'T' ? 'Tài' : 'Xỉu') : "⌛ Chờ",
+                ket_qua: record.tx === 'T' ? 'Tài' : 'Xỉu',
+                danh_gia: duDoan ? (isCorrect ? "✅ Thắng" : "❌ Thua") : "⌛ Chờ",
+                xuc_xac: record.dice,
+                tong: record.total
+            });
+            delete predictionMap[record.session];
+        }
+
+        // Giới hạn lịch sử
+        if (predictionHistory.length > 500) {
+            predictionHistory = predictionHistory.slice(-500);
+        }
+
+        // --- 2. Cập nhật history và ensemble (giữ nguyên) ---
         this.history.push(record);
         if (this.history.length > 500) {
             this.history = this.history.slice(-450);
@@ -1056,15 +1105,34 @@ class SEIUManager {
         if (prefix.length >= 10) {
             this.ensemble.updateWithOutcome(prefix, record.tx);
         }
+
+        // --- 3. Tính dự đoán mới và tạo bản ghi tạm cho phiên tiếp theo ---
         this.currentPrediction = this.getPrediction();
+        const nextSession = record.session + 1;
+        if (this.currentPrediction) {
+            predictionMap[nextSession] = this.currentPrediction.rawPrediction;
+            const exists = predictionHistory.some(item => item.session === nextSession && item.ket_qua === "⌛ Chờ Kết Quả");
+            if (!exists) {
+                predictionHistory.push({
+                    session: nextSession,
+                    du_doan: this.currentPrediction.prediction,
+                    ket_qua: "⌛ Chờ Kết Quả",
+                    danh_gia: "⌛ Chờ",
+                    xuc_xac: [],
+                    tong: "⌛ Chờ"
+                });
+            }
+        }
+
+        // --- 4. Cập nhật pattern (giữ nguyên) ---
         const features = extractFeatures(this.history);
         const patternType = detectPatternType(features.runs);
-        // Cập nhật chuỗi 60 phiên
         currentPattern = getComplexPattern(this.history);
         if (patternType) {
             this.patternHistory.push(patternType);
             if (this.patternHistory.length > 20) this.patternHistory.shift();
         }
+
         console.log(`📥 ${record.session} → ${record.result}. Dự đoán ${record.session + 1}: ${this.currentPrediction.prediction} (${(this.currentPrediction.confidence * 100).toFixed(0)}%)`);
     }
 
@@ -1159,17 +1227,12 @@ app.get("/api/taixiumd5/lc79", async () => {
 });
 
 app.get("/api/taixiumd5/history", async () => {
-    if (!txHistory.length) {
-        return { message: "không có dữ liệu lịch sử." };
+    if (!predictionHistory.length) {
+        return { message: "không có dữ liệu dự đoán." };
     }
-    const reversedHistory = [...txHistory].sort((a, b) => b.session - a.session);
-    return reversedHistory.map((i) => ({
-        session: i.session,
-        dice: i.dice,
-        total: i.total,
-        result: i.result.toLowerCase(),
-        tx_label: i.tx.toLowerCase(),
-    }));
+    // Sắp xếp giảm dần theo session (mới nhất trước)
+    const sorted = [...predictionHistory].sort((a, b) => b.session - a.session);
+    return sorted;
 });
 
 app.get("/", async () => {
