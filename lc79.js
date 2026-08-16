@@ -28,10 +28,12 @@ const COMPARE_PATTERN_LENGTH = 5;
 
 const MAX_PATTERN_MEMORY = 15;
 
+const MAX_EVALUATION_HISTORY = 50;
+
 const MIN_HISTORY = 15;
 
 // =========================================================
-// HISTORY
+// HISTORY API
 // =========================================================
 
 const histories = {
@@ -49,11 +51,22 @@ const patternMemory = {
 };
 
 // =========================================================
+// HISTORY ĐÁNH GIÁ
+// =========================================================
+
+const evaluationHistory = {
+    tx: [],
+    md5: []
+};
+
+// =========================================================
 // AI MEMORY
 // =========================================================
 
 function createModelMemory() {
+
     return {
+
         model1: {
             weight: 1,
             win: 0,
@@ -121,11 +134,8 @@ const aiMemory = {
 
 const PATTERN_MODELS = {
 
-    // -----------------------------------------------------
-    // 1. CẦU BỆT
-    // -----------------------------------------------------
-
     streak: [
+
         "TT",
         "TTT",
         "TTTT",
@@ -143,11 +153,8 @@ const PATTERN_MODELS = {
         "XXXXXXXX"
     ],
 
-    // -----------------------------------------------------
-    // 2. CẦU 1-1
-    // -----------------------------------------------------
-
     alternating: [
+
         "TX",
         "XT",
 
@@ -170,11 +177,8 @@ const PATTERN_MODELS = {
         "XTXTXTXTXTXTXT"
     ],
 
-    // -----------------------------------------------------
-    // 3. CẦU 2-2
-    // -----------------------------------------------------
-
     twoTwo: [
+
         "TTXX",
         "XXTT",
 
@@ -191,11 +195,8 @@ const PATTERN_MODELS = {
         "XXTTXXTTXXTTXX"
     ],
 
-    // -----------------------------------------------------
-    // 4. CẦU 1-2-1
-    // -----------------------------------------------------
-
     oneTwoOne: [
+
         "TXXT",
         "XTTX",
 
@@ -209,11 +210,8 @@ const PATTERN_MODELS = {
         "XTTXXTTXXTTXXTT"
     ],
 
-    // -----------------------------------------------------
-    // 5. CẦU 2-1-2
-    // -----------------------------------------------------
-
     twoOneTwo: [
+
         "TTXTT",
         "XXTXX",
 
@@ -227,11 +225,8 @@ const PATTERN_MODELS = {
         "XXTXXTXXTXXTXX"
     ],
 
-    // -----------------------------------------------------
-    // 6. CẦU 3-1
-    // -----------------------------------------------------
-
     threeOne: [
+
         "TTTX",
         "XXXT",
 
@@ -245,11 +240,8 @@ const PATTERN_MODELS = {
         "XXXTXXXTXXXTXXXT"
     ],
 
-    // -----------------------------------------------------
-    // 7. CẦU 1-3
-    // -----------------------------------------------------
-
     oneThree: [
+
         "TXXX",
         "XTTT",
 
@@ -263,11 +255,8 @@ const PATTERN_MODELS = {
         "XTTTXTTTXTTTXTTT"
     ],
 
-    // -----------------------------------------------------
-    // 8. CẦU 2-3
-    // -----------------------------------------------------
-
     twoThree: [
+
         "TTXXX",
         "XXTTT",
 
@@ -278,11 +267,8 @@ const PATTERN_MODELS = {
         "XXTTTXXTTTXXTTT"
     ],
 
-    // -----------------------------------------------------
-    // 9. CẦU 3-2
-    // -----------------------------------------------------
-
     threeTwo: [
+
         "TTTXX",
         "XXXTT",
 
@@ -293,11 +279,8 @@ const PATTERN_MODELS = {
         "XXXTTXXXTTXXXTT"
     ],
 
-    // -----------------------------------------------------
-    // 10. CẦU 2-3-2
-    // -----------------------------------------------------
-
     twoThreeTwo: [
+
         "TTXXXTT",
         "XXTTTXX",
 
@@ -305,11 +288,8 @@ const PATTERN_MODELS = {
         "XXTTTXXXXTTTXX"
     ],
 
-    // -----------------------------------------------------
-    // 11. CẦU 1-1-2
-    // -----------------------------------------------------
-
     oneOneTwo: [
+
         "TXTT",
         "XTXX",
 
@@ -320,11 +300,8 @@ const PATTERN_MODELS = {
         "XTXXTXXTXX"
     ],
 
-    // -----------------------------------------------------
-    // 12. CẦU 1-2-2
-    // -----------------------------------------------------
-
     oneTwoTwo: [
+
         "TXXTT",
         "XTTXX",
 
@@ -335,11 +312,8 @@ const PATTERN_MODELS = {
         "XTTXXTTXXTT"
     ],
 
-    // -----------------------------------------------------
-    // 13. CẦU 4-1
-    // -----------------------------------------------------
-
     fourOne: [
+
         "TTTTX",
         "XXXXT",
 
@@ -350,11 +324,8 @@ const PATTERN_MODELS = {
         "XXXXTXXXXTXXXXT"
     ],
 
-    // -----------------------------------------------------
-    // 14. CẦU 4-2
-    // -----------------------------------------------------
-
     fourTwo: [
+
         "TTTTXX",
         "XXXXTT",
 
@@ -362,11 +333,8 @@ const PATTERN_MODELS = {
         "XXXXTTXXXXTT"
     ],
 
-    // -----------------------------------------------------
-    // 15. CẦU 5-1
-    // -----------------------------------------------------
-
     fiveOne: [
+
         "TTTTTX",
         "XXXXXT",
 
@@ -374,11 +342,8 @@ const PATTERN_MODELS = {
         "XXXXXTXXXXXT"
     ],
 
-    // -----------------------------------------------------
-    // 16. CẦU ĐỐI XỨNG
-    // -----------------------------------------------------
-
     symmetry: [
+
         "TTXTT",
         "XXTXX",
 
@@ -392,11 +357,8 @@ const PATTERN_MODELS = {
         "XXTXXTX"
     ],
 
-    // -----------------------------------------------------
-    // 17. CẦU GÃY
-    // -----------------------------------------------------
-
     breakPattern: [
+
         "TTTX",
         "XXXT",
 
@@ -413,11 +375,8 @@ const PATTERN_MODELS = {
         "XXXXXXXT"
     ],
 
-    // -----------------------------------------------------
-    // 18. CẦU ĐẢO
-    // -----------------------------------------------------
-
     reverse: [
+
         "TTX",
         "XXT",
 
@@ -431,11 +390,8 @@ const PATTERN_MODELS = {
         "XXTTXXT"
     ],
 
-    // -----------------------------------------------------
-    // 19. CẦU ZIGZAG
-    // -----------------------------------------------------
-
     zigzag: [
+
         "TXTTX",
         "XTXTT",
 
@@ -446,11 +402,8 @@ const PATTERN_MODELS = {
         "XTXTTXTXTT"
     ],
 
-    // -----------------------------------------------------
-    // 20. CẦU HỖN HỢP
-    // -----------------------------------------------------
-
     mixed: [
+
         "TTXTX",
         "XXTXT",
 
@@ -469,7 +422,7 @@ const PATTERN_MODELS = {
 };
 
 // =========================================================
-// HIỂN THỊ TÀI / XỈU
+// HIỂN THỊ
 // =========================================================
 
 function displayResult(value) {
@@ -518,7 +471,7 @@ function normalizeResult(value) {
 }
 
 // =========================================================
-// T/X
+// T / X
 // =========================================================
 
 function toTX(value) {
@@ -593,6 +546,7 @@ function normalizeSessions(json) {
     }
 
     return json.list
+
         .map(item => {
 
             const dices =
@@ -670,12 +624,10 @@ function buildPattern(
 }
 
 // =========================================================
-// PATTERN SO SÁNH 5
+// PATTERN 5
 // =========================================================
 
-function getComparePattern(
-    pattern
-) {
+function getComparePattern(pattern) {
 
     return pattern.slice(
         -COMPARE_PATTERN_LENGTH
@@ -686,9 +638,7 @@ function getComparePattern(
 // SO SÁNH PATTERN MẪU
 // =========================================================
 
-function findSamplePattern(
-    pattern
-) {
+function findSamplePattern(pattern) {
 
     const current =
         pattern.slice(
@@ -738,6 +688,7 @@ function findSamplePattern(
                     current[i] ===
                     target[i]
                 ) {
+
                     same++;
                 }
             }
@@ -775,7 +726,7 @@ function findSamplePattern(
 }
 
 // =========================================================
-// LƯU PATTERN LỊCH SỬ
+// LƯU PATTERN
 // =========================================================
 
 function savePatternMemory(
@@ -867,13 +818,10 @@ function savePatternMemory(
 }
 
 // =========================================================
-// MODEL 1
-// STREAK
+// MODEL 1 - STREAK
 // =========================================================
 
-function model1Streak(
-    history
-) {
+function model1Streak(history) {
 
     if (!history.length) {
 
@@ -930,8 +878,7 @@ function model1Streak(
     const confidence =
         Math.min(
             90,
-            55 +
-            streak * 5
+            55 + streak * 5
         );
 
     return {
@@ -946,13 +893,10 @@ function model1Streak(
 }
 
 // =========================================================
-// MODEL 2
-// ALTERNATING
+// MODEL 2 - ALTERNATING
 // =========================================================
 
-function model2Alternating(
-    pattern
-) {
+function model2Alternating(pattern) {
 
     const recent =
         pattern.slice(-8);
@@ -1011,13 +955,10 @@ function model2Alternating(
 }
 
 // =========================================================
-// MODEL 3
-// MARKOV
+// MODEL 3 - MARKOV
 // =========================================================
 
-function model3Markov(
-    history
-) {
+function model3Markov(history) {
 
     if (
         history.length < 4
@@ -1052,18 +993,18 @@ function model3Markov(
         }
 
         if (
-            history[i + 1]
-                .ket_qua ===
+            history[i + 1].ket_qua ===
             "TAI"
         ) {
+
             tai++;
         }
 
         if (
-            history[i + 1]
-                .ket_qua ===
+            history[i + 1].ket_qua ===
             "XIU"
         ) {
+
             xiu++;
         }
     }
@@ -1103,13 +1044,10 @@ function model3Markov(
 }
 
 // =========================================================
-// MODEL 4
-// PATTERN 5
+// MODEL 4 - PATTERN 5
 // =========================================================
 
-function model4Pattern5(
-    history
-) {
+function model4Pattern5(history) {
 
     if (
         history.length <
@@ -1178,6 +1116,7 @@ function model4Pattern5(
             next.ket_qua ===
             "TAI"
         ) {
+
             tai++;
         }
 
@@ -1185,6 +1124,7 @@ function model4Pattern5(
             next.ket_qua ===
             "XIU"
         ) {
+
             xiu++;
         }
     }
@@ -1224,8 +1164,7 @@ function model4Pattern5(
 }
 
 // =========================================================
-// MODEL 5
-// PATTERN 15
+// MODEL 5 - PATTERN 15
 // =========================================================
 
 function model5Pattern15(
@@ -1343,13 +1282,10 @@ function model5Pattern15(
 }
 
 // =========================================================
-// MODEL 6
-// SIMILARITY
+// MODEL 6 - SIMILARITY
 // =========================================================
 
-function model6Similarity(
-    pattern
-) {
+function model6Similarity(pattern) {
 
     const sample =
         findSamplePattern(
@@ -1385,13 +1321,10 @@ function model6Similarity(
 }
 
 // =========================================================
-// MODEL 7
-// RUN LENGTH
+// MODEL 7 - RUN LENGTH
 // =========================================================
 
-function model7RunLength(
-    history
-) {
+function model7RunLength(history) {
 
     if (
         history.length < 5
@@ -1531,13 +1464,10 @@ function model7RunLength(
 }
 
 // =========================================================
-// MODEL 8
-// TRANSITION MATRIX
+// MODEL 8 - TRANSITION MATRIX
 // =========================================================
 
-function model8Transition(
-    history
-) {
+function model8Transition(history) {
 
     if (
         history.length < 5
@@ -1573,8 +1503,11 @@ function model8Transition(
             arr[i];
 
         if (pair === "TT") TT++;
+
         if (pair === "TX") TX++;
+
         if (pair === "XT") XT++;
+
         if (pair === "XX") XX++;
     }
 
@@ -1582,16 +1515,19 @@ function model8Transition(
         arr[arr.length - 1];
 
     let tai;
+
     let xiu;
 
     if (last === "T") {
 
         tai = TT;
+
         xiu = TX;
 
     } else {
 
         tai = XT;
+
         xiu = XX;
     }
 
@@ -1635,8 +1571,7 @@ function model8Transition(
 }
 
 // =========================================================
-// MODEL 9
-// WEIGHTED RECENCY
+// MODEL 9 - WEIGHTED RECENCY
 // =========================================================
 
 function model9WeightedRecency(
@@ -1841,7 +1776,7 @@ function updateAI(
 }
 
 // =========================================================
-// TỔNG HỢP 9 MODEL
+// COMBINE 9 MODEL
 // =========================================================
 
 function combineModels(
@@ -1940,7 +1875,6 @@ function combineModels(
         ) *
         45;
 
-    // Pattern mẫu hỗ trợ
     if (
         patternMatch >= 90
     ) {
@@ -1981,7 +1915,7 @@ function combineModels(
 }
 
 // =========================================================
-// PHÂN TÍCH
+// ANALYZE
 // =========================================================
 
 function analyze(
@@ -2036,6 +1970,152 @@ function analyze(
 }
 
 // =========================================================
+// TẠO HISTORY ĐÁNH GIÁ
+// =========================================================
+
+function createEvaluationRecord(
+    prediction,
+    session
+) {
+
+    return {
+
+        phien:
+            session.phien,
+
+        du_doan:
+            displayResult(
+                prediction
+            ),
+
+        ket_qua:
+            "⌛ Chờ Kết Quả",
+
+        danh_gia:
+            "⌛ Chờ Kết Quả",
+
+        xuc_xac:
+            "⌛ Chờ",
+
+        tong:
+            "⌛ Chờ"
+    };
+}
+
+// =========================================================
+// CẬP NHẬT HISTORY ĐÁNH GIÁ
+// =========================================================
+
+function updateEvaluationHistory(
+    type,
+    sessions
+) {
+
+    const history =
+        evaluationHistory[type];
+
+    if (!history.length) {
+        return;
+    }
+
+    for (
+        const item of history
+    ) {
+
+        if (
+            item.ket_qua !==
+            "⌛ Chờ Kết Quả"
+        ) {
+
+            continue;
+        }
+
+        const session =
+            sessions.find(
+                s =>
+                    s.phien ===
+                    item.phien
+            );
+
+        if (!session) {
+            continue;
+        }
+
+        item.ket_qua =
+            displayResult(
+                session.ket_qua
+            );
+
+        item.xuc_xac =
+            session.xuc_xac;
+
+        item.tong =
+            session.tong;
+
+        const prediction =
+            normalizeResult(
+                item.du_doan
+            );
+
+        if (
+            prediction ===
+            session.ket_qua
+        ) {
+
+            item.danh_gia =
+                "✅ Thắng";
+
+        } else {
+
+            item.danh_gia =
+                "❌ Thua";
+        }
+    }
+}
+
+// =========================================================
+// LƯU DỰ ĐOÁN
+// =========================================================
+
+function savePredictionEvaluation(
+    type,
+    prediction,
+    session
+) {
+
+    const history =
+        evaluationHistory[type];
+
+    const exists =
+        history.some(
+            item =>
+                item.phien ===
+                session.phien
+        );
+
+    if (exists) {
+        return;
+    }
+
+    history.unshift(
+        createEvaluationRecord(
+            prediction,
+            session
+        )
+    );
+
+    if (
+        history.length >
+        MAX_EVALUATION_HISTORY
+    ) {
+
+        history.splice(
+            MAX_EVALUATION_HISTORY
+        );
+    }
+}
+
+// =========================================================
 // PROCESS API
 // =========================================================
 
@@ -2069,18 +2149,27 @@ async function processAPI(
     const history =
         histories[type];
 
-    // -----------------------------------------------------
+    // =====================================================
+    // CẬP NHẬT CÁC PHIÊN ĐÃ CHỜ
+    // =====================================================
+
+    updateEvaluationHistory(
+        type,
+        history
+    );
+
+    // =====================================================
     // LƯU PATTERN
-    // -----------------------------------------------------
+    // =====================================================
 
     savePatternMemory(
         type,
         history
     );
 
-    // -----------------------------------------------------
-    // CẦN ĐỦ 15 PHIÊN
-    // -----------------------------------------------------
+    // =====================================================
+    // CHƯA ĐỦ 15
+    // =====================================================
 
     if (
         history.length <
@@ -2125,18 +2214,18 @@ async function processAPI(
         };
     }
 
-    // -----------------------------------------------------
+    // =====================================================
     // LATEST
-    // -----------------------------------------------------
+    // =====================================================
 
     const latest =
         history[
             history.length - 1
         ];
 
-    // -----------------------------------------------------
+    // =====================================================
     // ANALYZE
-    // -----------------------------------------------------
+    // =====================================================
 
     const analysis =
         analyze(
@@ -2144,9 +2233,30 @@ async function processAPI(
             type
         );
 
-    // -----------------------------------------------------
-    // JSON PUBLIC CHỈ 8 FIELD
-    // -----------------------------------------------------
+    // =====================================================
+    // PHIÊN TIẾP THEO
+    // =====================================================
+
+    const nextSession = {
+
+        phien:
+            latest.phien + 1
+    };
+
+    // =====================================================
+    // LƯU DỰ ĐOÁN
+    // =====================================================
+
+    savePredictionEvaluation(
+        type,
+        analysis.result.prediction,
+        nextSession
+    );
+
+    // =====================================================
+    // PUBLIC JSON
+    // CHỈ 8 FIELD
+    // =====================================================
 
     return {
 
@@ -2202,7 +2312,7 @@ app.get(
         } catch (error) {
 
             console.error(
-                "[TX]",
+                "[TX ERROR]",
                 error.message
             );
 
@@ -2238,7 +2348,7 @@ app.get(
         } catch (error) {
 
             console.error(
-                "[MD5]",
+                "[MD5 ERROR]",
                 error.message
             );
 
@@ -2254,7 +2364,35 @@ app.get(
 );
 
 // =========================================================
-// HEALTH
+// HISTORY TX
+// =========================================================
+
+app.get(
+    "/api/lc79/hu/history",
+    (req, res) => {
+
+        res.json(
+            evaluationHistory.tx
+        );
+    }
+);
+
+// =========================================================
+// HISTORY MD5
+// =========================================================
+
+app.get(
+    "/api/lc79/md5/history",
+    (req, res) => {
+
+        res.json(
+            evaluationHistory.md5
+        );
+    }
+);
+
+// =========================================================
+// ROOT
 // =========================================================
 
 app.get(
@@ -2269,14 +2407,32 @@ app.get(
             service:
                 "LC79 TX AI API",
 
+            endpoints: {
+
+                tx:
+                    "/lc79/tx/hu",
+
+                md5:
+                    "/lc79/tx/md5",
+
+                txHistory:
+                    "/api/lc79/hu/history",
+
+                md5History:
+                    "/api/lc79/md5/history"
+            },
+
             pattern:
-                "15",
+                "15 phiên",
 
             compare:
-                "5",
+                "5 phiên",
 
             models:
-                9
+                9,
+
+            ai:
+                "ON"
         });
     }
 );
@@ -2291,17 +2447,20 @@ app.listen(
     () => {
 
         console.log(`
-╔══════════════════════════════════════════╗
-║          LC79 TX AI API ONLINE           ║
-╠══════════════════════════════════════════╣
+╔════════════════════════════════════════════╗
+║            LC79 TX AI API ONLINE           ║
+╠════════════════════════════════════════════╣
 ║ PORT       : ${PORT}
 ║ TX         : /lc79/tx/hu
 ║ MD5        : /lc79/tx/md5
+║ TX HISTORY : /api/lc79/hu/history
+║ MD5 HISTORY: /api/lc79/md5/history
 ║ PATTERN    : 15 phiên
-║ SO SÁNH    : 5 phiên cuối
+║ SO SÁNH    : 5 phiên
 ║ MODELS     : 9
 ║ AI LEARN   : ON
-╚══════════════════════════════════════════╝
+║ EVALUATION : ON
+╚════════════════════════════════════════════╝
 `);
     }
 );
