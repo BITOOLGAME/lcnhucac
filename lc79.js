@@ -21,9 +21,37 @@ const SOURCE_MD5 =
 // =========================================================
 
 const MAX_HISTORY = 100;
+
+const PATTERN_LENGTH = 5;
+
+const MAX_PATTERN_HISTORY = 15;
+
 const MIN_HISTORY = 5;
 
+// =========================================================
+// HISTORY
+// =========================================================
+
 const histories = {
+    tx: [],
+    md5: []
+};
+
+// =========================================================
+// AI PATTERN MEMORY
+//
+// Mỗi pattern:
+//
+// {
+//     pattern: "TTTXT",
+//     next: "TAI",
+//     phien: 123456
+// }
+//
+// Pattern 5 phiên -> kết quả phiên tiếp theo
+// =========================================================
+
+const patternHistories = {
     tx: [],
     md5: []
 };
@@ -33,6 +61,7 @@ const histories = {
 // =========================================================
 
 const PATTERN_MAU = [
+
     "T",
     "X",
 
@@ -112,35 +141,48 @@ function displayResult(value) {
         return "Xỉu";
     }
 
+    if (value === "KHONG_RO") {
+        return "Không rõ";
+    }
+
     return value;
 }
 
 // =========================================================
-// FETCH API
+// FETCH API GỐC
 // =========================================================
 
 async function fetchSource(url) {
 
-    const controller = new AbortController();
+    const controller =
+        new AbortController();
 
-    const timeout = setTimeout(() => {
-        controller.abort();
-    }, 10000);
+    const timeout =
+        setTimeout(() => {
+            controller.abort();
+        }, 10000);
 
     try {
 
-        const response = await fetch(url, {
-            method: "GET",
+        const response =
+            await fetch(url, {
 
-            headers: {
-                "Accept": "application/json",
-                "User-Agent": "LC79-TX-API/1.0"
-            },
+                method: "GET",
 
-            signal: controller.signal
-        });
+                headers: {
+                    "Accept":
+                        "application/json",
+
+                    "User-Agent":
+                        "LC79-TX-API/1.0"
+                },
+
+                signal:
+                    controller.signal
+            });
 
         if (!response.ok) {
+
             throw new Error(
                 `Source API HTTP ${response.status}`
             );
@@ -164,9 +206,10 @@ function normalizeResult(value) {
         return null;
     }
 
-    const v = String(value)
-        .toUpperCase()
-        .trim();
+    const v =
+        String(value)
+            .toUpperCase()
+            .trim();
 
     if (
         v === "TAI" ||
@@ -186,7 +229,7 @@ function normalizeResult(value) {
 }
 
 // =========================================================
-// CHUYỂN SANG T / X
+// TÀI/XỈU -> T/X
 // =========================================================
 
 function toTX(value) {
@@ -197,7 +240,7 @@ function toTX(value) {
 }
 
 // =========================================================
-// CHUYỂN API GỐC
+// API GỐC -> FORMAT CHUẨN
 // =========================================================
 
 function normalizeSessions(json) {
@@ -231,9 +274,11 @@ function normalizeSessions(json) {
 
             return {
 
-                phien: Number(item.id),
+                phien:
+                    Number(item.id),
 
-                xuc_xac: dices,
+                xuc_xac:
+                    dices,
 
                 tong,
 
@@ -246,11 +291,15 @@ function normalizeSessions(json) {
 
         .filter(item =>
 
-            Number.isFinite(item.phien) &&
+            Number.isFinite(
+                item.phien
+            ) &&
 
             item.ket_qua &&
 
-            Array.isArray(item.xuc_xac)
+            Array.isArray(
+                item.xuc_xac
+            )
 
         )
 
@@ -262,11 +311,13 @@ function normalizeSessions(json) {
 
 // =========================================================
 // BUILD PATTERN
+//
+// Chỉ lấy 5 phiên gần nhất
 // =========================================================
 
 function buildPattern(
     history,
-    length = 10
+    length = PATTERN_LENGTH
 ) {
 
     return history
@@ -281,81 +332,432 @@ function buildPattern(
 }
 
 // =========================================================
-// SO SÁNH PATTERN
+// LƯU PATTERN 5 PHIÊN -> KẾT QUẢ PHIÊN SAU
 // =========================================================
 
-function comparePattern(currentPattern) {
+function learnPatternHistory(
+    type,
+    history
+) {
 
-    let best = null;
-    let bestScore = 0;
+    const memory =
+        patternHistories[type];
+
+    if (
+        history.length <
+        PATTERN_LENGTH + 1
+    ) {
+        return;
+    }
+
+    /*
+     * Duyệt toàn bộ lịch sử.
+     *
+     * Ví dụ:
+     *
+     * T T X X T -> X
+     *
+     * Pattern = TTXTX
+     * Next    = Xỉu
+     */
 
     for (
-        const sample of PATTERN_MAU
+        let i = 0;
+        i <=
+        history.length -
+        PATTERN_LENGTH -
+        1;
+        i++
     ) {
 
-        const maxLength =
-            Math.min(
-                sample.length,
-                currentPattern.length
-            );
+        const pattern =
+            history
+                .slice(
+                    i,
+                    i + PATTERN_LENGTH
+                )
+                .map(item =>
+                    toTX(item.ket_qua)
+                )
+                .join("");
 
-        if (maxLength < 2) {
+        const next =
+            history[
+                i + PATTERN_LENGTH
+            ];
+
+        if (!next) {
             continue;
         }
 
-        const current =
-            currentPattern.slice(
-                -maxLength
+        const nextResult =
+            normalizeResult(
+                next.ket_qua
             );
 
-        const target =
-            sample.slice(
-                -maxLength
+        if (!nextResult) {
+            continue;
+        }
+
+        const record = {
+
+            pattern,
+
+            next:
+                nextResult,
+
+            phien:
+                next.phien
+        };
+
+        /*
+         * Không lưu trùng cùng pattern
+         * + kết quả liên tiếp.
+         */
+
+        const duplicate =
+            memory.some(item =>
+                item.pattern ===
+                    record.pattern &&
+                item.next ===
+                    record.next &&
+                item.phien ===
+                    record.phien
             );
+
+        if (duplicate) {
+            continue;
+        }
+
+        memory.push(record);
+    }
+
+    // =====================================================
+    // CHỈ GIỮ 15 PATTERN GẦN NHẤT
+    // =====================================================
+
+    if (
+        memory.length >
+        MAX_PATTERN_HISTORY
+    ) {
+
+        memory.splice(
+            0,
+            memory.length -
+                MAX_PATTERN_HISTORY
+        );
+    }
+}
+
+// =========================================================
+// SO SÁNH PATTERN HIỆN TẠI VỚI 15 PATTERN ĐÃ LƯU
+// =========================================================
+
+function comparePatternHistory(
+    currentPattern,
+    type
+) {
+
+    const memory =
+        patternHistories[type];
+
+    if (!memory.length) {
+
+        return {
+
+            pattern_mau:
+                null,
+
+            do_khop:
+                0,
+
+            du_doan_mau:
+                null,
+
+            mau_count:
+                0
+        };
+    }
+
+    let bestPattern = null;
+
+    let bestScore = 0;
+
+    let bestPrediction = null;
+
+    let bestCount = 0;
+
+    // =====================================================
+    // SO SÁNH 15 PATTERN
+    // =====================================================
+
+    for (
+        const record of memory
+    ) {
+
+        if (
+            !record.pattern ||
+            record.pattern.length !==
+                PATTERN_LENGTH
+        ) {
+            continue;
+        }
 
         let same = 0;
 
         for (
             let i = 0;
-            i < maxLength;
+            i < PATTERN_LENGTH;
             i++
         ) {
 
             if (
-                current[i] ===
-                target[i]
+                currentPattern[i] ===
+                record.pattern[i]
             ) {
+
                 same++;
             }
         }
 
         const score =
-            (same / maxLength) * 100;
+            (
+                same /
+                PATTERN_LENGTH
+            ) * 100;
 
-        if (score > bestScore) {
+        if (
+            score > bestScore
+        ) {
 
-            bestScore = score;
+            bestScore =
+                score;
 
-            best = {
+            bestPattern =
+                record.pattern;
 
-                pattern: sample,
+            bestPrediction =
+                record.next;
 
-                score:
-                    Number(
-                        score.toFixed(2)
-                    )
-            };
+            bestCount = 1;
+
+        } else if (
+            score === bestScore
+        ) {
+
+            bestCount++;
+
         }
     }
 
-    return best;
+    return {
+
+        pattern_mau:
+            bestPattern,
+
+        do_khop:
+            Number(
+                bestScore.toFixed(2)
+            ),
+
+        du_doan_mau:
+            bestPrediction,
+
+        mau_count:
+            bestCount
+    };
 }
 
 // =========================================================
-// PHÂN PHỐI TÀI / XỈU
+// AI HỌC 15 PATTERN
 // =========================================================
 
-function distributionScore(history) {
+function learnedPatternScore(
+    currentPattern,
+    type
+) {
+
+    const memory =
+        patternHistories[type];
+
+    let tai = 0;
+
+    let xiu = 0;
+
+    let matched = 0;
+
+    // =====================================================
+    // ƯU TIÊN PATTERN KHỚP HOÀN TOÀN
+    // =====================================================
+
+    for (
+        const record of memory
+    ) {
+
+        if (
+            record.pattern ===
+            currentPattern
+        ) {
+
+            matched++;
+
+            if (
+                record.next ===
+                "TAI"
+            ) {
+
+                tai++;
+            }
+
+            if (
+                record.next ===
+                "XIU"
+            ) {
+
+                xiu++;
+            }
+        }
+    }
+
+    if (matched > 0) {
+
+        const total =
+            tai + xiu;
+
+        return {
+
+            tai:
+                (tai / total) *
+                100,
+
+            xiu:
+                (xiu / total) *
+                100,
+
+            matched,
+
+            exact: true
+        };
+    }
+
+    // =====================================================
+    // KHÔNG CÓ EXACT MATCH
+    // -> DÙNG PATTERN GẦN NHẤT
+    // =====================================================
+
+    let weightedTai = 0;
+
+    let weightedXiu = 0;
+
+    let weightTotal = 0;
+
+    for (
+        const record of memory
+    ) {
+
+        if (
+            !record.pattern
+        ) {
+            continue;
+        }
+
+        let same = 0;
+
+        for (
+            let i = 0;
+            i < PATTERN_LENGTH;
+            i++
+        ) {
+
+            if (
+                currentPattern[i] ===
+                record.pattern[i]
+            ) {
+
+                same++;
+            }
+        }
+
+        const similarity =
+            same /
+            PATTERN_LENGTH;
+
+        if (
+            similarity < 0.4
+        ) {
+            continue;
+        }
+
+        const weight =
+            similarity *
+            similarity;
+
+        if (
+            record.next ===
+            "TAI"
+        ) {
+
+            weightedTai +=
+                weight;
+        }
+
+        if (
+            record.next ===
+            "XIU"
+        ) {
+
+            weightedXiu +=
+                weight;
+        }
+
+        weightTotal +=
+            weight;
+    }
+
+    if (
+        weightTotal <= 0
+    ) {
+
+        return {
+
+            tai: 50,
+
+            xiu: 50,
+
+            matched: 0,
+
+            exact: false
+        };
+    }
+
+    return {
+
+        tai:
+            (
+                weightedTai /
+                weightTotal
+            ) * 100,
+
+        xiu:
+            (
+                weightedXiu /
+                weightTotal
+            ) * 100,
+
+        matched:
+            memory.length,
+
+        exact: false
+    };
+}
+
+// =========================================================
+// PHÂN PHỐI TÀI/XỈU
+// =========================================================
+
+function distributionScore(
+    history
+) {
 
     if (!history.length) {
 
@@ -366,6 +768,7 @@ function distributionScore(history) {
     }
 
     let tai = 0;
+
     let xiu = 0;
 
     for (
@@ -374,14 +777,18 @@ function distributionScore(history) {
     ) {
 
         if (
-            item.ket_qua === "TAI"
+            item.ket_qua ===
+            "TAI"
         ) {
+
             tai++;
         }
 
         if (
-            item.ket_qua === "XIU"
+            item.ket_qua ===
+            "XIU"
         ) {
+
             xiu++;
         }
     }
@@ -400,10 +807,16 @@ function distributionScore(history) {
     return {
 
         tai:
-            (tai / total) * 100,
+            (
+                tai /
+                total
+            ) * 100,
 
         xiu:
-            (xiu / total) * 100
+            (
+                xiu /
+                total
+            ) * 100
     };
 }
 
@@ -411,9 +824,13 @@ function distributionScore(history) {
 // MARKOV
 // =========================================================
 
-function markovScore(history) {
+function markovScore(
+    history
+) {
 
-    if (history.length < 2) {
+    if (
+        history.length < 2
+    ) {
 
         return {
             tai: 50,
@@ -427,31 +844,38 @@ function markovScore(history) {
         ].ket_qua;
 
     let tai = 0;
+
     let xiu = 0;
 
     for (
         let i = 0;
-        i < history.length - 1;
+        i <
+        history.length - 1;
         i++
     ) {
 
         if (
-            history[i].ket_qua !== last
+            history[i].ket_qua !==
+            last
         ) {
             continue;
         }
 
         if (
-            history[i + 1].ket_qua ===
+            history[i + 1]
+                .ket_qua ===
             "TAI"
         ) {
+
             tai++;
         }
 
         if (
-            history[i + 1].ket_qua ===
+            history[i + 1]
+                .ket_qua ===
             "XIU"
         ) {
+
             xiu++;
         }
     }
@@ -470,18 +894,26 @@ function markovScore(history) {
     return {
 
         tai:
-            (tai / total) * 100,
+            (
+                tai /
+                total
+            ) * 100,
 
         xiu:
-            (xiu / total) * 100
+            (
+                xiu /
+                total
+            ) * 100
     };
 }
 
 // =========================================================
-// PHÂN TÍCH CẦU
+// PHÂN TÍCH STREAK
 // =========================================================
 
-function analyzeStreak(history) {
+function analyzeStreak(
+    history
+) {
 
     if (!history.length) {
 
@@ -499,13 +931,15 @@ function analyzeStreak(history) {
     let streak = 0;
 
     for (
-        let i = history.length - 1;
+        let i =
+            history.length - 1;
         i >= 0;
         i--
     ) {
 
         if (
-            history[i].ket_qua === last
+            history[i].ket_qua ===
+            last
         ) {
 
             streak++;
@@ -517,9 +951,12 @@ function analyzeStreak(history) {
     }
 
     let tai = 50;
+
     let xiu = 50;
 
-    if (last === "TAI") {
+    if (
+        last === "TAI"
+    ) {
 
         tai +=
             Math.min(
@@ -549,108 +986,10 @@ function analyzeStreak(history) {
     }
 
     return {
+
         tai,
+
         xiu
-    };
-}
-
-// =========================================================
-// AI TỰ HỌC PATTERN
-// =========================================================
-
-function learnedPatternScore(history) {
-
-    if (history.length < 4) {
-
-        return {
-
-            tai: 50,
-
-            xiu: 50,
-
-            samples: 0
-        };
-    }
-
-    const tx =
-        history.map(
-            item =>
-                toTX(item.ket_qua)
-        );
-
-    let tai = 0;
-    let xiu = 0;
-
-    let samples = 0;
-
-    const maxPatternLength =
-        Math.min(
-            8,
-            tx.length - 1
-        );
-
-    for (
-        let len = 2;
-        len <= maxPatternLength;
-        len++
-    ) {
-
-        const pattern =
-            tx.slice(-len).join("");
-
-        for (
-            let i = 0;
-            i <= tx.length - len - 1;
-            i++
-        ) {
-
-            const found =
-                tx
-                    .slice(i, i + len)
-                    .join("");
-
-            if (
-                found !== pattern
-            ) {
-                continue;
-            }
-
-            const next =
-                tx[i + len];
-
-            if (next === "T") {
-                tai++;
-            }
-
-            if (next === "X") {
-                xiu++;
-            }
-
-            samples++;
-        }
-    }
-
-    if (!samples) {
-
-        return {
-
-            tai: 50,
-
-            xiu: 50,
-
-            samples: 0
-        };
-    }
-
-    return {
-
-        tai:
-            (tai / samples) * 100,
-
-        xiu:
-            (xiu / samples) * 100,
-
-        samples
     };
 }
 
@@ -658,24 +997,37 @@ function learnedPatternScore(history) {
 // ĐỘ TIN CẬY
 // =========================================================
 
-function calculateConfidence(scores) {
+function calculateConfidence(
+    tai,
+    xiu,
+    patternMatch
+) {
 
-    const max =
-        Math.max(
-            scores.tai,
-            scores.xiu
-        );
-
-    const min =
-        Math.min(
-            scores.tai,
-            scores.xiu
+    const difference =
+        Math.abs(
+            tai - xiu
         );
 
     let confidence =
         50 +
-        Math.abs(max - min) *
-        0.65;
+        difference * 0.65;
+
+    // =====================================================
+    // BONUS KHI PATTERN KHỚP CAO
+    // =====================================================
+
+    if (
+        patternMatch >= 80
+    ) {
+
+        confidence += 5;
+
+    } else if (
+        patternMatch >= 60
+    ) {
+
+        confidence += 3;
+    }
 
     confidence =
         Math.max(
@@ -695,7 +1047,10 @@ function calculateConfidence(scores) {
 // AI PHÂN TÍCH
 // =========================================================
 
-function analyzeAI(history) {
+function analyzeAI(
+    history,
+    type
+) {
 
     if (
         history.length <
@@ -707,31 +1062,61 @@ function analyzeAI(history) {
             prediction:
                 "KHONG_RO",
 
-            confidence: 50,
+            confidence:
+                50,
 
             pattern:
-                buildPattern(history),
+                buildPattern(
+                    history
+                ),
 
-            pattern_mau: null,
+            pattern_mau:
+                null,
 
-            pattern_score: 0,
+            do_khop:
+                0,
 
-            samples: 0,
-
-            scores: {
-
-                TAI: 50,
-
-                XIU: 50
-            }
+            learned:
+                {
+                    tai: 50,
+                    xiu: 50
+                }
         };
     }
+
+    // =====================================================
+    // PATTERN 5 PHIÊN
+    // =====================================================
 
     const pattern =
         buildPattern(
             history,
-            10
+            PATTERN_LENGTH
         );
+
+    // =====================================================
+    // SO SÁNH PATTERN 15
+    // =====================================================
+
+    const patternAnalysis =
+        comparePatternHistory(
+            pattern,
+            type
+        );
+
+    // =====================================================
+    // AI HỌC PATTERN
+    // =====================================================
+
+    const learned =
+        learnedPatternScore(
+            pattern,
+            type
+        );
+
+    // =====================================================
+    // THỐNG KÊ
+    // =====================================================
 
     const distribution =
         distributionScore(
@@ -748,52 +1133,54 @@ function analyzeAI(history) {
             history
         );
 
-    const learned =
-        learnedPatternScore(
-            history
-        );
-
-    const sample =
-        comparePattern(
-            pattern
-        );
-
     // =====================================================
-    // TRỌNG SỐ AI
+    // TRỌNG SỐ
+    //
+    // Pattern AI : 40%
+    // Markov     : 25%
+    // Phân phối  : 20%
+    // Streak     : 15%
     // =====================================================
 
     const tai =
 
-        distribution.tai * 0.20 +
+        learned.tai * 0.40 +
 
         markov.tai * 0.25 +
 
-        streak.tai * 0.15 +
+        distribution.tai * 0.20 +
 
-        learned.tai * 0.40;
+        streak.tai * 0.15;
 
     const xiu =
 
-        distribution.xiu * 0.20 +
+        learned.xiu * 0.40 +
 
         markov.xiu * 0.25 +
 
-        streak.xiu * 0.15 +
+        distribution.xiu * 0.20 +
 
-        learned.xiu * 0.40;
+        streak.xiu * 0.15;
+
+    // =====================================================
+    // DỰ ĐOÁN
+    // =====================================================
 
     const prediction =
         tai >= xiu
             ? "TAI"
             : "XIU";
 
+    // =====================================================
+    // CONFIDENCE
+    // =====================================================
+
     const confidence =
-        calculateConfidence({
-
+        calculateConfidence(
             tai,
-
-            xiu
-        });
+            xiu,
+            patternAnalysis.do_khop
+        );
 
     return {
 
@@ -804,17 +1191,18 @@ function analyzeAI(history) {
         pattern,
 
         pattern_mau:
-            sample
-                ? sample.pattern
-                : null,
+            patternAnalysis.pattern_mau,
 
-        pattern_score:
-            sample
-                ? sample.score
-                : 0,
+        do_khop:
+            patternAnalysis.do_khop,
 
-        samples:
-            learned.samples,
+        du_doan_mau:
+            patternAnalysis.du_doan_mau,
+
+        mau_count:
+            patternAnalysis.mau_count,
+
+        learned,
 
         scores: {
 
@@ -850,12 +1238,18 @@ async function processAPI(
             json
         );
 
-    if (!sessions.length) {
+    if (
+        !sessions.length
+    ) {
 
         throw new Error(
             "API gốc không trả về dữ liệu hợp lệ"
         );
     }
+
+    // =====================================================
+    // LƯU 100 PHIÊN
+    // =====================================================
 
     histories[type] =
         sessions.slice(
@@ -865,15 +1259,37 @@ async function processAPI(
     const history =
         histories[type];
 
+    // =====================================================
+    // HỌC PATTERN
+    // =====================================================
+
+    learnPatternHistory(
+        type,
+        history
+    );
+
+    // =====================================================
+    // PHIÊN MỚI NHẤT
+    // =====================================================
+
     const latest =
         history[
             history.length - 1
         ];
 
+    // =====================================================
+    // AI
+    // =====================================================
+
     const analysis =
         analyzeAI(
-            history
+            history,
+            type
         );
+
+    // =====================================================
+    // JSON
+    // =====================================================
 
     return {
 
@@ -894,25 +1310,32 @@ async function processAPI(
         phien_hien_tai:
             latest.phien + 1,
 
+        // 5 phiên gần nhất
         pattern:
             analysis.pattern,
 
+        // Pattern mẫu khớp nhất
         pattern_mau:
             analysis.pattern_mau,
 
+        // Độ khớp pattern
+        do_khop_pattern:
+            `${analysis.do_khop}%`,
+
+        // Dự đoán
         du_doan:
             displayResult(
                 analysis.prediction
             ),
 
+        // Độ tin cậy
         do_tin_cay:
             `${analysis.confidence.toFixed(2)}%`
     };
 }
 
 // =========================================================
-// API 1
-// /lc79/tx/hu
+// API TX
 // =========================================================
 
 app.get(
@@ -948,8 +1371,7 @@ app.get(
 );
 
 // =========================================================
-// API 2
-// /lc79/tx/md5
+// API MD5
 // =========================================================
 
 app.get(
@@ -985,6 +1407,31 @@ app.get(
 );
 
 // =========================================================
+// XEM PATTERN ĐÃ HỌC
+// =========================================================
+
+app.get(
+    "/lc79/tx/patterns",
+    (req, res) => {
+
+        res.json({
+
+            tx:
+                patternHistories.tx,
+
+            md5:
+                patternHistories.md5,
+
+            max:
+                MAX_PATTERN_HISTORY,
+
+            length:
+                PATTERN_LENGTH
+        });
+    }
+);
+
+// =========================================================
 // HEALTH CHECK
 // =========================================================
 
@@ -994,7 +1441,8 @@ app.get(
 
         res.json({
 
-            status: "online",
+            status:
+                "online",
 
             service:
                 "LC79 TX API",
@@ -1003,23 +1451,31 @@ app.get(
 
                 "/lc79/tx/hu",
 
-                "/lc79/tx/md5"
+                "/lc79/tx/md5",
+
+                "/lc79/tx/patterns"
             ],
 
-            pattern_mau:
+            pattern_length:
+                PATTERN_LENGTH,
+
+            pattern_memory:
+                MAX_PATTERN_HISTORY,
+
+            pattern_samples:
                 PATTERN_MAU.length,
 
-            ai_learning:
-                true,
+            history:
+                MAX_HISTORY,
 
-            max_history:
-                MAX_HISTORY
+            ai_learning:
+                true
         });
     }
 );
 
 // =========================================================
-// START SERVER
+// START
 // =========================================================
 
 app.listen(
@@ -1028,16 +1484,18 @@ app.listen(
     () => {
 
         console.log(`
-╔══════════════════════════════════════╗
-║          LC79 TX API ONLINE          ║
-╠══════════════════════════════════════╣
-║ PORT        : ${PORT}
-║ TX API      : /lc79/tx/hu
-║ MD5 API     : /lc79/tx/md5
-║ PATTERN     : ${PATTERN_MAU.length}
-║ AI LEARNING : ON
-║ HISTORY     : ${MAX_HISTORY}
-╚══════════════════════════════════════╝
+╔══════════════════════════════════════════╗
+║            LC79 TX API ONLINE            ║
+╠══════════════════════════════════════════╣
+║ PORT          : ${PORT}
+║ TX            : /lc79/tx/hu
+║ MD5           : /lc79/tx/md5
+║ PATTERN       : 5 phiên
+║ MEMORY        : 15 pattern
+║ SAMPLE        : ${PATTERN_MAU.length} pattern mẫu
+║ AI LEARNING   : ON
+║ HISTORY       : ${MAX_HISTORY} phiên
+╚══════════════════════════════════════════╝
 `);
     }
 );
