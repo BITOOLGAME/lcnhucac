@@ -1,4 +1,6 @@
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 
@@ -7,57 +9,107 @@ app.use(express.json());
 const PORT = process.env.PORT || 3001;
 
 // =========================================================
-// API GỐC
-// =========================================================
-
-const SOURCE_TX =
-    "https://wtx.tele68.com/v1/tx/sessions";
-
-const SOURCE_MD5 =
-    "https://wtxmd52.tele68.com/v1/txmd5/sessions";
-
-// =========================================================
 // CONFIG
 // =========================================================
 
-const MAX_HISTORY = 100;
+const SOURCE_API = {
+    tx: "https://wtx.tele68.com/v1/tx/sessions",
+    md5: "https://wtxmd52.tele68.com/v1/txmd5/sessions"
+};
 
+const DATA_DIR = path.join(__dirname, "data");
+
+const HISTORY_FILE =
+    path.join(DATA_DIR, "evaluation-history.json");
+
+const AI_FILE =
+    path.join(DATA_DIR, "ai-memory.json");
+
+const MAX_SOURCE_HISTORY = 100;
 const PATTERN_LENGTH = 15;
-
 const COMPARE_PATTERN_LENGTH = 5;
-
-const MAX_PATTERN_MEMORY = 15;
-
 const MAX_EVALUATION_HISTORY = 50;
+
+const POLL_INTERVAL = 3000;
 
 const MIN_HISTORY = 15;
 
 // =========================================================
-// HISTORY API
+// DATA DIR
 // =========================================================
 
-const histories = {
+if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, {
+        recursive: true
+    });
+}
+
+// =========================================================
+// DEFAULT HISTORY
+// =========================================================
+
+let evaluationHistory = {
     tx: [],
     md5: []
 };
 
-// =========================================================
-// PATTERN MEMORY
-// =========================================================
-
-const patternMemory = {
-    tx: [],
-    md5: []
+let aiMemory = {
+    tx: null,
+    md5: null
 };
 
 // =========================================================
-// HISTORY ĐÁNH GIÁ
+// LOAD JSON
 // =========================================================
 
-const evaluationHistory = {
-    tx: [],
-    md5: []
-};
+function loadJSON(file, fallback) {
+    try {
+        if (!fs.existsSync(file)) {
+            return fallback;
+        }
+
+        const raw =
+            fs.readFileSync(
+                file,
+                "utf8"
+            );
+
+        return JSON.parse(raw);
+
+    } catch (error) {
+
+        console.error(
+            "[LOAD JSON]",
+            file,
+            error.message
+        );
+
+        return fallback;
+    }
+}
+
+function saveJSON(file, data) {
+    try {
+
+        fs.writeFileSync(
+            file,
+            JSON.stringify(
+                data,
+                null,
+                2
+            ),
+            "utf8"
+        );
+
+    } catch (error) {
+
+        console.error(
+            "[SAVE JSON]",
+            file,
+            error.message
+        );
+    }
+}
 
 // =========================================================
 // AI MEMORY
@@ -123,323 +175,226 @@ function createModelMemory() {
     };
 }
 
-const aiMemory = {
-    tx: createModelMemory(),
-    md5: createModelMemory()
+function normalizeAIMemory(memory) {
+
+    const base =
+        createModelMemory();
+
+    if (!memory) {
+        return base;
+    }
+
+    for (
+        const key of Object.keys(base)
+    ) {
+
+        if (!memory[key]) {
+            continue;
+        }
+
+        base[key] = {
+
+            weight:
+                Number(
+                    memory[key].weight
+                ) || 1,
+
+            win:
+                Number(
+                    memory[key].win
+                ) || 0,
+
+            loss:
+                Number(
+                    memory[key].loss
+                ) || 0
+        };
+    }
+
+    return base;
+}
+
+const savedAI =
+    loadJSON(
+        AI_FILE,
+        {}
+    );
+
+aiMemory.tx =
+    normalizeAIMemory(
+        savedAI.tx
+    );
+
+aiMemory.md5 =
+    normalizeAIMemory(
+        savedAI.md5
+    );
+
+evaluationHistory =
+    loadJSON(
+        HISTORY_FILE,
+        evaluationHistory
+    );
+
+// =========================================================
+// SOURCE HISTORY
+// =========================================================
+
+const sourceHistory = {
+    tx: [],
+    md5: []
+};
+
+// =========================================================
+// PATTERN MEMORY
+// =========================================================
+
+const patternMemory = {
+    tx: [],
+    md5: []
+};
+
+// =========================================================
+// SSE CLIENTS
+// =========================================================
+
+const sseClients = {
+    tx: new Set(),
+    md5: new Set()
 };
 
 // =========================================================
 // PATTERN MẪU
 // =========================================================
 
-const PATTERN_MODELS = {
+const SAMPLE_PATTERNS = [
+
+    // 1-1
+    "TXTXTXTXTXTXTXT",
+    "XTXTXTXTXTXTXTX",
+
+    // 2-2
+    "TTXXTTXXTTXXTTX",
+    "XXTTXXTTXXTTXXT",
+
+    // 1-2-1
+    "TXXTTXXTTXXTTXX",
+    "XTTXXTTXXTTXXTT",
 
-    streak: [
+    // 2-1-2
+    "TTXTTXTTXTTXTTX",
+    "XXTXXTXXTXXTXXT",
 
-        "TT",
-        "TTT",
-        "TTTT",
-        "TTTTT",
-        "TTTTTT",
-        "TTTTTTT",
-        "TTTTTTTT",
+    // 3-1
+    "TTTXTTTXTTTXTTT",
+    "XXXTXXXTXXXTXXX",
 
-        "XX",
-        "XXX",
-        "XXXX",
-        "XXXXX",
-        "XXXXXX",
-        "XXXXXXX",
-        "XXXXXXXX"
-    ],
-
-    alternating: [
-
-        "TX",
-        "XT",
-
-        "TXTX",
-        "XTXT",
-
-        "TXTXTX",
-        "XTXTXT",
-
-        "TXTXTXTX",
-        "XTXTXTXT",
-
-        "TXTXTXTXTX",
-        "XTXTXTXTXT",
-
-        "TXTXTXTXTXTX",
-        "XTXTXTXTXTXT",
-
-        "TXTXTXTXTXTXTX",
-        "XTXTXTXTXTXTXT"
-    ],
-
-    twoTwo: [
-
-        "TTXX",
-        "XXTT",
-
-        "TTXXTTXX",
-        "XXTTXXTT",
-
-        "TTXXTTXXTT",
-        "XXTTXXTTXX",
-
-        "TTXXTTXXTTXX",
-        "XXTTXXTTXXTT",
-
-        "TTXXTTXXTTXXTT",
-        "XXTTXXTTXXTTXX"
-    ],
-
-    oneTwoOne: [
-
-        "TXXT",
-        "XTTX",
-
-        "TXXTTXXT",
-        "XTTXXTTX",
-
-        "TXXTTXXTTXXT",
-        "XTTXXTTXXTTX",
-
-        "TXXTTXXTTXXTTXX",
-        "XTTXXTTXXTTXXTT"
-    ],
-
-    twoOneTwo: [
-
-        "TTXTT",
-        "XXTXX",
-
-        "TTXTTXTT",
-        "XXTXXTXX",
-
-        "TTXTTXTTXTT",
-        "XXTXXTXXTXX",
-
-        "TTXTTXTTXTTXTT",
-        "XXTXXTXXTXXTXX"
-    ],
-
-    threeOne: [
-
-        "TTTX",
-        "XXXT",
-
-        "TTTXTTTX",
-        "XXXTXXXT",
-
-        "TTTXTTTXTTTX",
-        "XXXTXXXTXXXT",
-
-        "TTTXTTTXTTTXTTTX",
-        "XXXTXXXTXXXTXXXT"
-    ],
-
-    oneThree: [
-
-        "TXXX",
-        "XTTT",
-
-        "TXXXTXXX",
-        "XTTTXTTT",
-
-        "TXXXTXXXTXXX",
-        "XTTTXTTTXTTT",
-
-        "TXXXTXXXTXXXTXXX",
-        "XTTTXTTTXTTTXTTT"
-    ],
-
-    twoThree: [
-
-        "TTXXX",
-        "XXTTT",
-
-        "TTXXXTTXXX",
-        "XXTTTXXTTT",
-
-        "TTXXXTTXXXTTXXX",
-        "XXTTTXXTTTXXTTT"
-    ],
-
-    threeTwo: [
-
-        "TTTXX",
-        "XXXTT",
-
-        "TTTXXTTTXX",
-        "XXXTTXXXTT",
-
-        "TTTXXTTTXXTTTXX",
-        "XXXTTXXXTTXXXTT"
-    ],
-
-    twoThreeTwo: [
-
-        "TTXXXTT",
-        "XXTTTXX",
-
-        "TTXXXTTTTXXXTT",
-        "XXTTTXXXXTTTXX"
-    ],
-
-    oneOneTwo: [
-
-        "TXTT",
-        "XTXX",
-
-        "TXTTXTT",
-        "XTXXTXX",
-
-        "TXTTXTTXTT",
-        "XTXXTXXTXX"
-    ],
-
-    oneTwoTwo: [
-
-        "TXXTT",
-        "XTTXX",
-
-        "TXXTTXXTT",
-        "XTTXXTTXX",
-
-        "TXXTTXXTTXX",
-        "XTTXXTTXXTT"
-    ],
-
-    fourOne: [
-
-        "TTTTX",
-        "XXXXT",
-
-        "TTTTXTTTTX",
-        "XXXXTXXXXT",
-
-        "TTTTXTTTTXTTTTX",
-        "XXXXTXXXXTXXXXT"
-    ],
-
-    fourTwo: [
-
-        "TTTTXX",
-        "XXXXTT",
-
-        "TTTTXXTTTTXX",
-        "XXXXTTXXXXTT"
-    ],
-
-    fiveOne: [
-
-        "TTTTTX",
-        "XXXXXT",
-
-        "TTTTTXTTTTTX",
-        "XXXXXTXXXXXT"
-    ],
-
-    symmetry: [
-
-        "TTXTT",
-        "XXTXX",
-
-        "TXXTX",
-        "XTTXT",
-
-        "TTXXTT",
-        "XXTTXX",
-
-        "TTXTTXT",
-        "XXTXXTX"
-    ],
-
-    breakPattern: [
-
-        "TTTX",
-        "XXXT",
-
-        "TTTTX",
-        "XXXXT",
-
-        "TTTTTX",
-        "XXXXXT",
-
-        "TTTTTTX",
-        "XXXXXXT",
-
-        "TTTTTTTX",
-        "XXXXXXXT"
-    ],
-
-    reverse: [
-
-        "TTX",
-        "XXT",
-
-        "TXTT",
-        "XTXX",
-
-        "TTXTTX",
-        "XXTXXT",
-
-        "TTXXTTX",
-        "XXTTXXT"
-    ],
-
-    zigzag: [
-
-        "TXTTX",
-        "XTXTT",
-
-        "TXTTXTX",
-        "XTXTTXT",
-
-        "TXTTXTXTTX",
-        "XTXTTXTXTT"
-    ],
-
-    mixed: [
-
-        "TTXTX",
-        "XXTXT",
-
-        "TXTTX",
-        "XTTXX",
-
-        "TTXXT",
-        "XXTTX",
-
-        "TXTXX",
-        "XTXTT",
-
-        "TXXTX",
-        "XTTXT"
-    ]
-};
+    // 1-3
+    "TXXXTXXXTXXXTXXX",
+    "XTTTXTTTXTTTXTTT",
+
+    // 3-2
+    "TTTXXTTTXXTTTXX",
+    "XXXTTXXXTTXXXTT",
+
+    // 2-3
+    "TTXXXTTXXXTTXXX",
+    "XXTTTXXTTTXXTTT",
+
+    // 4-1
+    "TTTTXTTTTXTTTTX",
+    "XXXXTXXXXTXXXXT",
+
+    // 1-4
+    "TXXXXTXXXXTXXXXT",
+    "XTTTTXTTTTXTTTTX",
+
+    // 4-2
+    "TTTTXXTTTTXXTTT",
+    "XXXXTTXXXXTTXXX",
+
+    // 2-4
+    "TTXXXXTTXXXXTTX",
+    "XXTTTTXXTTTTXXT",
+
+    // 5-1
+    "TTTTTXTTTTTXTTT",
+    "XXXXXTXXXXXTXXX",
+
+    // 1-5
+    "TXXXXXTXXXXXTXXX",
+    "XTTTTTXTTTTTXTTT",
+
+    // 5-2
+    "TTTTTXXTTTTTXXT",
+    "XXXXXT TXXXXXTXX".replace(/ /g, ""),
+
+    // 6-1
+    "TTTTTTXTTTTTTXT",
+    "XXXXXXTXXXXXXTX",
+
+    // 1-6
+    "TXXXXXXTXXXXXXT",
+    "XTTTTTTXTTTTTTX",
+
+    // 6-2
+    "TTTTTTXXTTTTTTX",
+    "XXXXXXTTXXXXXXT",
+
+    // 2-6
+    "TTXXXXXXTTXXXX",
+    "XXTTTTTTXXTTTT",
+
+    // 7-1
+    "TTTTTTTXTTTTTTX",
+    "XXXXXXXTXXXXXXX",
+
+    // 1-7
+    "TXXXXXXXTXXXXXX",
+    "XTTTTTTTXTTTTTT",
+
+    // 8-1
+    "TTTTTTTTXTTTTTT",
+    "XXXXXXXXTXXXXXXX",
+
+    // 1-8
+    "TXXXXXXXXTXXXXXX",
+    "XTTTTTTTTXTTTTTT",
+
+    // phá cầu
+    "TTTTTTTTTTTTTTX",
+    "XXXXXXXXXXXXXXT",
+
+    // đảo cầu
+    "TTTTTTTTTTTTTXT",
+    "XXXXXXXXXXXXXXTX",
+
+    // zigzag
+    "TXTTXTXTTXTXTTX",
+    "XTXTXT XTXTXTXT".replace(/ /g, ""),
+
+    // mixed
+    "TTXTXTTXTXTTXTX",
+    "XXTXTXXTXTXXTXT",
+
+    "TXTTXXTTXTXTTXX",
+    "XTTXXT TXTXTXXT".replace(/ /g, ""),
+
+    // đối xứng
+    "TTXTXTXT XTXTTX".replace(/ /g, ""),
+    "XXTXT TXTXTXTXX".replace(/ /g, ""),
+
+    // cụm
+    "TTXXXT TXXTTXXT".replace(/ /g, ""),
+    "XXTTTX TXXTTXXT".replace(/ /g, ""),
+
+    // nhịp
+    "TXXTXXTXXTXXTXX",
+    "XTTXTTXTTXTTXTT"
+];
 
 // =========================================================
-// HIỂN THỊ
-// =========================================================
-
-function displayResult(value) {
-
-    if (value === "TAI") {
-        return "Tài";
-    }
-
-    if (value === "XIU") {
-        return "Xỉu";
-    }
-
-    return value;
-}
-
-// =========================================================
-// NORMALIZE
+// UTILITY
 // =========================================================
 
 function normalizeResult(value) {
@@ -450,8 +405,8 @@ function normalizeResult(value) {
 
     const v =
         String(value)
-            .toUpperCase()
-            .trim();
+            .trim()
+            .toUpperCase();
 
     if (
         v === "TAI" ||
@@ -470,19 +425,32 @@ function normalizeResult(value) {
     return null;
 }
 
-// =========================================================
-// T / X
-// =========================================================
+function displayResult(value) {
+
+    const result =
+        normalizeResult(value);
+
+    if (result === "TAI") {
+        return "Tài";
+    }
+
+    if (result === "XIU") {
+        return "Xỉu";
+    }
+
+    return value;
+}
 
 function toTX(value) {
 
-    return normalizeResult(value) === "TAI"
+    return normalizeResult(value) ===
+        "TAI"
         ? "T"
         : "X";
 }
 
 // =========================================================
-// FETCH API GỐC
+// FETCH
 // =========================================================
 
 async function fetchSource(url) {
@@ -509,7 +477,7 @@ async function fetchSource(url) {
                             "application/json",
 
                         "User-Agent":
-                            "LC79-TX-AI/1.0"
+                            "LC79-AI/2.0"
                     },
 
                     signal:
@@ -520,7 +488,7 @@ async function fetchSource(url) {
         if (!response.ok) {
 
             throw new Error(
-                `API gốc HTTP ${response.status}`
+                `HTTP ${response.status}`
             );
         }
 
@@ -533,7 +501,7 @@ async function fetchSource(url) {
 }
 
 // =========================================================
-// NORMALIZE SESSIONS
+// NORMALIZE API
 // =========================================================
 
 function normalizeSessions(json) {
@@ -558,16 +526,20 @@ function normalizeSessions(json) {
                         )
                     : [];
 
-            const point =
+            let tong =
                 Number(item.point);
 
-            const tong =
-                Number.isFinite(point)
-                    ? point
-                    : dices.reduce(
-                        (a, b) => a + b,
+            if (
+                !Number.isFinite(tong)
+            ) {
+
+                tong =
+                    dices.reduce(
+                        (sum, n) =>
+                            sum + n,
                         0
                     );
+            }
 
             return {
 
@@ -604,16 +576,15 @@ function normalizeSessions(json) {
 }
 
 // =========================================================
-// BUILD PATTERN 15
+// PATTERN 15
 // =========================================================
 
 function buildPattern(
-    history,
-    length = PATTERN_LENGTH
+    history
 ) {
 
     return history
-        .slice(-length)
+        .slice(-PATTERN_LENGTH)
         .map(
             item =>
                 toTX(
@@ -624,101 +595,81 @@ function buildPattern(
 }
 
 // =========================================================
-// PATTERN 5
+// SIMILARITY
 // =========================================================
 
-function getComparePattern(pattern) {
+function similarity(a, b) {
 
-    return pattern.slice(
-        -COMPARE_PATTERN_LENGTH
-    );
+    const length =
+        Math.min(
+            a.length,
+            b.length
+        );
+
+    if (!length) {
+        return 0;
+    }
+
+    let same = 0;
+
+    for (
+        let i = 0;
+        i < length;
+        i++
+    ) {
+
+        if (
+            a[i] === b[i]
+        ) {
+
+            same++;
+        }
+    }
+
+    return (
+        same / length
+    ) * 100;
 }
 
 // =========================================================
-// SO SÁNH PATTERN MẪU
+// PATTERN MẪU CHI TIẾT
 // =========================================================
 
-function findSamplePattern(pattern) {
-
-    const current =
-        pattern.slice(
-            -COMPARE_PATTERN_LENGTH
-        );
+function compareSamplePatterns(
+    pattern
+) {
 
     let best = null;
 
-    let bestScore = 0;
-
     for (
-        const [modelName, samples]
-        of Object.entries(
-            PATTERN_MODELS
-        )
+        const sample of SAMPLE_PATTERNS
     ) {
 
-        for (
-            const sample
-            of samples
-        ) {
-
-            const target =
+        const score =
+            similarity(
+                pattern.slice(
+                    -COMPARE_PATTERN_LENGTH
+                ),
                 sample.slice(
                     -COMPARE_PATTERN_LENGTH
-                );
+                )
+            );
 
-            const length =
-                Math.min(
-                    current.length,
-                    target.length
-                );
+        if (
+            !best ||
+            score > best.score
+        ) {
 
-            if (!length) {
-                continue;
-            }
+            best = {
 
-            let same = 0;
+                pattern:
+                    sample,
 
-            for (
-                let i = 0;
-                i < length;
-                i++
-            ) {
-
-                if (
-                    current[i] ===
-                    target[i]
-                ) {
-
-                    same++;
-                }
-            }
-
-            const score =
-                (
-                    same / length
-                ) * 100;
-
-            if (
-                score > bestScore
-            ) {
-
-                bestScore =
-                    score;
-
-                best = {
-
-                    model:
-                        modelName,
-
-                    pattern:
-                        sample,
-
-                    score:
-                        Number(
-                            score.toFixed(2)
-                        )
-                };
-            }
+                score:
+                    Number(
+                        score.toFixed(2)
+                    )
+            };
         }
     }
 
@@ -726,109 +677,14 @@ function findSamplePattern(pattern) {
 }
 
 // =========================================================
-// LƯU PATTERN
+// MODEL 1
+// STREAK
 // =========================================================
 
-function savePatternMemory(
-    type,
-    history
-) {
-
-    const memory =
-        patternMemory[type];
-
-    if (
-        history.length <
-        PATTERN_LENGTH + 1
-    ) {
-        return;
-    }
-
-    for (
-        let i = 0;
-
-        i <=
-        history.length -
-        PATTERN_LENGTH -
-        1;
-
-        i++
-    ) {
-
-        const pattern =
-            history
-                .slice(
-                    i,
-                    i +
-                    PATTERN_LENGTH
-                )
-                .map(
-                    item =>
-                        toTX(
-                            item.ket_qua
-                        )
-                )
-                .join("");
-
-        const next =
-            history[
-                i +
-                PATTERN_LENGTH
-            ];
-
-        if (!next) {
-            continue;
-        }
-
-        const exists =
-            memory.some(
-                item =>
-                    item.pattern ===
-                        pattern &&
-                    item.phien ===
-                        next.phien
-            );
-
-        if (!exists) {
-
-            memory.push({
-
-                pattern,
-
-                next:
-                    next.ket_qua,
-
-                phien:
-                    next.phien
-            });
-        }
-    }
-
-    if (
-        memory.length >
-        MAX_PATTERN_MEMORY
-    ) {
-
-        memory.splice(
-            0,
-            memory.length -
-            MAX_PATTERN_MEMORY
-        );
-    }
-}
-
-// =========================================================
-// MODEL 1 - STREAK
-// =========================================================
-
-function model1Streak(history) {
+function model1(history) {
 
     if (!history.length) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
+        return null;
     }
 
     const last =
@@ -862,7 +718,9 @@ function model1Streak(history) {
 
     let prediction;
 
-    if (streak >= 4) {
+    if (
+        streak >= 4
+    ) {
 
         prediction =
             last === "TAI"
@@ -875,99 +733,80 @@ function model1Streak(history) {
             last;
     }
 
-    const confidence =
-        Math.min(
-            90,
-            55 + streak * 5
-        );
-
     return {
 
         prediction,
 
         confidence:
-            Number(
-                confidence.toFixed(2)
+            Math.min(
+                92,
+                55 +
+                streak * 6
             )
     };
 }
 
 // =========================================================
-// MODEL 2 - ALTERNATING
+// MODEL 2
+// ALTERNATING
 // =========================================================
 
-function model2Alternating(pattern) {
+function model2(pattern) {
 
-    const recent =
+    const p =
         pattern.slice(-8);
 
     if (
-        recent.length < 4
+        p.length < 6
     ) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
+        return null;
     }
 
-    let alternating = true;
+    let ok = true;
 
     for (
         let i = 1;
-        i < recent.length;
+        i < p.length;
         i++
     ) {
 
         if (
-            recent[i] ===
-            recent[i - 1]
+            p[i] ===
+            p[i - 1]
         ) {
 
-            alternating = false;
+            ok = false;
 
             break;
         }
     }
 
-    if (!alternating) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
+    if (!ok) {
+        return null;
     }
-
-    const last =
-        recent[
-            recent.length - 1
-        ];
 
     return {
 
         prediction:
-            last === "T"
+            p[p.length - 1] === "T"
                 ? "XIU"
                 : "TAI",
 
-        confidence: 80
+        confidence: 82
     };
 }
 
 // =========================================================
-// MODEL 3 - MARKOV
+// MODEL 3
+// MARKOV 1
 // =========================================================
 
-function model3Markov(history) {
+function model3(history) {
 
     if (
-        history.length < 4
+        history.length < 8
     ) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
+        return null;
     }
 
     const last =
@@ -976,7 +815,6 @@ function model3Markov(history) {
         ].ket_qua;
 
     let tai = 0;
-
     let xiu = 0;
 
     for (
@@ -998,12 +836,8 @@ function model3Markov(history) {
         ) {
 
             tai++;
-        }
 
-        if (
-            history[i + 1].ket_qua ===
-            "XIU"
-        ) {
+        } else {
 
             xiu++;
         }
@@ -1013,85 +847,146 @@ function model3Markov(history) {
         tai + xiu;
 
     if (!total) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
+        return null;
     }
 
     const rate =
-        tai / total;
+        Math.max(
+            tai,
+            xiu
+        ) / total;
 
     return {
 
         prediction:
-            rate >= 0.5
+            tai >= xiu
                 ? "TAI"
                 : "XIU",
 
         confidence:
-            Number(
-                (
-                    50 +
-                    Math.abs(
-                        rate - 0.5
-                    ) *
-                    90
-                ).toFixed(2)
-            )
+            50 +
+            rate * 45
     };
 }
 
 // =========================================================
-// MODEL 4 - PATTERN 5
+// MODEL 4
+// MARKOV 2
 // =========================================================
 
-function model4Pattern5(history) {
+function model4(history) {
 
     if (
-        history.length <
-        COMPARE_PATTERN_LENGTH + 1
+        history.length < 10
     ) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
+        return null;
     }
 
-    const current =
-        buildPattern(
-            history,
-            COMPARE_PATTERN_LENGTH
+    const arr =
+        history.map(
+            x =>
+                toTX(
+                    x.ket_qua
+                )
         );
 
-    let tai = 0;
+    const key =
+        arr
+            .slice(-2)
+            .join("");
 
+    let tai = 0;
     let xiu = 0;
 
     for (
         let i = 0;
+        i < arr.length - 2;
+        i++
+    ) {
 
-        i <=
-        history.length -
-        COMPARE_PATTERN_LENGTH -
-        1;
+        if (
+            arr
+                .slice(
+                    i,
+                    i + 2
+                )
+                .join("") !== key
+        ) {
+            continue;
+        }
 
+        if (
+            arr[i + 2] === "T"
+        ) {
+
+            tai++;
+
+        } else {
+
+            xiu++;
+        }
+    }
+
+    const total =
+        tai + xiu;
+
+    if (!total) {
+        return null;
+    }
+
+    return {
+
+        prediction:
+            tai >= xiu
+                ? "TAI"
+                : "XIU",
+
+        confidence:
+            50 +
+            (
+                Math.max(
+                    tai,
+                    xiu
+                ) /
+                total
+            ) * 45
+    };
+}
+
+// =========================================================
+// MODEL 5
+// PATTERN 5
+// =========================================================
+
+function model5(history) {
+
+    if (
+        history.length < 10
+    ) {
+        return null;
+    }
+
+    const current =
+        buildPattern(
+            history
+        ).slice(-5);
+
+    let tai = 0;
+    let xiu = 0;
+
+    for (
+        let i = 0;
+        i <= history.length - 6;
         i++
     ) {
 
         const sample =
             history
-                .slice(
-                    i,
-                    i +
-                    COMPARE_PATTERN_LENGTH
-                )
+                .slice(i, i + 5)
                 .map(
-                    item =>
+                    x =>
                         toTX(
-                            item.ket_qua
+                            x.ket_qua
                         )
                 )
                 .join("");
@@ -1103,14 +998,7 @@ function model4Pattern5(history) {
         }
 
         const next =
-            history[
-                i +
-                COMPARE_PATTERN_LENGTH
-            ];
-
-        if (!next) {
-            continue;
-        }
+            history[i + 5];
 
         if (
             next.ket_qua ===
@@ -1118,12 +1006,8 @@ function model4Pattern5(history) {
         ) {
 
             tai++;
-        }
 
-        if (
-            next.ket_qua ===
-            "XIU"
-        ) {
+        } else {
 
             xiu++;
         }
@@ -1133,226 +1017,148 @@ function model4Pattern5(history) {
         tai + xiu;
 
     if (!total) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
+        return null;
     }
-
-    const rate =
-        tai / total;
 
     return {
 
         prediction:
-            rate >= 0.5
+            tai >= xiu
                 ? "TAI"
                 : "XIU",
 
         confidence:
-            Number(
-                (
-                    50 +
-                    Math.abs(
-                        rate - 0.5
-                    ) *
-                    90
-                ).toFixed(2)
-            )
+            50 +
+            (
+                Math.max(
+                    tai,
+                    xiu
+                ) /
+                total
+            ) * 45
     };
 }
 
 // =========================================================
-// MODEL 5 - PATTERN 15
+// MODEL 6
+// PATTERN 15
 // =========================================================
 
-function model5Pattern15(
-    pattern,
+function model6(
+    history,
     type
 ) {
+
+    if (
+        history.length <
+        PATTERN_LENGTH
+    ) {
+        return null;
+    }
+
+    const current =
+        buildPattern(
+            history
+        );
+
+    let tai = 0;
+    let xiu = 0;
+    let weightTotal = 0;
 
     const memory =
         patternMemory[type];
 
-    if (!memory.length) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
-    }
-
-    let tai = 0;
-
-    let xiu = 0;
-
-    let totalWeight = 0;
-
     for (
-        const record of memory
+        const item of memory
     ) {
 
-        const sample =
-            record.pattern;
-
-        let same = 0;
-
-        for (
-            let i = 0;
-            i < PATTERN_LENGTH;
-            i++
-        ) {
-
-            if (
-                pattern[i] ===
-                sample[i]
-            ) {
-
-                same++;
-            }
-        }
-
-        const similarity =
-            same /
-            PATTERN_LENGTH;
+        const score =
+            similarity(
+                current,
+                item.pattern
+            );
 
         if (
-            similarity < 0.5
+            score < 60
         ) {
             continue;
         }
 
         const weight =
-            similarity *
-            similarity;
+            Math.pow(
+                score / 100,
+                3
+            );
 
         if (
-            record.next ===
+            item.next ===
             "TAI"
         ) {
 
             tai += weight;
-        }
 
-        if (
-            record.next ===
-            "XIU"
-        ) {
+        } else {
 
             xiu += weight;
         }
 
-        totalWeight +=
+        weightTotal +=
             weight;
     }
 
     if (
-        totalWeight <= 0
+        weightTotal <= 0
     ) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
+        return null;
     }
-
-    const rate =
-        tai /
-        totalWeight;
 
     return {
 
         prediction:
-            rate >= 0.5
+            tai >= xiu
                 ? "TAI"
                 : "XIU",
 
         confidence:
-            Number(
-                (
-                    50 +
-                    Math.abs(
-                        rate - 0.5
-                    ) *
-                    90
-                ).toFixed(2)
-            )
+            50 +
+            (
+                Math.max(
+                    tai,
+                    xiu
+                ) /
+                weightTotal
+            ) * 45
     };
 }
 
 // =========================================================
-// MODEL 6 - SIMILARITY
+// MODEL 7
+// RUN LENGTH
 // =========================================================
 
-function model6Similarity(pattern) {
-
-    const sample =
-        findSamplePattern(
-            pattern
-        );
-
-    if (!sample) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
-    }
-
-    const last =
-        sample.pattern[
-            sample.pattern.length - 1
-        ];
-
-    return {
-
-        prediction:
-            last === "T"
-                ? "XIU"
-                : "TAI",
-
-        confidence:
-            Math.max(
-                50,
-                sample.score
-            )
-    };
-}
-
-// =========================================================
-// MODEL 7 - RUN LENGTH
-// =========================================================
-
-function model7RunLength(history) {
+function model7(history) {
 
     if (
-        history.length < 5
+        history.length < 8
     ) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
+        return null;
     }
 
     const arr =
         history.map(
-            item =>
+            x =>
                 toTX(
-                    item.ket_qua
+                    x.ket_qua
                 )
         );
 
     const last =
-        arr[
-            arr.length - 1
-        ];
+        arr[arr.length - 1];
 
-    let run = 0;
+    let run = 1;
 
     for (
-        let i = arr.length - 1;
+        let i = arr.length - 2;
         i >= 0;
         i--
     ) {
@@ -1370,18 +1176,15 @@ function model7RunLength(history) {
     }
 
     let tai = 0;
-
     let xiu = 0;
 
-    let samples = 0;
-
     for (
-        let i = 0;
+        let i = 1;
         i < arr.length - 1;
         i++
     ) {
 
-        let length = 1;
+        let r = 1;
 
         for (
             let j = i - 1;
@@ -1394,7 +1197,7 @@ function model7RunLength(history) {
                 arr[i]
             ) {
 
-                length++;
+                r++;
 
             } else {
 
@@ -1403,196 +1206,67 @@ function model7RunLength(history) {
         }
 
         if (
-            length !== run
+            r !== run
         ) {
             continue;
         }
 
-        const next =
-            arr[i + 1];
+        if (
+            arr[i + 1] ===
+            "T"
+        ) {
 
-        if (next === "T") {
             tai++;
-        }
 
-        if (next === "X") {
+        } else {
+
             xiu++;
         }
-
-        samples++;
-    }
-
-    if (!samples) {
-
-        return {
-
-            prediction:
-                last === "T"
-                    ? "XIU"
-                    : "TAI",
-
-            confidence: 55
-        };
-    }
-
-    const prediction =
-        tai >= xiu
-            ? "TAI"
-            : "XIU";
-
-    const confidence =
-        50 +
-        (
-            Math.abs(
-                tai - xiu
-            ) /
-            samples
-        ) * 45;
-
-    return {
-
-        prediction,
-
-        confidence:
-            Number(
-                Math.min(
-                    95,
-                    confidence
-                ).toFixed(2)
-            )
-    };
-}
-
-// =========================================================
-// MODEL 8 - TRANSITION MATRIX
-// =========================================================
-
-function model8Transition(history) {
-
-    if (
-        history.length < 5
-    ) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
-    }
-
-    const arr =
-        history.map(
-            item =>
-                toTX(
-                    item.ket_qua
-                )
-        );
-
-    let TT = 0;
-    let TX = 0;
-    let XT = 0;
-    let XX = 0;
-
-    for (
-        let i = 1;
-        i < arr.length;
-        i++
-    ) {
-
-        const pair =
-            arr[i - 1] +
-            arr[i];
-
-        if (pair === "TT") TT++;
-
-        if (pair === "TX") TX++;
-
-        if (pair === "XT") XT++;
-
-        if (pair === "XX") XX++;
-    }
-
-    const last =
-        arr[arr.length - 1];
-
-    let tai;
-
-    let xiu;
-
-    if (last === "T") {
-
-        tai = TT;
-
-        xiu = TX;
-
-    } else {
-
-        tai = XT;
-
-        xiu = XX;
     }
 
     const total =
         tai + xiu;
 
     if (!total) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
+        return null;
     }
-
-    const prediction =
-        tai >= xiu
-            ? "TAI"
-            : "XIU";
-
-    const confidence =
-        50 +
-        (
-            Math.abs(
-                tai - xiu
-            ) /
-            total
-        ) * 45;
 
     return {
 
-        prediction,
+        prediction:
+            tai >= xiu
+                ? "TAI"
+                : "XIU",
 
         confidence:
-            Number(
-                Math.min(
-                    95,
-                    confidence
-                ).toFixed(2)
-            )
+            50 +
+            (
+                Math.max(
+                    tai,
+                    xiu
+                ) /
+                total
+            ) * 45
     };
 }
 
 // =========================================================
-// MODEL 9 - WEIGHTED RECENCY
+// MODEL 8
+// RECENCY + DISTRIBUTION
 // =========================================================
 
-function model9WeightedRecency(
-    history
-) {
-
-    if (
-        history.length < 5
-    ) {
-
-        return {
-            prediction: null,
-            confidence: 50
-        };
-    }
+function model8(history) {
 
     const recent =
-        history.slice(-10);
+        history.slice(-15);
+
+    if (
+        recent.length < 8
+    ) {
+        return null;
+    }
 
     let tai = 0;
-
     let xiu = 0;
 
     for (
@@ -1610,12 +1284,8 @@ function model9WeightedRecency(
         ) {
 
             tai += weight;
-        }
 
-        if (
-            recent[i].ket_qua ===
-            "XIU"
-        ) {
+        } else {
 
             xiu += weight;
         }
@@ -1624,44 +1294,108 @@ function model9WeightedRecency(
     const total =
         tai + xiu;
 
-    if (!total) {
+    return {
 
-        return {
-            prediction: null,
-            confidence: 50
-        };
+        prediction:
+            tai >= xiu
+                ? "TAI"
+                : "XIU",
+
+        confidence:
+            50 +
+            (
+                Math.max(
+                    tai,
+                    xiu
+                ) /
+                total
+            ) * 45
+    };
+}
+
+// =========================================================
+// MODEL 9
+// ENSEMBLE PATTERN MẪU
+// =========================================================
+
+function model9(pattern) {
+
+    const recent =
+        pattern.slice(-5);
+
+    let tai = 0;
+    let xiu = 0;
+
+    let bestScore = 0;
+
+    for (
+        const sample
+        of SAMPLE_PATTERNS
+    ) {
+
+        const sample5 =
+            sample.slice(-5);
+
+        const score =
+            similarity(
+                recent,
+                sample5
+            );
+
+        if (
+            score < 60
+        ) {
+            continue;
+        }
+
+        const next =
+            sample[
+                sample.length - 1
+            ];
+
+        if (
+            next === "T"
+        ) {
+
+            tai += score;
+
+        } else {
+
+            xiu += score;
+        }
+
+        bestScore =
+            Math.max(
+                bestScore,
+                score
+            );
     }
 
-    const prediction =
-        tai >= xiu
-            ? "TAI"
-            : "XIU";
-
-    const confidence =
-        50 +
-        (
-            Math.abs(
-                tai - xiu
-            ) /
-            total
-        ) * 45;
+    if (
+        tai === 0 &&
+        xiu === 0
+    ) {
+        return null;
+    }
 
     return {
 
-        prediction,
+        prediction:
+            tai >= xiu
+                ? "TAI"
+                : "XIU",
 
         confidence:
-            Number(
-                Math.min(
-                    95,
-                    confidence
-                ).toFixed(2)
+            Math.min(
+                95,
+                50 +
+                bestScore * 0.45
             )
     };
 }
 
 // =========================================================
-// CHẠY 9 MODEL
+// RUN ALL MODELS
 // =========================================================
 
 function runModels(
@@ -1673,124 +1407,52 @@ function runModels(
     return {
 
         model1:
-            model1Streak(
-                history
-            ),
+            model1(history),
 
         model2:
-            model2Alternating(
-                pattern
-            ),
+            model2(pattern),
 
         model3:
-            model3Markov(
-                history
-            ),
+            model3(history),
 
         model4:
-            model4Pattern5(
-                history
-            ),
+            model4(history),
 
         model5:
-            model5Pattern15(
-                pattern,
+            model5(history),
+
+        model6:
+            model6(
+                history,
                 type
             ),
 
-        model6:
-            model6Similarity(
-                pattern
-            ),
-
         model7:
-            model7RunLength(
-                history
-            ),
+            model7(history),
 
         model8:
-            model8Transition(
-                history
-            ),
+            model8(history),
 
         model9:
-            model9WeightedRecency(
-                history
-            )
+            model9(pattern)
     };
 }
 
 // =========================================================
-// AI TỰ HỌC
-// =========================================================
-
-function updateAI(
-    type,
-    models,
-    actualResult
-) {
-
-    const memory =
-        aiMemory[type];
-
-    for (
-        const [name, model]
-        of Object.entries(models)
-    ) {
-
-        if (
-            !model ||
-            !model.prediction
-        ) {
-            continue;
-        }
-
-        const ai =
-            memory[name];
-
-        if (
-            model.prediction ===
-            actualResult
-        ) {
-
-            ai.win++;
-
-            ai.weight += 0.05;
-
-        } else {
-
-            ai.loss++;
-
-            ai.weight -= 0.03;
-        }
-
-        ai.weight =
-            Math.max(
-                0.2,
-                Math.min(
-                    5,
-                    ai.weight
-                )
-            );
-    }
-}
-
-// =========================================================
-// COMBINE 9 MODEL
+// ENSEMBLE
 // =========================================================
 
 function combineModels(
     models,
     type,
-    patternMatch
+    sampleScore
 ) {
 
     const memory =
         aiMemory[type];
 
-    let taiScore = 0;
-
-    let xiuScore = 0;
+    let tai = 0;
+    let xiu = 0;
 
     for (
         const [name, model]
@@ -1821,19 +1483,16 @@ function combineModels(
             "TAI"
         ) {
 
-            taiScore += score;
+            tai += score;
 
-        } else if (
-            model.prediction ===
-            "XIU"
-        ) {
+        } else {
 
-            xiuScore += score;
+            xiu += score;
         }
     }
 
     const total =
-        taiScore + xiuScore;
+        tai + xiu;
 
     if (!total) {
 
@@ -1847,65 +1506,49 @@ function combineModels(
         };
     }
 
-    const prediction =
-        taiScore >= xiuScore
-            ? "TAI"
-            : "XIU";
-
-    const maxScore =
-        Math.max(
-            taiScore,
-            xiuScore
-        );
-
-    const minScore =
-        Math.min(
-            taiScore,
-            xiuScore
-        );
-
     let confidence =
         50 +
         (
-            (
-                maxScore -
-                minScore
+            Math.abs(
+                tai - xiu
             ) /
             total
-        ) *
-        45;
+        ) * 45;
 
     if (
-        patternMatch >= 90
+        sampleScore >= 90
     ) {
 
         confidence += 4;
 
     } else if (
-        patternMatch >= 80
+        sampleScore >= 80
     ) {
 
         confidence += 3;
 
     } else if (
-        patternMatch >= 60
+        sampleScore >= 70
     ) {
 
-        confidence += 1.5;
+        confidence += 1;
     }
 
     confidence =
-        Math.max(
-            50,
-            Math.min(
-                97,
+        Math.min(
+            97,
+            Math.max(
+                50,
                 confidence
             )
         );
 
     return {
 
-        prediction,
+        prediction:
+            tai >= xiu
+                ? "TAI"
+                : "XIU",
 
         confidence:
             Number(
@@ -1915,73 +1558,162 @@ function combineModels(
 }
 
 // =========================================================
-// ANALYZE
+// BUILD PATTERN MEMORY
 // =========================================================
 
-function analyze(
-    history,
-    type
+function updatePatternMemory(
+    type,
+    history
 ) {
+
+    if (
+        history.length <
+        PATTERN_LENGTH + 1
+    ) {
+        return;
+    }
+
+    const memory =
+        patternMemory[type];
 
     const pattern =
         buildPattern(
-            history,
-            PATTERN_LENGTH
+            history.slice(
+                0,
+                history.length - 1
+            )
         );
 
-    const patternSoSanh =
-        getComparePattern(
-            pattern
+    const next =
+        history[
+            history.length - 1
+        ];
+
+    const exists =
+        memory.some(
+            x =>
+                x.pattern ===
+                pattern &&
+                x.phien ===
+                next.phien
         );
 
-    const sample =
-        findSamplePattern(
-            pattern
-        );
+    if (!exists) {
 
-    const models =
-        runModels(
-            history,
+        memory.push({
+
             pattern,
-            type
-        );
 
-    const result =
-        combineModels(
-            models,
-            type,
-            sample
-                ? sample.score
-                : 0
-        );
+            next:
+                next.ket_qua,
 
-    return {
+            phien:
+                next.phien
+        });
+    }
 
-        pattern,
+    while (
+        memory.length >
+        15
+    ) {
 
-        patternSoSanh,
-
-        sample,
-
-        models,
-
-        result
-    };
+        memory.shift();
+    }
 }
 
 // =========================================================
-// TẠO HISTORY ĐÁNH GIÁ
+// UPDATE AI
 // =========================================================
 
-function createEvaluationRecord(
-    prediction,
-    session
+function updateAI(
+    type,
+    predictionRecord,
+    actual
+) {
+
+    if (!predictionRecord) {
+        return;
+    }
+
+    const memory =
+        aiMemory[type];
+
+    for (
+        const [name, prediction]
+        of Object.entries(
+            predictionRecord.models || {}
+        )
+    ) {
+
+        if (
+            !prediction ||
+            !prediction.prediction
+        ) {
+            continue;
+        }
+
+        const model =
+            memory[name];
+
+        if (!model) {
+            continue;
+        }
+
+        if (
+            prediction.prediction ===
+            actual
+        ) {
+
+            model.win++;
+
+            model.weight +=
+                0.08;
+
+        } else {
+
+            model.loss++;
+
+            model.weight -=
+                0.04;
+        }
+
+        model.weight =
+            Math.max(
+                0.2,
+                Math.min(
+                    4,
+                    model.weight
+                )
+            );
+    }
+
+    saveJSON(
+        AI_FILE,
+        aiMemory
+    );
+}
+
+// =========================================================
+// PENDING PREDICTIONS
+// =========================================================
+
+const pendingPredictions = {
+    tx: new Map(),
+    md5: new Map()
+};
+
+// =========================================================
+// EVALUATION
+// =========================================================
+
+function createEvaluation(
+    phien,
+    prediction
 ) {
 
     return {
 
-        phien:
-            session.phien,
+        phien,
 
         du_doan:
             displayResult(
@@ -2003,115 +1735,129 @@ function createEvaluationRecord(
 }
 
 // =========================================================
-// CẬP NHẬT HISTORY ĐÁNH GIÁ
+// PROCESS RESULT
 // =========================================================
 
-function updateEvaluationHistory(
+function settleEvaluation(
     type,
-    sessions
-) {
-
-    const history =
-        evaluationHistory[type];
-
-    if (!history.length) {
-        return;
-    }
-
-    for (
-        const item of history
-    ) {
-
-        if (
-            item.ket_qua !==
-            "⌛ Chờ Kết Quả"
-        ) {
-
-            continue;
-        }
-
-        const session =
-            sessions.find(
-                s =>
-                    s.phien ===
-                    item.phien
-            );
-
-        if (!session) {
-            continue;
-        }
-
-        item.ket_qua =
-            displayResult(
-                session.ket_qua
-            );
-
-        item.xuc_xac =
-            session.xuc_xac;
-
-        item.tong =
-            session.tong;
-
-        const prediction =
-            normalizeResult(
-                item.du_doan
-            );
-
-        if (
-            prediction ===
-            session.ket_qua
-        ) {
-
-            item.danh_gia =
-                "✅ Thắng";
-
-        } else {
-
-            item.danh_gia =
-                "❌ Thua";
-        }
-    }
-}
-
-// =========================================================
-// LƯU DỰ ĐOÁN
-// =========================================================
-
-function savePredictionEvaluation(
-    type,
-    prediction,
     session
 ) {
 
-    const history =
+    const list =
         evaluationHistory[type];
 
-    const exists =
-        history.some(
-            item =>
-                item.phien ===
+    const item =
+        list.find(
+            x =>
+                x.phien ===
                 session.phien
         );
 
-    if (exists) {
-        return;
+    if (!item) {
+        return false;
     }
 
-    history.unshift(
-        createEvaluationRecord(
-            prediction,
-            session
-        )
-    );
+    if (
+        item.ket_qua !==
+        "⌛ Chờ Kết Quả"
+    ) {
+        return false;
+    }
+
+    item.ket_qua =
+        displayResult(
+            session.ket_qua
+        );
+
+    item.xuc_xac =
+        session.xuc_xac;
+
+    item.tong =
+        session.tong;
+
+    const predicted =
+        normalizeResult(
+            item.du_doan
+        );
 
     if (
-        history.length >
-        MAX_EVALUATION_HISTORY
+        predicted ===
+        session.ket_qua
     ) {
 
-        history.splice(
-            MAX_EVALUATION_HISTORY
+        item.danh_gia =
+            "✅ Thắng";
+
+    } else {
+
+        item.danh_gia =
+            "❌ Thua";
+    }
+
+    const pending =
+        pendingPredictions[type]
+            .get(
+                session.phien
+            );
+
+    if (pending) {
+
+        updateAI(
+            type,
+            pending,
+            session.ket_qua
         );
+
+        pendingPredictions[type]
+            .delete(
+                session.phien
+            );
+    }
+
+    saveJSON(
+        HISTORY_FILE,
+        evaluationHistory
+    );
+
+    return true;
+}
+
+// =========================================================
+// SSE PUSH
+// =========================================================
+
+function pushSSE(
+    type,
+    event,
+    data
+) {
+
+    const clients =
+        sseClients[type];
+
+    const payload =
+        JSON.stringify(data);
+
+    for (
+        const client of clients
+    ) {
+
+        try {
+
+            client.write(
+                `event: ${event}\n`
+            );
+
+            client.write(
+                `data: ${payload}\n\n`
+            );
+
+        } catch {
+
+            clients.delete(
+                client
+            );
+        }
     }
 }
 
@@ -2120,13 +1866,12 @@ function savePredictionEvaluation(
 // =========================================================
 
 async function processAPI(
-    sourceUrl,
     type
 ) {
 
     const json =
         await fetchSource(
-            sourceUrl
+            SOURCE_API[type]
         );
 
     const sessions =
@@ -2137,49 +1882,95 @@ async function processAPI(
     if (!sessions.length) {
 
         throw new Error(
-            "API gốc không có dữ liệu hợp lệ"
+            "Không có dữ liệu hợp lệ"
         );
     }
 
-    histories[type] =
+    const old =
+        sourceHistory[type];
+
+    const latest =
+        sessions[
+            sessions.length - 1
+        ];
+
+    const oldLatest =
+        old.length
+            ? old[
+                old.length - 1
+            ]
+            : null;
+
+    sourceHistory[type] =
         sessions.slice(
-            -MAX_HISTORY
+            -MAX_SOURCE_HISTORY
         );
 
-    const history =
-        histories[type];
-
     // =====================================================
-    // CẬP NHẬT CÁC PHIÊN ĐÃ CHỜ
+    // SETTLE ALL PENDING
     // =====================================================
 
-    updateEvaluationHistory(
-        type,
-        history
-    );
+    let changed = false;
+
+    for (
+        const session of
+        sourceHistory[type]
+    ) {
+
+        const result =
+            settleEvaluation(
+                type,
+                session
+            );
+
+        if (result) {
+            changed = true;
+        }
+    }
 
     // =====================================================
-    // LƯU PATTERN
+    // NEW SESSION
     // =====================================================
 
-    savePatternMemory(
-        type,
-        history
-    );
+    const isNewSession =
+        !oldLatest ||
+        oldLatest.phien !==
+        latest.phien;
+
+    if (
+        isNewSession
+    ) {
+
+        pushSSE(
+            type,
+            "result",
+            {
+                phien:
+                    latest.phien,
+
+                xuc_xac:
+                    latest.xuc_xac,
+
+                tong:
+                    latest.tong,
+
+                ket_qua:
+                    displayResult(
+                        latest.ket_qua
+                    )
+            }
+        );
+    }
 
     // =====================================================
     // CHƯA ĐỦ 15
     // =====================================================
 
     if (
-        history.length <
+        sourceHistory[type]
+            .length <
         MIN_HISTORY
     ) {
-
-        const latest =
-            history[
-                history.length - 1
-            ];
 
         return {
 
@@ -2202,8 +1993,7 @@ async function processAPI(
 
             pattern:
                 buildPattern(
-                    history,
-                    PATTERN_LENGTH
+                    sourceHistory[type]
                 ),
 
             du_doan:
@@ -2215,47 +2005,133 @@ async function processAPI(
     }
 
     // =====================================================
-    // LATEST
+    // BUILD PATTERN
     // =====================================================
 
-    const latest =
-        history[
-            history.length - 1
-        ];
+    const history =
+        sourceHistory[type];
+
+    const pattern =
+        buildPattern(
+            history
+        );
+
+    const sample =
+        compareSamplePatterns(
+            pattern
+        );
 
     // =====================================================
-    // ANALYZE
+    // AI PATTERN MEMORY
     // =====================================================
 
-    const analysis =
-        analyze(
+    updatePatternMemory(
+        type,
+        history
+    );
+
+    // =====================================================
+    // MODELS
+    // =====================================================
+
+    const models =
+        runModels(
             history,
+            pattern,
             type
         );
 
     // =====================================================
-    // PHIÊN TIẾP THEO
+    // FINAL
     // =====================================================
 
-    const nextSession = {
+    const result =
+        combineModels(
+            models,
+            type,
+            sample
+                ? sample.score
+                : 0
+        );
 
-        phien:
-            latest.phien + 1
-    };
+    const nextPhien =
+        latest.phien + 1;
 
     // =====================================================
-    // LƯU DỰ ĐOÁN
+    // CHỈ TẠO PREDICTION MỘT LẦN
     // =====================================================
 
-    savePredictionEvaluation(
-        type,
-        analysis.result.prediction,
-        nextSession
-    );
+    if (
+        !pendingPredictions[type]
+            .has(nextPhien)
+    ) {
+
+        pendingPredictions[type]
+            .set(
+                nextPhien,
+                {
+                    prediction:
+                        result.prediction,
+
+                    models
+                }
+            );
+
+        const exists =
+            evaluationHistory[type]
+                .some(
+                    x =>
+                        x.phien ===
+                        nextPhien
+                );
+
+        if (!exists) {
+
+            evaluationHistory[type]
+                .unshift(
+                    createEvaluation(
+                        nextPhien,
+                        result.prediction
+                    )
+                );
+
+            if (
+                evaluationHistory[type]
+                    .length >
+                MAX_EVALUATION_HISTORY
+            ) {
+
+                evaluationHistory[type]
+                    .splice(
+                        MAX_EVALUATION_HISTORY
+                    );
+            }
+
+            saveJSON(
+                HISTORY_FILE,
+                evaluationHistory
+            );
+        }
+    }
+
+    // =====================================================
+    // HISTORY ĐÃ THAY ĐỔI
+    // =====================================================
+
+    if (
+        changed ||
+        isNewSession
+    ) {
+
+        pushSSE(
+            type,
+            "history",
+            evaluationHistory[type]
+        );
+    }
 
     // =====================================================
     // PUBLIC JSON
-    // CHỈ 8 FIELD
     // =====================================================
 
     return {
@@ -2275,24 +2151,22 @@ async function processAPI(
             ),
 
         phien_hien_tai:
-            latest.phien + 1,
+            nextPhien,
 
-        pattern:
-            analysis.pattern,
+        pattern,
 
         du_doan:
             displayResult(
-                analysis.result
-                    .prediction
+                result.prediction
             ),
 
         do_tin_cay:
-            `${analysis.result.confidence}%`
+            `${result.confidence}%`
     };
 }
 
 // =========================================================
-// ENDPOINT TX
+// MAIN ENDPOINT TX
 // =========================================================
 
 app.get(
@@ -2303,7 +2177,6 @@ app.get(
 
             const data =
                 await processAPI(
-                    SOURCE_TX,
                     "tx"
                 );
 
@@ -2312,7 +2185,7 @@ app.get(
         } catch (error) {
 
             console.error(
-                "[TX ERROR]",
+                "[TX]",
                 error.message
             );
 
@@ -2328,7 +2201,7 @@ app.get(
 );
 
 // =========================================================
-// ENDPOINT MD5
+// MAIN ENDPOINT MD5
 // =========================================================
 
 app.get(
@@ -2339,7 +2212,6 @@ app.get(
 
             const data =
                 await processAPI(
-                    SOURCE_MD5,
                     "md5"
                 );
 
@@ -2348,7 +2220,7 @@ app.get(
         } catch (error) {
 
             console.error(
-                "[MD5 ERROR]",
+                "[MD5]",
                 error.message
             );
 
@@ -2392,6 +2264,231 @@ app.get(
 );
 
 // =========================================================
+// SSE TX
+// =========================================================
+
+app.get(
+    "/api/lc79/hu/history/stream",
+    (req, res) => {
+
+        res.setHeader(
+            "Content-Type",
+            "text/event-stream"
+        );
+
+        res.setHeader(
+            "Cache-Control",
+            "no-cache"
+        );
+
+        res.setHeader(
+            "Connection",
+            "keep-alive"
+        );
+
+        res.setHeader(
+            "X-Accel-Buffering",
+            "no"
+        );
+
+        if (res.flushHeaders) {
+            res.flushHeaders();
+        }
+
+        sseClients.tx.add(res);
+
+        res.write(
+            "retry: 3000\n\n"
+        );
+
+        res.write(
+            `event: history\n`
+        );
+
+        res.write(
+            `data: ${JSON.stringify(
+                evaluationHistory.tx
+            )}\n\n`
+        );
+
+        const heartbeat =
+            setInterval(
+                () => {
+
+                    try {
+
+                        res.write(
+                            ": heartbeat\n\n"
+                        );
+
+                    } catch {
+
+                        clearInterval(
+                            heartbeat
+                        );
+                    }
+
+                },
+                15000
+            );
+
+        req.on(
+            "close",
+            () => {
+
+                clearInterval(
+                    heartbeat
+                );
+
+                sseClients.tx.delete(
+                    res
+                );
+            }
+        );
+    }
+);
+
+// =========================================================
+// SSE MD5
+// =========================================================
+
+app.get(
+    "/api/lc79/md5/history/stream",
+    (req, res) => {
+
+        res.setHeader(
+            "Content-Type",
+            "text/event-stream"
+        );
+
+        res.setHeader(
+            "Cache-Control",
+            "no-cache"
+        );
+
+        res.setHeader(
+            "Connection",
+            "keep-alive"
+        );
+
+        res.setHeader(
+            "X-Accel-Buffering",
+            "no"
+        );
+
+        if (res.flushHeaders) {
+            res.flushHeaders();
+        }
+
+        sseClients.md5.add(res);
+
+        res.write(
+            "retry: 3000\n\n"
+        );
+
+        res.write(
+            `event: history\n`
+        );
+
+        res.write(
+            `data: ${JSON.stringify(
+                evaluationHistory.md5
+            )}\n\n`
+        );
+
+        const heartbeat =
+            setInterval(
+                () => {
+
+                    try {
+
+                        res.write(
+                            ": heartbeat\n\n"
+                        );
+
+                    } catch {
+
+                        clearInterval(
+                            heartbeat
+                        );
+                    }
+
+                },
+                15000
+            );
+
+        req.on(
+            "close",
+            () => {
+
+                clearInterval(
+                    heartbeat
+                );
+
+                sseClients.md5.delete(
+                    res
+                );
+            }
+        );
+    }
+);
+
+// =========================================================
+// REALTIME POLLER
+// =========================================================
+
+let polling = false;
+
+async function realtimePoll() {
+
+    if (polling) {
+        return;
+    }
+
+    polling = true;
+
+    try {
+
+        await Promise.allSettled([
+
+            processAPI("tx"),
+
+            processAPI("md5")
+
+        ]);
+
+    } catch (error) {
+
+        console.error(
+            "[REALTIME]",
+            error.message
+        );
+
+    } finally {
+
+        polling = false;
+    }
+}
+
+// =========================================================
+// START REALTIME
+// =========================================================
+
+setTimeout(
+    () => {
+
+        realtimePoll();
+
+        setInterval(
+            realtimePoll,
+            POLL_INTERVAL
+        );
+
+    },
+    500
+);
+
+// =========================================================
 // ROOT
 // =========================================================
 
@@ -2404,8 +2501,23 @@ app.get(
             status:
                 "online",
 
-            service:
-                "LC79 TX AI API",
+            version:
+                "LC79 AI 3.0",
+
+            realtime:
+                true,
+
+            poll:
+                "3s",
+
+            pattern:
+                "15",
+
+            compare:
+                "5",
+
+            models:
+                9,
 
             endpoints: {
 
@@ -2415,30 +2527,53 @@ app.get(
                 md5:
                     "/lc79/tx/md5",
 
-                txHistory:
+                tx_history:
                     "/api/lc79/hu/history",
 
-                md5History:
-                    "/api/lc79/md5/history"
-            },
+                md5_history:
+                    "/api/lc79/md5/history",
 
-            pattern:
-                "15 phiên",
+                tx_stream:
+                    "/api/lc79/hu/history/stream",
 
-            compare:
-                "5 phiên",
-
-            models:
-                9,
-
-            ai:
-                "ON"
+                md5_stream:
+                    "/api/lc79/md5/history/stream"
+            }
         });
     }
 );
 
 // =========================================================
-// START SERVER
+// ERROR HANDLER
+// =========================================================
+
+app.use(
+    (err, req, res, next) => {
+
+        console.error(
+            "[SERVER ERROR]",
+            err
+        );
+
+        if (
+            res.headersSent
+        ) {
+
+            return next(err);
+        }
+
+        res.status(500).json({
+
+            error: true,
+
+            message:
+                "Internal Server Error"
+        });
+    }
+);
+
+// =========================================================
+// SERVER
 // =========================================================
 
 app.listen(
@@ -2447,20 +2582,25 @@ app.listen(
     () => {
 
         console.log(`
-╔════════════════════════════════════════════╗
-║            LC79 TX AI API ONLINE           ║
-╠════════════════════════════════════════════╣
-║ PORT       : ${PORT}
-║ TX         : /lc79/tx/hu
-║ MD5        : /lc79/tx/md5
-║ TX HISTORY : /api/lc79/hu/history
-║ MD5 HISTORY: /api/lc79/md5/history
-║ PATTERN    : 15 phiên
-║ SO SÁNH    : 5 phiên
-║ MODELS     : 9
-║ AI LEARN   : ON
-║ EVALUATION : ON
-╚════════════════════════════════════════════╝
+╔════════════════════════════════════════════════╗
+║              LC79 AI API 3.0                  ║
+╠════════════════════════════════════════════════╣
+║ PORT        : ${PORT}
+║ POLLING     : 3 giây
+║ PATTERN     : 15 phiên
+║ COMPARE     : 5 phiên
+║ MODELS      : 9
+║ AI LEARNING : ON
+║ SSE         : ON
+║ PERSIST     : ON
+╠════════════════════════════════════════════════╣
+║ TX          : /lc79/tx/hu
+║ MD5         : /lc79/tx/md5
+║ TX HISTORY  : /api/lc79/hu/history
+║ MD5 HISTORY : /api/lc79/md5/history
+║ TX STREAM   : /api/lc79/hu/history/stream
+║ MD5 STREAM  : /api/lc79/md5/history/stream
+╚════════════════════════════════════════════════╝
 `);
     }
 );
