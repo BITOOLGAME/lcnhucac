@@ -136,54 +136,17 @@ function tailStreakLength(binaryString) {
     return length;
 }
 
-// ------------------ CÁC MÔ HÌNH CON ------------------
-function analyzeBet(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 3) return { confidence: 0 };
-    const lastChar = recentHistory[n - 1];
-    const length = tailStreakLength(recentHistory);
-    if (length >= 3) {
-        const prediction = inverseBinaryToLabel(lastChar);
-        const confidence = Math.min(75, 60 + length * 3) / 100;
-        return { prediction, confidence, pattern_note: `Cầu bệt ${length} phiên ${binaryToLabel(lastChar)}, dự đoán đảo chiều` };
-    }
-    return { confidence: 0 };
-}
-
+// ------------------ CÁC MÔ HÌNH CON (sửa lỗi) ------------------
 function analyzeCau11(fullHistory, recentHistory, recentArray) {
     const n = recentHistory.length;
     if (n < 6) return { confidence: 0 };
-    const last5 = recentHistory.slice(-5);
-    const isAlternate = last5.every((c, i) => i === 0 || c !== last5[i - 1]);
+    const last5 = recentHistory.slice(-5); // chuỗi
+    // Chuyển thành mảng để dùng every
+    const arr = last5.split('');
+    const isAlternate = arr.every((c, i) => i === 0 || c !== arr[i - 1]);
     if (isAlternate) {
         const lastChar = recentHistory[n - 1];
         return { prediction: inverseBinaryToLabel(lastChar), confidence: 0.72, pattern_note: 'Cầu 1-1 (xen kẽ), tiếp tục chu kỳ' };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeCau22(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 8) return { confidence: 0 };
-    const last8 = recentHistory.slice(-8);
-    let nextBinary = null;
-    if (last8 === '00110011') nextBinary = '0';
-    else if (last8 === '11001100') nextBinary = '1';
-    if (nextBinary !== null) {
-        return { prediction: binaryToLabel(nextBinary), confidence: 0.78, pattern_note: 'Cầu 2-2 (AA BB AA BB), tiếp tục chu kỳ' };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeCau33(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 12) return { confidence: 0 };
-    const last12 = recentHistory.slice(-12);
-    let nextBinary = null;
-    if (last12 === '000111000111') nextBinary = '0';
-    else if (last12 === '111000111000') nextBinary = '1';
-    if (nextBinary !== null) {
-        return { prediction: binaryToLabel(nextBinary), confidence: 0.82, pattern_note: 'Cầu 3-3 (AAA BBB AAA BBB), tiếp tục chu kỳ' };
     }
     return { confidence: 0 };
 }
@@ -192,23 +155,11 @@ function analyzeCauABAB(fullHistory, recentHistory, recentArray) {
     const n = recentHistory.length;
     if (n < 10) return { confidence: 0 };
     const last10 = recentHistory.slice(-10);
-    const isCycle2 = last10.every((c, i) => i < 2 || c === last10[i - 2]);
+    const arr = last10.split('');
+    const isCycle2 = arr.every((c, i) => i < 2 || c === arr[i - 2]);
     if (isCycle2) {
         const nextBinary = recentHistory[n - 2];
         return { prediction: binaryToLabel(nextBinary), confidence: 0.75, pattern_note: 'Cầu ABAB (chu kỳ 2)' };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeCauAABB(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 8) return { confidence: 0 };
-    const last8 = recentHistory.slice(-8);
-    if (last8 === '00110011') {
-        return { prediction: 'Xỉu', confidence: 0.76, pattern_note: 'Cầu AABB (00 11 00 11), tiếp tục chu kỳ' };
-    }
-    if (last8 === '11001100') {
-        return { prediction: 'Tài', confidence: 0.76, pattern_note: 'Cầu AABB (11 00 11 00), tiếp tục chu kỳ' };
     }
     return { confidence: 0 };
 }
@@ -217,7 +168,8 @@ function analyzeCauABCABC(fullHistory, recentHistory, recentArray) {
     const n = recentHistory.length;
     if (n < 12) return { confidence: 0 };
     const last12 = recentHistory.slice(-12);
-    const isCycle3 = last12.every((c, i) => i < 3 || c === last12[i - 3]);
+    const arr = last12.split('');
+    const isCycle3 = arr.every((c, i) => i < 3 || c === arr[i - 3]);
     if (isCycle3) {
         const nextBinary = recentHistory[n - 3];
         return { prediction: binaryToLabel(nextBinary), confidence: 0.80, pattern_note: 'Cầu ABCABC (chu kỳ 3)' };
