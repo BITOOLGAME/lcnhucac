@@ -1,4 +1,3 @@
-"use strict";
 
 const express = require("express");
 const fs = require("fs");
@@ -45,7 +44,7 @@ const PATHS = {
 };
 
 // ============================================================
-// UTILITIES
+// UTILITIES (KHÔNG ĐỔI)
 // ============================================================
 
 function loadJSON(file, fallback) {
@@ -108,10 +107,10 @@ function validPattern(pattern) {
 }
 
 // ============================================================
-// THUẬT TOÁN DỰ ĐOÁN MỚI (THAY THẾ 11 MODEL CŨ)
+// ========== THUẬT TOÁN DỰ ĐOÁN MỚI (THAY THẾ 11 MODEL CŨ) ==========
 // ============================================================
 
-// ---------- HÀM CHUYỂN ĐỔI ----------
+// Các hàm chuyển đổi
 function historyToBinary(history) {
     if (!Array.isArray(history) || history.length === 0) return '';
     return history.map(h => (h.ket_qua === 'TAI' || h.ket_qua === 'Tài') ? '1' : '0').join('');
@@ -137,7 +136,7 @@ function tailStreakLength(binaryString) {
     return length;
 }
 
-// ---------- CÁC MÔ HÌNH CON ----------
+// ------------------ CÁC MÔ HÌNH CON ------------------
 function analyzeBet(fullHistory, recentHistory, recentArray) {
     const n = recentHistory.length;
     if (n < 3) return { confidence: 0 };
@@ -480,7 +479,7 @@ function analyzeWavelet(fullHistory, recentHistory, recentArray) {
     return { confidence: 0 };
 }
 
-// ---------- FALLBACK ----------
+// ------------------ FALLBACK ------------------
 function generateFallbackPrediction(recentHistory, currentResult) {
     const historyString = historyToBinary(recentHistory);
     const n = historyString.length;
@@ -527,7 +526,7 @@ function generateFallbackPrediction(recentHistory, currentResult) {
     };
 }
 
-// ---------- DỰ ĐOÁN CHÍNH ----------
+// ------------------ DỰ ĐOÁN CHÍNH ------------------
 function predictNextAdvancedPro(currentResult, history) {
     if (!Array.isArray(history)) history = [];
     if (history.length < 15) {
@@ -607,7 +606,7 @@ function predictNextAdvancedPro(currentResult, history) {
 }
 
 // ============================================================
-// ENGINE (CHỈ GIỮ LẠI CẤU TRÚC NHƯNG KHÔNG DÙNG 11 MODEL CŨ)
+// ENGINE – VẪN GIỮ ĐỂ LƯU TRẠNG THÁI NHƯNG KHÔNG DÙNG CHO DỰ ĐOÁN
 // ============================================================
 
 function createEngine(type) {
@@ -636,7 +635,7 @@ function createEngine(type) {
             model8: { correct: 0, wrong: 0, total: 0, weight: 1 },
             model9: { correct: 0, wrong: 0, total: 0, weight: 1 },
             model10: { correct: 0, wrong: 0, total: 0, weight: 1 },
-            model11: { correct: 0, wrong: 0, total: 0, weight: 1 }   // chỉ dùng model11
+            model11: { correct: 0, wrong: 0, total: 0, weight: 1 }
         },
         global: { correct: 0, wrong: 0, total: 0 },
         learnedUntil: 0
@@ -669,7 +668,7 @@ function ensureEngine(engine, type) {
 }
 
 // ============================================================
-// LOAD ENGINES
+// LOAD ENGINES (GIỮ NGUYÊN)
 // ============================================================
 
 const engines = {
@@ -686,16 +685,12 @@ if (!Array.isArray(histories.hu)) histories.hu = [];
 if (!Array.isArray(histories.md5)) histories.md5 = [];
 
 // ============================================================
-// SOURCE CACHE
+// SOURCE CACHE, PENDING, SSE (GIỮ NGUYÊN)
 // ============================================================
 
 const sourceHistory = { hu: [], md5: [] };
 const lastSourceId = { hu: null, md5: null };
 const pending = { hu: new Map(), md5: new Map() };
-
-// ============================================================
-// SSE
-// ============================================================
 
 const clients = { hu: new Set(), md5: new Set() };
 
@@ -707,7 +702,7 @@ function sendSSE(type, event, data) {
 }
 
 // ============================================================
-// NORMALIZE SOURCE
+// NORMALIZE SOURCE (GIỮ NGUYÊN)
 // ============================================================
 
 function normalizeSessions(json) {
@@ -733,7 +728,7 @@ function normalizeSessions(json) {
 }
 
 // ============================================================
-// FETCH
+// FETCH (GIỮ NGUYÊN)
 // ============================================================
 
 async function fetchSource(type) {
@@ -867,7 +862,7 @@ function getTop10Patterns(type, currentPattern) {
 }
 
 // ============================================================
-// HỌC MÁY (VẪN GIỮ ĐỂ LƯU TRẠNG THÁI NHƯNG KHÔNG DÙNG CHO DỰ ĐOÁN)
+// HỌC MÁY (VẪN GIỮ ĐỂ LƯU TRẠNG THÁI)
 // ============================================================
 
 function learnPattern(type, sessions) {
@@ -970,15 +965,12 @@ function analyze(type, sessions) {
         pattern,
         top10: getTop10Patterns(type, pattern),
         final: final,
-        // các trường model1-10 để tương thích nhưng không dùng
-        model1: null, model2: null, model3: null, model4: null, model5: null,
-        model6: null, model7: null, model8: null, model9: null, model10: null,
         model11: final
     };
 }
 
 // ============================================================
-// PENDING HISTORY
+// PENDING, SETTLE, PERFORMANCE (GIỮ NGUYÊN)
 // ============================================================
 
 function addPending(type, phien, prediction) {
@@ -995,10 +987,6 @@ function addPending(type, phien, prediction) {
     saveJSON(PATHS[type].history, histories[type]);
     return true;
 }
-
-// ============================================================
-// SETTLE
-// ============================================================
 
 function settle(type, session) {
     const item = histories[type].find(x => x.phien === session.phien);
@@ -1019,10 +1007,6 @@ function settle(type, session) {
     saveJSON(PATHS[type].history, histories[type]);
     return true;
 }
-
-// ============================================================
-// PERFORMANCE – CHỈ CẬP NHẬT MODEL11
-// ============================================================
 
 function updatePerformance(type, phien, actual) {
     const prediction = pending[type].get(phien);
@@ -1053,7 +1037,7 @@ function updatePerformance(type, phien, actual) {
 }
 
 // ============================================================
-// PROCESS TYPE
+// PROCESS TYPE (GIỮ NGUYÊN)
 // ============================================================
 
 async function processType(type) {
@@ -1247,8 +1231,6 @@ app.get("/", (req, res) => {
         engine: "LC79 ULTRA V23",
         pattern: PATTERN_LENGTH,
         compare: TOP_PATTERN_SAMPLES,
-        hu: { isolated: true, source: SOURCES.hu },
-        md5: { isolated: true, source: SOURCES.md5 },
         learning: true,
         realtime: "SSE",
         polling: `${POLL_MS}ms`
