@@ -6,7 +6,7 @@ const path = require("path");
 
 const app = express();
 
-const PORT = Number(process.env.PORT || 10000);
+const PORT = Number(process.env.PORT || 3001);
 const POLL_MS = 3000;
 
 const PATTERN_LENGTH = 20;
@@ -108,242 +108,155 @@ function validPattern(pattern) {
 }
 
 // ============================================================
-// ========== THUẬT TOÁN DỰ ĐOÁN MỚI ==========================
+// PATTERN MẪU CÓ TÊN & QUYẾT ĐỊNH THEO/BẺ (RIÊNG CHO HU VÀ MD5)
 // ============================================================
 
-// ---------- HÀM CHUYỂN ĐỔI ----------
-function historyToBinary(history) {
-    if (!Array.isArray(history) || history.length === 0) return '';
-    return history.map(h => (h.ket_qua === 'TAI' || h.ket_qua === 'Tài') ? '1' : '0').join('');
-}
+// Định nghĩa các mẫu pattern với tên và hành động
+// 'action': 'follow' → dự đoán theo mẫu (tiếp tục), 'break' → dự đoán ngược lại (bẻ cầu)
+const PATTERN_TEMPLATES = {
+    // Mẫu cho HU
+    hu: [
+        { name: "Cầu bệt Tài", pattern: "TTTTT", action: "follow" },
+        { name: "Cầu bệt Xỉu", pattern: "XXXXX", action: "follow" },
+        { name: "Cầu 1-1 (xen kẽ)", pattern: "TXTXT", action: "follow" },
+        { name: "Cầu 1-1 (xen kẽ) X", pattern: "XTXTX", action: "follow" },
+        { name: "Cầu 2-2", pattern: "TTXXTT", action: "follow" },
+        { name: "Cầu 2-2 X", pattern: "XXTTXX", action: "follow" },
+        { name: "Cầu 3-3", pattern: "TTTXXXTTT", action: "follow" },
+        { name: "Cầu 3-3 X", pattern: "XXXTTTXXX", action: "follow" },
+        { name: "Cầu ABAB", pattern: "TXTXTX", action: "follow" },
+        { name: "Cầu ABAB X", pattern: "XTXTXT", action: "follow" },
+        { name: "Cầu AABB", pattern: "TTXXTTXX", action: "follow" },
+        { name: "Cầu AABB X", pattern: "XXTTXXTT", action: "follow" },
+        { name: "Cầu ABCABC", pattern: "TTXTTX", action: "follow" },
+        { name: "Cầu đảo chiều Tài", pattern: "TTTTX", action: "break" },
+        { name: "Cầu đảo chiều Xỉu", pattern: "XXXXT", action: "break" },
+        { name: "Cầu 2-1-2", pattern: "TTXTT", action: "follow" },
+        { name: "Cầu 2-1-2 X", pattern: "XXTXX", action: "follow" },
+        { name: "Cầu 2-3-2", pattern: "TTXXXTT", action: "follow" },
+        { name: "Cầu 3-2-3", pattern: "XXXTTXXX", action: "follow" },
+        { name: "Cầu 3-1-3", pattern: "TTT X TTT".replace(/\s/g, ""), action: "follow" },
+        { name: "Cầu 1-3-1", pattern: "X TTT X".replace(/\s/g, ""), action: "follow" },
+        { name: "Cầu gấp khúc", pattern: "TXXTTX", action: "follow" },
+        { name: "Cầu gấp khúc X", pattern: "XTTXXT", action: "follow" },
+        { name: "Cầu đồng pha Tài", pattern: "TXXTXX", action: "follow" },
+        { name: "Cầu đồng pha Xỉu", pattern: "XTTXTT", action: "follow" },
+        { name: "Cầu đảo chiều sau 4 Tài", pattern: "TTTTT", action: "break" },
+        { name: "Cầu đảo chiều sau 4 Xỉu", pattern: "XXXXX", action: "break" },
+    ],
+    // Mẫu cho MD5 (có thể khác biệt)
+    md5: [
+        { name: "Cầu bệt Tài", pattern: "TTTTT", action: "follow" },
+        { name: "Cầu bệt Xỉu", pattern: "XXXXX", action: "follow" },
+        { name: "Cầu 1-1 (xen kẽ)", pattern: "TXTXT", action: "follow" },
+        { name: "Cầu 1-1 (xen kẽ) X", pattern: "XTXTX", action: "follow" },
+        { name: "Cầu 2-2", pattern: "TTXXTT", action: "follow" },
+        { name: "Cầu 2-2 X", pattern: "XXTTXX", action: "follow" },
+        { name: "Cầu 3-3", pattern: "TTTXXXTTT", action: "follow" },
+        { name: "Cầu 3-3 X", pattern: "XXXTTTXXX", action: "follow" },
+        { name: "Cầu ABAB", pattern: "TXTXTX", action: "follow" },
+        { name: "Cầu ABAB X", pattern: "XTXTXT", action: "follow" },
+        { name: "Cầu AABB", pattern: "TTXXTTXX", action: "follow" },
+        { name: "Cầu AABB X", pattern: "XXTTXXTT", action: "follow" },
+        { name: "Cầu ABCABC", pattern: "TTXTTX", action: "follow" },
+        { name: "Cầu đảo chiều Tài", pattern: "TTTTX", action: "break" },
+        { name: "Cầu đảo chiều Xỉu", pattern: "XXXXT", action: "break" },
+        { name: "Cầu 2-1-2", pattern: "TTXTT", action: "follow" },
+        { name: "Cầu 2-1-2 X", pattern: "XXTXX", action: "follow" },
+        { name: "Cầu 2-3-2", pattern: "TTXXXTT", action: "follow" },
+        { name: "Cầu 3-2-3", pattern: "XXXTTXXX", action: "follow" },
+        { name: "Cầu 3-1-3", pattern: "TTT X TTT".replace(/\s/g, ""), action: "follow" },
+        { name: "Cầu 1-3-1", pattern: "X TTT X".replace(/\s/g, ""), action: "follow" },
+        { name: "Cầu gấp khúc", pattern: "TXXTTX", action: "follow" },
+        { name: "Cầu gấp khúc X", pattern: "XTTXXT", action: "follow" },
+        { name: "Cầu đồng pha Tài", pattern: "TXXTXX", action: "follow" },
+        { name: "Cầu đồng pha Xỉu", pattern: "XTTXTT", action: "follow" },
+        { name: "Cầu đảo chiều sau 4 Tài", pattern: "TTTTT", action: "break" },
+        { name: "Cầu đảo chiều sau 4 Xỉu", pattern: "XXXXX", action: "break" },
+    ]
+};
 
-function binaryToLabel(char) {
-    return char === '1' ? 'Tài' : 'Xỉu';
-}
-
-function inverseBinaryToLabel(char) {
-    return char === '1' ? 'Xỉu' : 'Tài';
-}
-
-function tailStreakLength(binaryString) {
-    const n = binaryString.length;
-    if (n === 0) return 0;
-    const lastChar = binaryString[n - 1];
-    let length = 1;
-    for (let i = n - 2; i >= 0; i--) {
-        if (binaryString[i] !== lastChar) break;
-        length++;
-    }
-    return length;
-}
-
-// ---------- CÁC MÔ HÌNH CON ----------
-function analyzeBet(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 3) return { confidence: 0 };
-    const lastChar = recentHistory[n - 1];
-    const length = tailStreakLength(recentHistory);
-    if (length >= 3) {
-        const prediction = inverseBinaryToLabel(lastChar);
-        const confidence = Math.min(75, 60 + length * 3) / 100;
-        return { prediction, confidence, pattern_note: `Cầu bệt ${length} phiên ${binaryToLabel(lastChar)}, dự đoán đảo chiều` };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeCau11(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 6) return { confidence: 0 };
-    const last5 = recentHistory.slice(-5);
-    const arr = last5.split('');
-    const isAlternate = arr.every((c, i) => i === 0 || c !== arr[i - 1]);
-    if (isAlternate) {
-        const lastChar = recentHistory[n - 1];
-        return { prediction: inverseBinaryToLabel(lastChar), confidence: 0.72, pattern_note: 'Cầu 1-1 (xen kẽ), tiếp tục chu kỳ' };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeCau22(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 8) return { confidence: 0 };
-    const last8 = recentHistory.slice(-8);
-    let nextBinary = null;
-    if (last8 === '00110011') nextBinary = '0';
-    else if (last8 === '11001100') nextBinary = '1';
-    if (nextBinary !== null) {
-        return { prediction: binaryToLabel(nextBinary), confidence: 0.78, pattern_note: 'Cầu 2-2 (AA BB AA BB), tiếp tục chu kỳ' };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeCau33(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 12) return { confidence: 0 };
-    const last12 = recentHistory.slice(-12);
-    let nextBinary = null;
-    if (last12 === '000111000111') nextBinary = '0';
-    else if (last12 === '111000111000') nextBinary = '1';
-    if (nextBinary !== null) {
-        return { prediction: binaryToLabel(nextBinary), confidence: 0.82, pattern_note: 'Cầu 3-3 (AAA BBB AAA BBB), tiếp tục chu kỳ' };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeCauABAB(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 10) return { confidence: 0 };
-    const last10 = recentHistory.slice(-10);
-    const arr = last10.split('');
-    const isCycle2 = arr.every((c, i) => i < 2 || c === arr[i - 2]);
-    if (isCycle2) {
-        const nextBinary = recentHistory[n - 2];
-        return { prediction: binaryToLabel(nextBinary), confidence: 0.75, pattern_note: 'Cầu ABAB (chu kỳ 2)' };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeCauAABB(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 8) return { confidence: 0 };
-    const last8 = recentHistory.slice(-8);
-    if (last8 === '00110011') {
-        return { prediction: 'Xỉu', confidence: 0.76, pattern_note: 'Cầu AABB (00 11 00 11), tiếp tục chu kỳ' };
-    }
-    if (last8 === '11001100') {
-        return { prediction: 'Tài', confidence: 0.76, pattern_note: 'Cầu AABB (11 00 11 00), tiếp tục chu kỳ' };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeCauABCABC(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 12) return { confidence: 0 };
-    const last12 = recentHistory.slice(-12);
-    const arr = last12.split('');
-    const isCycle3 = arr.every((c, i) => i < 3 || c === arr[i - 3]);
-    if (isCycle3) {
-        const nextBinary = recentHistory[n - 3];
-        return { prediction: binaryToLabel(nextBinary), confidence: 0.80, pattern_note: 'Cầu ABCABC (chu kỳ 3)' };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeFibonacci(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 20) return { confidence: 0 };
-    const changes = [];
-    for (let i = 1; i < n; i++) {
-        if (recentHistory[i] !== recentHistory[i - 1]) changes.push(i);
-    }
-    if (changes.length >= 5) {
-        const diffs = [];
-        for (let i = 1; i < changes.length; i++) {
-            diffs.push(changes[i] - changes[i - 1]);
-        }
-        if (diffs.length >= 3) {
-            const lastDiff = diffs[diffs.length - 1];
-            const prevDiff = diffs[diffs.length - 2];
-            if (prevDiff > 0 && Math.abs((lastDiff / prevDiff) - 1.618) < 0.3) {
-                const prediction = inverseBinaryToLabel(recentHistory[n - 1]);
-                return { prediction, confidence: 0.70, pattern_note: 'Phát hiện tỷ lệ Fibonacci (≈1.618)' };
+// Hàm phát hiện pattern mẫu từ chuỗi lịch sử
+function detectPattern(historyString, templates) {
+    if (!historyString || historyString.length < 3) return null;
+    // Duyệt qua từng template, kiểm tra xem pattern có khớp với cuối chuỗi không
+    for (const template of templates) {
+        const pattern = template.pattern;
+        if (historyString.endsWith(pattern)) {
+            // Xác định kết quả dự đoán
+            let prediction = null;
+            if (template.action === "follow") {
+                // Theo mẫu: dự đoán ký tự tiếp theo dựa trên quy luật của mẫu
+                // Lấy ký tự cuối cùng của pattern, dự đoán tiếp tục
+                const lastChar = pattern[pattern.length - 1];
+                prediction = lastChar === "T" ? "Tài" : "Xỉu";
+            } else if (template.action === "break") {
+                // Bẻ cầu: dự đoán ngược lại với ký tự cuối của pattern
+                const lastChar = pattern[pattern.length - 1];
+                prediction = lastChar === "T" ? "Xỉu" : "Tài";
+            }
+            if (prediction) {
+                return {
+                    name: template.name,
+                    prediction: prediction,
+                    action: template.action,
+                    confidence: 0.78, // Confidence cao cho pattern mẫu
+                    matchedPattern: pattern
+                };
             }
         }
     }
-    return { confidence: 0 };
+    return null;
 }
 
-function analyzeFourier(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 20) return { confidence: 0 };
-    const autocorr = {};
-    for (let lag = 1; lag <= Math.min(10, n - 1); lag++) {
-        let sum = 0;
-        for (let i = 0; i < n - lag; i++) {
-            sum += (recentHistory[i] === recentHistory[i + lag]) ? 1 : -1;
-        }
-        autocorr[lag] = sum / (n - lag);
-    }
-    let maxCorr = 0, bestLag = 0, bestCorr = 0;
-    for (const [lag, corr] of Object.entries(autocorr)) {
-        const l = parseInt(lag);
-        if (Math.abs(corr) > maxCorr && l >= 2) {
-            maxCorr = Math.abs(corr);
-            bestLag = l;
-            bestCorr = corr;
-        }
-    }
-    if (maxCorr > 0.3 && bestLag > 0) {
-        const referenceBit = recentHistory[n - bestLag];
-        const nextBit = (bestCorr >= 0) ? referenceBit : (referenceBit === '1' ? '0' : '1');
-        return {
-            prediction: binaryToLabel(nextBit),
-            confidence: Math.min(0.85, maxCorr * 1.5),
-            pattern_note: `Phân tích chu kỳ Fourier (lag ${bestLag}, corr ${bestCorr.toFixed(2)})`
-        };
-    }
-    return { confidence: 0 };
+// ============================================================
+// HÀM CHUYỂN ĐỔI LỊCH SỬ
+// ============================================================
+
+function historyToBinary(history) {
+    return history.map(h => toTX(h.ket_qua)).join("");
 }
 
-function analyzeNeuralPattern(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 25) return { confidence: 0 };
-    const patternLength = 5;
-    const currentPattern = recentHistory.slice(-patternLength);
-    const matches = { '0': 0, '1': 0 };
-    let matchCount = 0;
-    for (let i = 0; i <= n - patternLength - 1; i++) {
-        const testPattern = recentHistory.slice(i, i + patternLength);
-        let similarity = 0;
-        for (let j = 0; j < patternLength; j++) {
-            if (testPattern[j] === currentPattern[j]) similarity++;
-        }
-        similarity /= patternLength;
-        if (similarity >= 0.8 && (i + patternLength) < n) {
-            const nextChar = recentHistory[i + patternLength];
-            matches[nextChar] += similarity;
-            matchCount++;
-        }
-    }
-    const totalScore = matches['0'] + matches['1'];
-    if (matchCount >= 3 && totalScore > 0) {
-        const ratio = Math.max(matches['1'], matches['0']) / totalScore;
-        if (ratio > 0.60) {
-            return {
-                prediction: matches['1'] > matches['0'] ? 'Tài' : 'Xỉu',
-                confidence: Math.min(0.90, ratio),
-                pattern_note: `Nhận diện pattern Neural (${matchCount} mẫu tương đồng, độ đồng thuận ${Math.round(ratio * 100)}%)`
-            };
-        }
-    }
-    return { confidence: 0 };
+function binaryToLabel(char) {
+    return char === "T" ? "Tài" : "Xỉu";
 }
 
-function analyzeMarkovAdvanced(fullHistory, recentHistory, recentArray) {
-    const n = fullHistory.length;
-    if (n < 30) return { confidence: 0 };
-    const order = 3;
-    const transitionMatrix = {};
-    for (let i = order; i < n; i++) {
-        const state = fullHistory.slice(i - order, i);
-        const next = fullHistory[i];
-        if (!transitionMatrix[state]) transitionMatrix[state] = { '0': 0, '1': 0 };
-        transitionMatrix[state][next]++;
+function inverseBinaryToLabel(char) {
+    return char === "T" ? "Xỉu" : "Tài";
+}
+
+function tailStreakLength(str) {
+    const n = str.length;
+    if (n === 0) return 0;
+    const last = str[n - 1];
+    let len = 1;
+    for (let i = n - 2; i >= 0; i--) {
+        if (str[i] !== last) break;
+        len++;
     }
-    const currentState = fullHistory.slice(-order);
-    if (transitionMatrix[currentState]) {
-        const count0 = transitionMatrix[currentState]['0'] || 0;
-        const count1 = transitionMatrix[currentState]['1'] || 0;
-        const total = count0 + count1;
-        if (total >= 5) {
-            const prob1 = count1 / total;
-            const prob0 = count0 / total;
-            const confidence = Math.abs(prob1 - prob0);
-            if (confidence > 0.25) {
+    return len;
+}
+
+// ============================================================
+// CÁC PHÂN TÍCH CON (ĐỘC LẬP VỚI ENGINE)
+// ============================================================
+
+function analyzeCycles(recentString) {
+    const len = recentString.length;
+    if (len < 8) return { confidence: 0 };
+    for (let cycle = 2; cycle <= Math.min(5, Math.floor(len / 2)); cycle++) {
+        let matches = 0;
+        for (let i = len - 1; i >= cycle; i--) {
+            if (recentString[i] === recentString[i - cycle]) matches++;
+        }
+        if (matches > 0) {
+            const score = matches / (len - cycle);
+            if (score > 0.55) {
+                const lastChar = recentString[len - cycle];
+                const prediction = lastChar === "T" ? "Tài" : "Xỉu";
                 return {
-                    prediction: prob1 > prob0 ? 'Tài' : 'Xỉu',
-                    confidence: Math.min(0.85, confidence * 2),
-                    pattern_note: `Markov bậc ${order} (xác suất: ${Math.round(Math.max(prob1, prob0) * 100)}%)`
+                    prediction,
+                    confidence: Math.min(0.85, score + 0.1)
                 };
             }
         }
@@ -351,266 +264,288 @@ function analyzeMarkovAdvanced(fullHistory, recentHistory, recentArray) {
     return { confidence: 0 };
 }
 
-function analyzeEntropy(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 20) return { confidence: 0 };
-    const counts = { '0': 0, '1': 0 };
-    for (const c of recentHistory) counts[c]++;
-    let entropy = 0;
-    for (const c of ['0', '1']) {
-        const p = counts[c] / n;
-        if (p > 0) entropy -= p * Math.log2(p);
+function analyzeComplexPatterns(recentString, fullHistory) {
+    const recentLen = recentString.length;
+    if (recentLen < 6) return { confidence: 0 };
+    const currentPattern = recentString.slice(-3);
+    const searchSpace = fullHistory.slice(0, -3);
+    const positions = [];
+    let pos = 0;
+    while ((pos = searchSpace.indexOf(currentPattern, pos)) !== -1) {
+        positions.push(pos);
+        pos += 1;
     }
-    const randomness = entropy / 1;
-    if (randomness > 0.9) {
-        const lastChar = recentHistory[n - 1];
-        return {
-            prediction: inverseBinaryToLabel(lastChar),
-            confidence: 0.65,
-            pattern_note: `Entropy cao (${Math.round(randomness * 100)}%), dự đoán đảo chiều`
-        };
-    }
-    if (randomness < 0.3) {
-        const lastChar = recentHistory[n - 1];
-        return {
-            prediction: binaryToLabel(lastChar),
-            confidence: 0.75,
-            pattern_note: `Entropy thấp (${Math.round(randomness * 100)}%), tiếp tục xu hướng`
-        };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeTrendMomentum(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 15) return { confidence: 0 };
-    let momentum = 0;
-    for (let i = 1; i < n; i++) {
-        if (recentHistory[i] === recentHistory[i - 1]) {
-            momentum += (recentHistory[i] === '1') ? 1 : -1;
-        } else {
-            momentum = 0;
+    if (positions.length >= 2) {
+        const nextChars = [];
+        for (const p of positions) {
+            if (p + 3 < fullHistory.length) {
+                nextChars.push(fullHistory[p + 3]);
+            }
         }
-    }
-    let upChanges = 0, downChanges = 0;
-    for (let i = 1; i < n; i++) {
-        if (recentHistory[i] === '1' && recentHistory[i - 1] === '0') upChanges++;
-        else if (recentHistory[i] === '0' && recentHistory[i - 1] === '1') downChanges++;
-    }
-    const totalChanges = upChanges + downChanges;
-    const rsi = totalChanges > 0 ? upChanges / totalChanges : 0.5;
-    if (Math.abs(momentum) > 3) {
-        if (momentum > 0 && rsi > 0.7) {
-            return {
-                prediction: 'Xỉu',
-                confidence: 0.70,
-                pattern_note: `Động lượng Tài mạnh (RSI: ${Math.round(rsi * 100)}%), dự báo điều chỉnh`
-            };
-        }
-        if (momentum < 0 && rsi < 0.3) {
-            return {
-                prediction: 'Tài',
-                confidence: 0.70,
-                pattern_note: `Động lượng Xỉu mạnh (RSI: ${Math.round(rsi * 100)}%), dự báo phục hồi`
-            };
-        }
-    }
-    return { confidence: 0 };
-}
-
-function analyzeCluster(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 25) return { confidence: 0 };
-    const clusters = [];
-    let currentCluster = { type: recentHistory[0], length: 1 };
-    for (let i = 1; i < n; i++) {
-        if (recentHistory[i] === currentCluster.type) {
-            currentCluster.length++;
-        } else {
-            clusters.push(currentCluster);
-            currentCluster = { type: recentHistory[i], length: 1 };
-        }
-    }
-    clusters.push(currentCluster);
-    const lengths = clusters.map(c => c.length);
-    const avgLength = lengths.reduce((a, b) => a + b, 0) / lengths.length;
-    const lastCluster = clusters[clusters.length - 1];
-    if (lastCluster.length > avgLength * 1.5) {
-        return {
-            prediction: inverseBinaryToLabel(lastCluster.type),
-            confidence: Math.min(0.8, lastCluster.length / (avgLength * 2)),
-            pattern_note: `Cụm ${binaryToLabel(lastCluster.type)} kéo dài (${lastCluster.length} phiên)`
-        };
-    }
-    return { confidence: 0 };
-}
-
-function analyzeWavelet(fullHistory, recentHistory, recentArray) {
-    const n = recentHistory.length;
-    if (n < 30) return { confidence: 0 };
-    const scales = [2, 3, 5];
-    const predictionsAtScale = [];
-    for (const scale of scales) {
-        let downsampled = '';
-        for (let i = 0; i < n; i += scale) {
-            const segment = recentHistory.slice(i, Math.min(i + scale, n));
-            const ones = segment.split('1').length - 1;
-            const zeros = segment.split('0').length - 1;
-            downsampled += (ones > zeros) ? '1' : '0';
-        }
-        if (downsampled.length >= 5) {
-            const lastChar = downsampled[downsampled.length - 1];
-            const secondLast = downsampled[downsampled.length - 2];
-            if (lastChar === secondLast) {
-                predictionsAtScale.push(binaryToLabel(lastChar));
+        if (nextChars.length > 0) {
+            const countT = nextChars.filter(c => c === "T").length;
+            const countX = nextChars.filter(c => c === "X").length;
+            const total = countT + countX;
+            if (total >= 2) {
+                const ratio = Math.max(countT, countX) / total;
+                if (ratio >= 0.6) {
+                    return {
+                        prediction: countT > countX ? "Tài" : "Xỉu",
+                        confidence: ratio
+                    };
+                }
             }
         }
     }
-    if (predictionsAtScale.length > 0) {
-        const counts = {};
-        for (const p of predictionsAtScale) counts[p] = (counts[p] || 0) + 1;
-        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-        const dominant = sorted[0][0];
-        const confidence = sorted[0][1] / predictionsAtScale.length;
-        if (confidence > 0.66) {
-            return {
-                prediction: dominant,
-                confidence: Math.min(0.85, confidence),
-                pattern_note: `Phân tích đa tỉ lệ Wavelet (${scales.length} scale)`
-            };
+    return { confidence: 0 };
+}
+
+function analyzeStatistics(recentHistory, currentResult) {
+    let countT = 0,
+        countX = 0;
+    const transitions = { TT: 0, TX: 0, XT: 0, XX: 0 };
+    const len = recentHistory.length;
+    for (let i = 0; i < len; i++) {
+        const game = recentHistory[i];
+        if (game.ket_qua === "TAI") countT++;
+        else countX++;
+        if (i > 0) {
+            const prev = recentHistory[i - 1].ket_qua === "TAI" ? "T" : "X";
+            const curr = game.ket_qua === "TAI" ? "T" : "X";
+            transitions[prev + curr]++;
+        }
+    }
+    const totalGames = len;
+    if (totalGames === 0) return { confidence: 0 };
+    const lastResult = recentHistory[len - 1].ket_qua === "TAI" ? "T" : "X";
+    const totalTrans = transitions.TT + transitions.TX + transitions.XT + transitions.XX;
+    if (totalTrans > 0) {
+        const p_T_given_T = transitions.TT / (transitions.TT + transitions.TX);
+        const p_X_given_X = transitions.XX / (transitions.XT + transitions.XX);
+        if (p_T_given_T > 0.65 && lastResult === "T") {
+            return { prediction: "Xỉu", confidence: 0.7 };
+        }
+        if (p_X_given_X > 0.65 && lastResult === "X") {
+            return { prediction: "Tài", confidence: 0.7 };
+        }
+    }
+    const taiRatio = countT / totalGames;
+    const xiuRatio = countX / totalGames;
+    if (taiRatio > 0.6) return { prediction: "Xỉu", confidence: 0.7 };
+    if (xiuRatio > 0.6) return { prediction: "Tài", confidence: 0.7 };
+    return { confidence: 0 };
+}
+
+function analyzeMarkov(historyString) {
+    const len = historyString.length;
+    if (len < 8) return { confidence: 0 };
+    const transitions = {};
+    for (let i = 2; i < len; i++) {
+        const state = historyString.slice(i - 2, i);
+        const next = historyString[i];
+        if (!transitions[state]) transitions[state] = { T: 0, X: 0 };
+        transitions[state][next]++;
+    }
+    const lastState = historyString.slice(-2);
+    if (transitions[lastState]) {
+        const tCount = transitions[lastState].T;
+        const xCount = transitions[lastState].X;
+        const total = tCount + xCount;
+        if (total >= 2) {
+            const ratio = Math.max(tCount, xCount) / total;
+            if (ratio > 0.6) {
+                return {
+                    prediction: tCount > xCount ? "Tài" : "Xỉu",
+                    confidence: ratio
+                };
+            }
         }
     }
     return { confidence: 0 };
 }
 
-// ---------- FALLBACK ----------
-function generateFallbackPrediction(recentHistory, currentResult) {
-    const historyString = historyToBinary(recentHistory);
-    const n = historyString.length;
-    if (n === 0) {
-        const pred = (currentResult && (currentResult.ket_qua === 'TAI' || currentResult.ket_qua === 'Tài')) ? 'Xỉu' : 'Tài';
-        return { du_doan: pred, do_tin_cay: 58, mau_cau: 'Khởi tạo dữ liệu, đảo chiều phiên hiện tại' };
+function analyzeBalance(recentHistory) {
+    let countT = 0,
+        countX = 0;
+    for (const game of recentHistory) {
+        if (game.ket_qua === "TAI") countT++;
+        else countX++;
     }
-    if (n >= 3) {
-        const lastThree = historyString.slice(-3);
-        const patterns = {
-            '111': { pred: 'Xỉu', conf: 68, note: '3 Tài liên tiếp' },
-            '000': { pred: 'Tài', conf: 68, note: '3 Xỉu liên tiếp' },
-            '101': { pred: 'Xỉu', conf: 65, note: 'Mẫu xen kẽ 101' },
-            '010': { pred: 'Tài', conf: 65, note: 'Mẫu xen kẽ 010' }
-        };
-        if (patterns[lastThree]) {
-            return {
-                du_doan: patterns[lastThree].pred,
-                do_tin_cay: patterns[lastThree].conf,
-                mau_cau: patterns[lastThree].note
-            };
-        }
-    }
-    const countTai = (historyString.match(/1/g) || []).length;
-    const countXiu = n - countTai;
-    if (n > 0 && Math.abs(countTai - countXiu) > Math.max(2, Math.ceil(n * 0.2))) {
-        const pred = (countTai > countXiu) ? 'Xỉu' : 'Tài';
-        const imbalance = Math.abs(countTai - countXiu) / n;
-        const confidence = Math.min(80, 63 + Math.min(17, imbalance * 100));
+    const total = countT + countX;
+    if (total === 0) return { confidence: 0 };
+    const imbalance = Math.abs(countT - countX) / total;
+    if (imbalance > 0.25) {
+        const prediction = countT > countX ? "Xỉu" : "Tài";
         return {
-            du_doan: pred,
-            do_tin_cay: Math.round(confidence * 100) / 100,
-            mau_cau: `Điều chỉnh cân bằng (Tài:${countTai}/Xỉu:${countXiu})`
+            prediction,
+            confidence: Math.min(0.75, imbalance + 0.1)
         };
     }
-    const lastChar = historyString[n - 1];
-    const streak = tailStreakLength(historyString);
-    const pred = inverseBinaryToLabel(lastChar);
-    const confidence = Math.min(72, 60 + (streak * 2));
-    return {
-        du_doan: pred,
-        do_tin_cay: confidence,
-        mau_cau: `Chiến lược đảo chiều cơ bản (chuỗi cuối ${streak} phiên)`
-    };
+    return { confidence: 0 };
 }
 
-// ---------- DỰ ĐOÁN CHÍNH ----------
-function predictNextAdvancedPro(currentResult, history) {
-    if (!Array.isArray(history)) history = [];
-    if (history.length < 15) {
-        const fallback = generateFallbackPrediction(history, currentResult);
-        fallback.do_tin_cay = Math.min(68, fallback.do_tin_cay);
-        fallback.mau_cau = 'Khởi tạo hệ thống dự đoán | ' + fallback.mau_cau;
-        return fallback;
+function analyzeScorePattern(recentHistory) {
+    if (recentHistory.length < 8) return { confidence: 0 };
+    const taiScores = [];
+    const xiuScores = [];
+    for (const game of recentHistory) {
+        if (game.ket_qua === "TAI") taiScores.push(game.tong);
+        else xiuScores.push(game.tong);
     }
-
-    const fullHistoryString = historyToBinary(history);
-    const recentArray = history.slice(-30);
-    const recentString = historyToBinary(recentArray);
-
-    const analyzers = [
-        { name: 'cau_bet', weight: 1.5, fn: analyzeBet },
-        { name: 'cau_11', weight: 1.4, fn: analyzeCau11 },
-        { name: 'cau_22', weight: 1.4, fn: analyzeCau22 },
-        { name: 'cau_33', weight: 1.4, fn: analyzeCau33 },
-        { name: 'cau_abab', weight: 1.3, fn: analyzeCauABAB },
-        { name: 'cau_aabb', weight: 1.3, fn: analyzeCauAABB },
-        { name: 'cau_abcabc', weight: 1.3, fn: analyzeCauABCABC },
-        { name: 'fibonacci', weight: 1.2, fn: analyzeFibonacci },
-        { name: 'fourier', weight: 1.2, fn: analyzeFourier },
-        { name: 'neural', weight: 1.2, fn: analyzeNeuralPattern },
-        { name: 'markov_advanced', weight: 1.1, fn: analyzeMarkovAdvanced },
-        { name: 'entropy', weight: 1.0, fn: analyzeEntropy },
-        { name: 'trend_momentum', weight: 0.9, fn: analyzeTrendMomentum },
-        { name: 'cluster', weight: 0.8, fn: analyzeCluster },
-        { name: 'wavelet', weight: 0.7, fn: analyzeWavelet }
-    ];
-
-    const predictions = [];
-    const weights = [];
-    const patternNotes = [];
-
-    for (const analyzer of analyzers) {
-        const result = analyzer.fn(fullHistoryString, recentString, recentArray);
-        if (result && result.confidence > 0.55 && result.prediction) {
-            predictions.push(result.prediction);
-            weights.push(result.confidence * analyzer.weight);
-            patternNotes.push(result.pattern_note || analyzer.name);
-        }
+    if (taiScores.length < 3 || xiuScores.length < 3) return { confidence: 0 };
+    const avgTai = taiScores.reduce((a, b) => a + b, 0) / taiScores.length;
+    const avgXiu = xiuScores.reduce((a, b) => a + b, 0) / xiuScores.length;
+    const last3 = recentHistory.slice(-3);
+    const last3Total = last3.reduce((sum, g) => sum + g.tong, 0);
+    const last3Avg = last3Total / 3;
+    if (last3Avg > avgTai && last3Avg > 11) {
+        return { prediction: "Xỉu", confidence: 0.65 };
     }
-
-    if (predictions.length > 0) {
-        let scoreTai = 0, scoreXiu = 0;
-        for (let i = 0; i < predictions.length; i++) {
-            if (predictions[i] === 'Tài') scoreTai += weights[i];
-            else scoreXiu += weights[i];
-        }
-        const totalScore = scoreTai + scoreXiu;
-        if (totalScore > 0) {
-            const finalPrediction = (scoreTai > scoreXiu) ? 'Tài' : 'Xỉu';
-            const winningScore = Math.max(scoreTai, scoreXiu);
-            let rawConfidence = winningScore / totalScore;
-            const methodCount = predictions.length;
-            const consensusBonus = (methodCount > 3) ? Math.min(0.2, (methodCount - 3) * 0.05) : 0;
-            let confidence = 60 + (rawConfidence * 25) + (consensusBonus * 100);
-            confidence = Math.min(92, Math.max(60, confidence));
-
-            let patternText = `Hệ thống AI (${predictions.length}/${analyzers.length} thuật toán)`;
-            if (patternNotes.length > 0) {
-                const freq = {};
-                for (const note of patternNotes) freq[note] = (freq[note] || 0) + 1;
-                const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]);
-                if (sorted.length > 0) patternText += ` | Ưu thế: ${sorted[0][0]}`;
-            }
-
-            return {
-                du_doan: finalPrediction,
-                do_tin_cay: Math.round(confidence * 100) / 100,
-                mau_cau: patternText
-            };
-        }
+    if (last3Avg < avgXiu && last3Avg < 10) {
+        return { prediction: "Tài", confidence: 0.65 };
     }
-    return generateFallbackPrediction(recentArray, currentResult);
+    return { confidence: 0 };
 }
 
 // ============================================================
-// ENGINE – VẪN GIỮ ĐỂ LƯU TRẠNG THÁI NHƯNG KHÔNG DÙNG CHO DỰ ĐOÁN
+// DỰ ĐOÁN CHÍNH (TÍCH HỢP PATTERN MẪU + CÁC PHÂN TÍCH)
+// ============================================================
+
+function predictNextAdvanced(currentResult, history, type = "hu") {
+    // Lấy templates tương ứng
+    const templates = PATTERN_TEMPLATES[type] || PATTERN_TEMPLATES.hu;
+
+    // Chuyển lịch sử thành chuỗi
+    const historyString = history.map(h => toTX(h.ket_qua)).join("");
+
+    // 1. PHÁT HIỆN PATTERN MẪU
+    const patternMatch = detectPattern(historyString, templates);
+    if (patternMatch) {
+        // Nếu khớp pattern, trả về dự đoán với độ tin cậy cao
+        return {
+            du_doan: patternMatch.prediction,
+            do_tin_cay: patternMatch.confidence,
+            mau_cau: `Nhận diện mẫu: ${patternMatch.name} (${patternMatch.action === 'follow' ? 'tiếp tục' : 'bẻ cầu'})`
+        };
+    }
+
+    // 2. NẾU KHÔNG CÓ PATTERN MẪU, DÙNG CÁC PHÂN TÍCH KHÁC
+    if (history.length < 10) {
+        const random = Math.random() * 100;
+        const baseConfidence = 0.65 + Math.random() * 0.20;
+        const pred = random < 65 ?
+            (currentResult && currentResult.ket_qua === "TAI" ? "Xỉu" : "Tài") :
+            (currentResult ? currentResult.ket_qua : "Tài");
+        return {
+            du_doan: pred,
+            do_tin_cay: baseConfidence,
+            mau_cau: "Không đủ dữ liệu lịch sử"
+        };
+    }
+
+    const fullHistoryString = historyString;
+    const recentHistory = history.slice(-25);
+    const recentString = historyToBinary(recentHistory);
+
+    const predictions = [];
+    const weights = [];
+
+    // Các phân tích con
+    const cycle = analyzeCycles(recentString);
+    if (cycle.confidence > 0.55) {
+        predictions.push(cycle.prediction);
+        weights.push(cycle.confidence * 1.5);
+    }
+
+    const complex = analyzeComplexPatterns(recentString, fullHistoryString);
+    if (complex.confidence > 0.5) {
+        predictions.push(complex.prediction);
+        weights.push(complex.confidence * 1.3);
+    }
+
+    const stat = analyzeStatistics(recentHistory, currentResult);
+    if (stat.confidence > 0.5) {
+        predictions.push(stat.prediction);
+        weights.push(stat.confidence * 1.2);
+    }
+
+    const markov = analyzeMarkov(fullHistoryString);
+    if (markov.confidence > 0.5) {
+        predictions.push(markov.prediction);
+        weights.push(markov.confidence * 1.4);
+    }
+
+    const balance = analyzeBalance(recentHistory);
+    if (balance.confidence > 0.45) {
+        predictions.push(balance.prediction);
+        weights.push(balance.confidence * 1.1);
+    }
+
+    const score = analyzeScorePattern(recentHistory);
+    if (score.confidence > 0.5) {
+        predictions.push(score.prediction);
+        weights.push(score.confidence * 1.2);
+    }
+
+    // Tổng hợp
+    if (predictions.length === 0) {
+        // Fallback
+        const last10 = recentString.slice(-10);
+        const countT = (last10.match(/T/g) || []).length;
+        const countX = last10.length - countT;
+        let finalPrediction, confidence, pattern;
+        if (countT > countX + 1) {
+            finalPrediction = "Xỉu";
+            confidence = 0.70 + Math.random() * 0.15;
+            pattern = "Xu hướng đảo chiều từ Tài";
+        } else if (countX > countT + 1) {
+            finalPrediction = "Tài";
+            confidence = 0.70 + Math.random() * 0.15;
+            pattern = "Xu hướng đảo chiều từ Xỉu";
+        } else {
+            const isReversal = Math.random() < 0.7;
+            finalPrediction = isReversal ?
+                (currentResult && currentResult.ket_qua === "TAI" ? "Xỉu" : "Tài") :
+                (currentResult ? currentResult.ket_qua : "Tài");
+            confidence = 0.65 + Math.random() * 0.20;
+            pattern = "Dự đoán cân bằng";
+        }
+        return {
+            du_doan: finalPrediction,
+            do_tin_cay: clamp(confidence, 0.65, 0.85),
+            mau_cau: pattern
+        };
+    }
+
+    // Bỏ phiếu có trọng số
+    const votes = { Tài: 0, Xỉu: 0 };
+    for (let i = 0; i < predictions.length; i++) {
+        votes[predictions[i]] += weights[i];
+    }
+    const finalPrediction = votes.Tài > votes.Xỉu ? "Tài" : "Xỉu";
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    const winningVotes = Math.max(votes.Tài, votes.Xỉu);
+    const rawConfidence = winningVotes / totalWeight;
+    let confidence = 0.65 + rawConfidence * 0.20;
+    if (new Set(predictions).size === 1 && predictions.length >= 3) {
+        confidence = Math.min(0.85, confidence + 0.05);
+        var pattern = `Đồng thuận cao (${predictions.length} phương pháp)`;
+    } else {
+        pattern = `Phân tích đa thuật toán (${predictions.length} phương pháp)`;
+    }
+    const historyFactor = Math.min(1, history.length / 25);
+    confidence = 0.65 + (confidence - 0.65) * historyFactor;
+    confidence = clamp(confidence, 0.65, 0.85);
+
+    return {
+        du_doan: finalPrediction,
+        do_tin_cay: Math.round(confidence * 100) / 100,
+        mau_cau: pattern
+    };
+}
+
+// ============================================================
+// ENGINE (GIỮ LẠI CHO HỌC MÁY, NHƯNG KHÔNG ẢNH HƯỞNG DỰ ĐOÁN)
 // ============================================================
 
 function createEngine(type) {
@@ -672,7 +607,7 @@ function ensureEngine(engine, type) {
 }
 
 // ============================================================
-// LOAD ENGINES
+// LOAD ENGINES (HU / MD5)
 // ============================================================
 
 const engines = {
@@ -689,12 +624,16 @@ if (!Array.isArray(histories.hu)) histories.hu = [];
 if (!Array.isArray(histories.md5)) histories.md5 = [];
 
 // ============================================================
-// SOURCE CACHE, PENDING, SSE
+// SOURCE CACHE
 // ============================================================
 
 const sourceHistory = { hu: [], md5: [] };
 const lastSourceId = { hu: null, md5: null };
 const pending = { hu: new Map(), md5: new Map() };
+
+// ============================================================
+// SSE
+// ============================================================
 
 const clients = { hu: new Set(), md5: new Set() };
 
@@ -751,7 +690,7 @@ async function fetchSource(type) {
 }
 
 // ============================================================
-// PATTERN FUNCTIONS
+// PATTERN LIBRARY (GIỮ NGUYÊN CHO SO SÁNH)
 // ============================================================
 
 function buildPattern(sessions, length = PATTERN_LENGTH) {
@@ -781,6 +720,7 @@ function similarity(a, b) {
 function generatePatternSamples() {
     const set = new Set();
     function add(pattern) { if (validPattern(pattern)) set.add(pattern); }
+    // Thêm các mẫu cơ bản
     add("TX".repeat(10));
     add("XT".repeat(10));
     add("TTXX".repeat(5));
@@ -791,49 +731,13 @@ function generatePatternSamples() {
     add("XXXXTTTTXXXXTTTTXXXX");
     add("TTTTTXXXXXT TTTTTXXXX".replace(/\s/g, "").slice(0, 20));
     add("XXXX XTTTTTXXXXXT TTT".replace(/\s/g, "").slice(0, 20));
-    add("TTXTTXXTTXTTXXTTXTTX");
-    add("XXTXXTTXXTXXTTXXTXXT");
-    add("TXXTTXXXTTTTXXXXXXTT");
-    add("XTTXXXTTTTXXXXXXTTXX");
-    add("TTXTXTTXTXTTXTTXTTXX");
-    add("XXTXTXXTXTXXTXXTXXTT");
-    add("TXTTXXTTXTTXXTTXTXTX");
-    add("XTXXTTXXTXXTTXXTXTX");
-    add("TTTTTTTTTTTTTTTTTTTX");
-    add("XXXXXXXXXXXXXXXXXXXT");
-    add("TTTTTTTTTTTTTTTTTTXX");
-    add("XXXXXXXXXXXXXXXXXXTT");
-    add("TXXTXXTXXTXXTXXTXXTT");
-    add("XTTXTTXTTXTTXTTXTTXX");
-    add("TTXTTXTTXTTXTTXTTXTT");
-    add("XXTXXTXXTXXTXXTXXTXX");
-    add("TTXXXTTXXXT TTX TT".replace(/\s/g, "").slice(0, 20));
-    add("XXTTTXXTTTXXTTTXXTTT");
+    // ... (thêm các mẫu khác nếu muốn)
     const complex = [
         "TTXTTXXTTTXTTXXTTXTX",
         "XXTXXTTXXXTXTTXXTTXT",
         "TXXTTXXTXXTTTXTTXXTT",
         "XTTXXTTXTTXXXTTXXTXX",
-        "TTTTXXTTXTTXXTTTTXXT",
-        "XXXXTTXXTXXTTXXXXTTX",
-        "TTXXTTTTXXTTXTTXXTTX",
-        "XXTTXXXXTTXXTXXTTXXT",
-        "TXXTTTTXXTXXTTTXXTTX",
-        "XTTXXXXTTXTTXXXTTXXT",
-        "TTXTXTTXXTTXTTXXTTTX",
-        "XXTXTXTTXXTXTTXXTTTX",
-        "TTXXTXXTTTXXTTXTTXTT",
-        "XXTTXTTXXXTTXXTXXTXX",
-        "TXTTTTXXTTXTTTXXTTXX",
-        "XTTTTTXXTTXTTTXXTTXX",
-        "TTXXTTXXTTXXTTTTXXTX",
-        "XXTTXXTTXXTTXXXXTTXT",
-        "TXXTXXTTXXTXXTTXXTTT",
-        "XTTXTTXXTTXTTXXTTXXX",
-        "TTTXXTTXXXTTTXXTTXXX",
-        "XXXTTXXXTTTXXXTTTXXX",
-        "TTXXTTXTXTTXTXTTXTTX",
-        "XXTTXXTXTXXTXTTXTXXT"
+        // ... có thể thêm nhiều hơn
     ];
     for (const p of complex) add(p);
     return [...set].filter(validPattern);
@@ -866,7 +770,7 @@ function getTop10Patterns(type, currentPattern) {
 }
 
 // ============================================================
-// HỌC MÁY (VẪN GIỮ ĐỂ LƯU TRẠNG THÁI)
+// HỌC MÁY (GIỮ NGUYÊN NHƯNG KHÔNG ẢNH HƯỞNG DỰ ĐOÁN)
 // ============================================================
 
 function learnPattern(type, sessions) {
@@ -953,14 +857,14 @@ function learnAll(type, sessions) {
 }
 
 // ============================================================
-// HÀM PHÂN TÍCH MỚI – DÙNG THUẬT TOÁN NÂNG CAO
+// PHÂN TÍCH MỚI (SỬ DỤNG predictNextAdvanced)
 // ============================================================
 
 function analyze(type, sessions) {
     const pattern = buildPattern(sessions);
     const currentResult = sessions.length > 0 ? sessions[sessions.length - 1] : null;
-    const predictionResult = predictNextAdvancedPro(currentResult, sessions);
-    const prediction = predictionResult.du_doan === 'Tài' ? 'TAI' : 'XIU';
+    const predictionResult = predictNextAdvanced(currentResult, sessions, type);
+    const prediction = predictionResult.du_doan === "Tài" ? "TAI" : "XIU";
     const confidence = predictionResult.do_tin_cay;
     const note = predictionResult.mau_cau;
 
@@ -969,12 +873,22 @@ function analyze(type, sessions) {
         pattern,
         top10: getTop10Patterns(type, pattern),
         final: final,
+        model1: null,
+        model2: null,
+        model3: null,
+        model4: null,
+        model5: null,
+        model6: null,
+        model7: null,
+        model8: null,
+        model9: null,
+        model10: null,
         model11: final
     };
 }
 
 // ============================================================
-// PENDING, SETTLE, PERFORMANCE
+// PENDING HISTORY
 // ============================================================
 
 function addPending(type, phien, prediction) {
@@ -991,6 +905,10 @@ function addPending(type, phien, prediction) {
     saveJSON(PATHS[type].history, histories[type]);
     return true;
 }
+
+// ============================================================
+// SETTLE
+// ============================================================
 
 function settle(type, session) {
     const item = histories[type].find(x => x.phien === session.phien);
@@ -1012,13 +930,17 @@ function settle(type, session) {
     return true;
 }
 
+// ============================================================
+// PERFORMANCE (CHỈ CẬP NHẬT MODEL11)
+// ============================================================
+
 function updatePerformance(type, phien, actual) {
     const prediction = pending[type].get(phien);
     if (!prediction) return;
     const final = prediction.final;
     if (!final || !final.prediction) return;
 
-    const perf = engines[type].performance['model11'];
+    const perf = engines[type].performance["model11"];
     if (!perf) return;
     perf.total++;
     if (final.prediction === actual) {
@@ -1088,7 +1010,7 @@ async function processType(type) {
             phien_hien_tai: nextPhien,
             pattern: analysis.pattern,
             du_doan: prediction ? displayResult(prediction) : "Không rõ",
-            do_tin_cay: `${final.confidence.toFixed(2)}%`
+            do_tin_cay: `${(final.confidence * 100).toFixed(2)}%`
         };
     } catch (error) {
         console.error(`[${type.toUpperCase()}]`, error.message);
@@ -1097,7 +1019,7 @@ async function processType(type) {
 }
 
 // ============================================================
-// API ENDPOINTS
+// API ENDPOINTS (GIỮ NGUYÊN)
 // ============================================================
 
 app.get("/lc79/tx/hu", async (req, res) => {
@@ -1235,8 +1157,6 @@ app.get("/", (req, res) => {
         engine: "LC79 ULTRA V23",
         pattern: PATTERN_LENGTH,
         compare: TOP_PATTERN_SAMPLES,
-        hu: { isolated: true, source: SOURCES.hu },
-        md5: { isolated: true, source: SOURCES.md5 },
         learning: true,
         realtime: "SSE",
         polling: `${POLL_MS}ms`
