@@ -8,30 +8,24 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
-// =========================================================
-// CONFIG
-// =========================================================
-
 const SOURCE_API = {
-    tx: "https://wtx.tele68.com/v1/tx/sessions",
+    hu: "https://wtx.tele68.com/v1/tx/sessions",
     md5: "https://wtxmd52.tele68.com/v1/txmd5/sessions"
 };
 
 const POLL_INTERVAL = 3000;
-
 const PATTERN_LENGTH = 15;
 const COMPARE_MIN = 10;
 
 const MAX_SOURCE_HISTORY = 200;
 const MAX_PATTERN_MEMORY = 5000;
-const MAX_EVALUATION_HISTORY = 100;
+const MAX_HISTORY = 100;
 
-// =========================================================
+// =====================================================
 // DATA
-// =========================================================
+// =====================================================
 
-const DATA_DIR =
-    path.join(__dirname, "data");
+const DATA_DIR = path.join(__dirname, "data");
 
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, {
@@ -40,207 +34,98 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 const AI_FILE =
-    path.join(
-        DATA_DIR,
-        "pattern-ai.json"
-    );
+    path.join(DATA_DIR, "pattern-ai.json");
 
 const HISTORY_FILE =
-    path.join(
-        DATA_DIR,
-        "history.json"
-    );
-
-const savedAI =
-    loadJSON(
-        AI_FILE,
-        {
-            tx: {},
-            md5: {}
-        }
-    );
-
-const savedHistory =
-    loadJSON(
-        HISTORY_FILE,
-        {
-            tx: [],
-            md5: []
-        }
-    );
-
-const patternMemory = {
-    tx:
-        normalizePatternMemory(
-            savedAI.tx
-        ),
-
-    md5:
-        normalizePatternMemory(
-            savedAI.md5
-        )
-};
-
-const evaluationHistory = {
-    tx:
-        Array.isArray(savedHistory.tx)
-            ? savedHistory.tx
-            : [],
-
-    md5:
-        Array.isArray(savedHistory.md5)
-            ? savedHistory.md5
-            : []
-};
-
-const sourceHistory = {
-    tx: [],
-    md5: []
-};
-
-const pendingPredictions = {
-    tx: new Map(),
-    md5: new Map()
-};
-
-const clients = {
-    tx: new Set(),
-    md5: new Set()
-};
-
-// =========================================================
-// JSON
-// =========================================================
+    path.join(DATA_DIR, "history.json");
 
 function loadJSON(file, fallback) {
-
     try {
-
         if (!fs.existsSync(file)) {
             return fallback;
         }
 
         return JSON.parse(
-            fs.readFileSync(
-                file,
-                "utf8"
-            )
+            fs.readFileSync(file, "utf8")
         );
-
     } catch (error) {
-
-        console.error(
-            "[JSON LOAD]",
-            error.message
-        );
-
+        console.error("[JSON LOAD]", error.message);
         return fallback;
     }
 }
 
 function saveJSON(file, data) {
-
     try {
-
         fs.writeFileSync(
             file,
-            JSON.stringify(
-                data,
-                null,
-                2
-            ),
+            JSON.stringify(data, null, 2),
             "utf8"
         );
-
     } catch (error) {
-
-        console.error(
-            "[JSON SAVE]",
-            error.message
-        );
+        console.error("[JSON SAVE]", error.message);
     }
 }
 
-// =========================================================
-// NORMALIZE PATTERN MEMORY
-// =========================================================
+const savedAI =
+    loadJSON(AI_FILE, {
+        hu: {},
+        md5: {}
+    });
 
-function normalizePatternMemory(data) {
+const savedHistory =
+    loadJSON(HISTORY_FILE, {
+        hu: [],
+        md5: []
+    });
 
-    if (!data || typeof data !== "object") {
-        return {};
-    }
+const patternMemory = {
+    hu: savedAI.hu || {},
+    md5: savedAI.md5 || {}
+};
 
-    const result = {};
+const evaluationHistory = {
+    hu: Array.isArray(savedHistory.hu)
+        ? savedHistory.hu
+        : [],
 
-    for (
-        const [pattern, value]
-        of Object.entries(data)
-    ) {
+    md5: Array.isArray(savedHistory.md5)
+        ? savedHistory.md5
+        : []
+};
 
-        if (
-            typeof pattern !== "string" ||
-            pattern.length !== PATTERN_LENGTH ||
-            !/^[TX]+$/.test(pattern)
-        ) {
-            continue;
-        }
+const sourceHistory = {
+    hu: [],
+    md5: []
+};
 
-        result[pattern] = {
+const pendingPredictions = {
+    hu: new Map(),
+    md5: new Map()
+};
 
-            pattern,
+const sseClients = {
+    hu: new Set(),
+    md5: new Set()
+};
 
-            tai:
-                Number(value.tai) || 0,
-
-            xiu:
-                Number(value.xiu) || 0,
-
-            wins:
-                Number(value.wins) || 0,
-
-            losses:
-                Number(value.losses) || 0,
-
-            weight:
-                Number(value.weight) > 0
-                    ? Number(value.weight)
-                    : 1,
-
-            total:
-                Number(value.total) || 0
-        };
-    }
-
-    return result;
-}
-
-// =========================================================
+// =====================================================
 // RESULT
-// =========================================================
+// =====================================================
 
 function normalizeResult(value) {
-
     if (value === null || value === undefined) {
         return null;
     }
 
-    const v =
-        String(value)
-            .trim()
-            .toUpperCase();
+    const v = String(value)
+        .trim()
+        .toUpperCase();
 
-    if (
-        v === "TAI" ||
-        v === "TÀI"
-    ) {
+    if (v === "TAI" || v === "TÀI") {
         return "TAI";
     }
 
-    if (
-        v === "XIU" ||
-        v === "XỈU"
-    ) {
+    if (v === "XIU" || v === "XỈU") {
         return "XIU";
     }
 
@@ -248,9 +133,7 @@ function normalizeResult(value) {
 }
 
 function displayResult(value) {
-
-    const result =
-        normalizeResult(value);
+    const result = normalizeResult(value);
 
     if (result === "TAI") {
         return "Tài";
@@ -264,70 +147,56 @@ function displayResult(value) {
 }
 
 function toTX(value) {
-
-    return normalizeResult(value) ===
-        "TAI"
+    return normalizeResult(value) === "TAI"
         ? "T"
         : "X";
 }
 
-// =========================================================
-// CLAMP
-// =========================================================
+// =====================================================
+// UTILITY
+// =====================================================
 
-function clamp(
-    value,
-    min,
-    max
-) {
-
+function clamp(value, min, max) {
     return Math.max(
         min,
-        Math.min(
-            max,
-            value
-        )
+        Math.min(max, value)
     );
 }
 
-// =========================================================
-// SOURCE API
-// =========================================================
+function validPattern(pattern) {
+    return (
+        typeof pattern === "string" &&
+        pattern.length === PATTERN_LENGTH &&
+        /^[TX]+$/.test(pattern)
+    );
+}
+
+// =====================================================
+// FETCH SOURCE
+// =====================================================
 
 async function fetchSource(type) {
+    const controller = new AbortController();
 
-    const controller =
-        new AbortController();
-
-    const timeout =
-        setTimeout(
-            () => controller.abort(),
-            10000
-        );
+    const timeout = setTimeout(() => {
+        controller.abort();
+    }, 10000);
 
     try {
-
-        const response =
-            await fetch(
-                SOURCE_API[type],
-                {
-                    method: "GET",
-
-                    headers: {
-                        Accept:
-                            "application/json",
-
-                        "User-Agent":
-                            "LC79-Pattern-AI/1.0"
-                    },
-
-                    signal:
-                        controller.signal
-                }
-            );
+        const response = await fetch(
+            SOURCE_API[type],
+            {
+                method: "GET",
+                headers: {
+                    Accept: "application/json",
+                    "User-Agent":
+                        "LC79-Pattern-AI/1.0"
+                },
+                signal: controller.signal
+            }
+        );
 
         if (!response.ok) {
-
             throw new Error(
                 `HTTP ${response.status}`
             );
@@ -336,17 +205,15 @@ async function fetchSource(type) {
         return await response.json();
 
     } finally {
-
         clearTimeout(timeout);
     }
 }
 
-// =========================================================
-// NORMALIZE SESSIONS
-// =========================================================
+// =====================================================
+// NORMALIZE API
+// =====================================================
 
 function normalizeSessions(json) {
-
     if (
         !json ||
         !Array.isArray(json.list)
@@ -355,7 +222,6 @@ function normalizeSessions(json) {
     }
 
     return json.list
-
         .map(item => {
 
             const dices =
@@ -367,180 +233,99 @@ function normalizeSessions(json) {
                         )
                     : [];
 
-            let point =
-                Number(item.point);
+            let point = Number(item.point);
 
-            if (
-                !Number.isFinite(point)
-            ) {
-
-                point =
-                    dices.reduce(
-                        (
-                            total,
-                            value
-                        ) =>
-                            total + value,
-                        0
-                    );
+            if (!Number.isFinite(point)) {
+                point = dices.reduce(
+                    (a, b) => a + b,
+                    0
+                );
             }
 
             return {
-
-                phien:
-                    Number(item.id),
-
-                xuc_xac:
-                    dices,
-
-                tong:
-                    point,
-
+                phien: Number(item.id),
+                xuc_xac: dices,
+                tong: point,
                 ket_qua:
                     normalizeResult(
                         item.resultTruyenThong
                     )
             };
         })
-
         .filter(item => {
 
             return (
-
-                Number.isFinite(
-                    item.phien
-                ) &&
-
+                Number.isFinite(item.phien) &&
                 item.xuc_xac.length === 3 &&
-
                 item.ket_qua
             );
         })
-
         .sort(
             (a, b) =>
                 a.phien - b.phien
         );
 }
 
-// =========================================================
-// BUILD MAIN PATTERN
-// =========================================================
+// =====================================================
+// PATTERN
+// =====================================================
 
 function buildPattern(
     history,
     length = PATTERN_LENGTH
 ) {
-
     return history
         .slice(-length)
-        .map(
-            item =>
-                toTX(
-                    item.ket_qua
-                )
+        .map(item =>
+            toTX(item.ket_qua)
         )
         .join("");
 }
 
-// =========================================================
-// VALID PATTERN
-// =========================================================
-
-function validPattern(pattern) {
-
-    return (
-        typeof pattern === "string" &&
-        pattern.length === PATTERN_LENGTH &&
-        /^[TX]+$/.test(pattern)
-    );
-}
-
-// =========================================================
-// PATTERN SIMILARITY
-// =========================================================
-
-function comparePattern(
-    main,
-    sample
-) {
-
+function comparePattern(main, sample) {
     if (
-        !main ||
-        !sample
+        !validPattern(main) ||
+        !validPattern(sample)
     ) {
         return {
             same: 0,
-            similarity: 0,
-            distance: 15
+            similarity: 0
         };
     }
-
-    const length =
-        Math.min(
-            main.length,
-            sample.length
-        );
 
     let same = 0;
 
     for (
         let i = 0;
-        i < length;
+        i < PATTERN_LENGTH;
         i++
     ) {
-
-        if (
-            main[i] ===
-            sample[i]
-        ) {
+        if (main[i] === sample[i]) {
             same++;
         }
     }
 
-    const similarity =
-        (
-            same /
-            PATTERN_LENGTH
-        ) * 100;
-
     return {
-
         same,
-
-        similarity,
-
-        distance:
-            PATTERN_LENGTH - same
+        similarity:
+            (same / PATTERN_LENGTH) * 100
     };
 }
 
-// =========================================================
-// POSITION WEIGHT
-// Phiên gần cuối quan trọng hơn
-// =========================================================
-
 function positionWeight(index) {
-
-    const weight =
+    return (
         0.75 +
         (
             index /
             (PATTERN_LENGTH - 1)
-        ) * 0.75;
-
-    return weight;
+        ) * 0.75
+    );
 }
-
-// =========================================================
-// PATTERN SCORE
-// =========================================================
 
 function calculatePatternScore(
     main,
     sample
 ) {
-
     if (
         !validPattern(main) ||
         !validPattern(sample)
@@ -555,46 +340,36 @@ function calculatePatternScore(
         i < PATTERN_LENGTH;
         i++
     ) {
-
-        if (
-            main[i] ===
-            sample[i]
-        ) {
-
-            score +=
-                positionWeight(i);
+        if (main[i] === sample[i]) {
+            score += positionWeight(i);
         }
     }
 
     return score;
 }
 
-// =========================================================
-// PATTERN SAMPLE GENERATOR
-// =========================================================
+// =====================================================
+// PATTERN MẪU
+// =====================================================
 
 function generateRunPattern(
-    firstRun,
-    secondRun,
-    firstChar
+    a,
+    b,
+    first
 ) {
-
-    let result = "";
-
-    let current =
-        firstChar;
+    let pattern = "";
+    let current = first;
 
     while (
-        result.length <
+        pattern.length <
         PATTERN_LENGTH
     ) {
-
         const count =
-            current === firstChar
-                ? firstRun
-                : secondRun;
+            current === first
+                ? a
+                : b;
 
-        result +=
+        pattern +=
             current.repeat(count);
 
         current =
@@ -603,7 +378,7 @@ function generateRunPattern(
                 : "T";
     }
 
-    return result.slice(
+    return pattern.slice(
         0,
         PATTERN_LENGTH
     );
@@ -611,31 +386,18 @@ function generateRunPattern(
 
 function generatePatternSamples() {
 
-    const samples =
-        new Set();
-
-    // -----------------------------------------
-    // 1-1 đến 10-10
-    // -----------------------------------------
+    const samples = new Set();
 
     for (
         let a = 1;
         a <= 10;
         a++
     ) {
-
         for (
             let b = 1;
             b <= 10;
             b++
         ) {
-
-            if (
-                a + b > 15
-            ) {
-                continue;
-            }
-
             samples.add(
                 generateRunPattern(
                     a,
@@ -654,23 +416,9 @@ function generatePatternSamples() {
         }
     }
 
-    // -----------------------------------------
-    // Alternating
-    // -----------------------------------------
-
-    samples.add(
-        "TXTXTXTXTXTXTXT"
-    );
-
-    samples.add(
-        "XTXTXTXTXTXTXTX"
-    );
-
-    // -----------------------------------------
-    // Các pattern phổ biến
-    // -----------------------------------------
-
     const predefined = [
+        "TXTXTXTXTXTXTXT",
+        "XTXTXTXTXTXTXTX",
 
         "TTXXTTXXTTXXTTX",
         "XXTTXXTTXXTTXXT",
@@ -680,12 +428,6 @@ function generatePatternSamples() {
 
         "TTXTTXTTXTTXTTX",
         "XXTXXTXXTXXTXXT",
-
-        "TTTXTTTXTTTXTTT",
-        "XXXTXXXTXXXTXXX",
-
-        "TXXXTXXXTXXXTXXX",
-        "XTTTXTTTXTTTXTT",
 
         "TTTXXTTTXXTTTXX",
         "XXXTTXXXTTXXXTT",
@@ -735,8 +477,8 @@ function generatePatternSamples() {
         "TTTTTTTTTTXTTTT",
         "XXXXXXXXXXTXXXX",
 
-        "TTXXTTXXTTXXTTX",
-        "XXTTXXTTXXTTXXT",
+        "TTXXTTTXXTTXXTX",
+        "XXTTXXXTTXXTTXT",
 
         "TTTXXXTTTXXXTTT",
         "XXXTTTXXXTTTXXX",
@@ -751,185 +493,91 @@ function generatePatternSamples() {
         "XTTXTTXTTXTTXTT",
 
         "TTXTXTTXTXTTXTX",
-        "XXTXTXXTXTXXTXT",
-
-        "TXTTXXTTXTXTTXX",
-        "XTTXXTXXTXTXXTT",
-
-        "TTXTXTXTXTXTXTT",
-        "XXTXT XTXTXTXTT".replace(
-            / /g,
-            ""
-        ),
-
-        "TTXXXTXXTTXXTXT",
-        "XXTTTXTTXXTTXTX",
-
-        "TTXXTTTXXTTXXTX",
-        "XXTTXXXTTXXTTXT",
+        "XXTXTXTXTXTXTXT",
 
         "TXXTXXTXXTXXTXX",
         "XTTXTTXTTXTTXTT",
 
-        "TTXXTXXXTTXXTTX",
-        "XXTTXTTTXXTTXXT",
-
         "TTXTTXXXTTXTTXX",
-        "XXTXXTTTX XTTXX".replace(
-            / /g,
-            ""
-        ),
+        "XXTXXTTTXTTXXTT",
 
         "TTTTTTTTTTTTTTX",
-        "XXXXXXXXXXXXXXT",
-
-        "TTTTTTTTTTTTTXT",
-        "XXXXXXXXXXXXXXTX",
-
-        "TTTTTTTTTTTTTXX",
-        "XXXXXXXXXXXXXTT"
+        "XXXXXXXXXXXXXXT"
     ];
 
-    for (
-        const pattern
-        of predefined
-    ) {
-
-        if (
-            validPattern(pattern)
-        ) {
-
-            samples.add(
-                pattern
-            );
+    for (const pattern of predefined) {
+        if (validPattern(pattern)) {
+            samples.add(pattern);
         }
     }
 
-    return [
-        ...samples
-    ].filter(
-        validPattern
-    );
+    return [...samples];
 }
 
 const PATTERN_SAMPLES =
     generatePatternSamples();
 
-// =========================================================
-// SAMPLE PREDICTION
-// =========================================================
-//
-// Pattern mẫu phải có kết quả tiếp theo.
-// Với mẫu sinh sẵn, kết quả tiếp theo
-// được suy ra từ ký tự cuối theo dạng
-// đảo cầu / tiếp cầu.
-//
+// =====================================================
+// STATIC SAMPLE PREDICTION
+// =====================================================
 
 function oppositeTX(value) {
-
     return value === "T"
         ? "X"
         : "T";
 }
 
-function buildStaticSampleMemory() {
+function getStaticPrediction(pattern) {
 
-    const result = [];
+    const last =
+        pattern[
+            pattern.length - 1
+        ];
 
-    for (
-        const pattern
-        of PATTERN_SAMPLES
+    const last3 =
+        pattern.slice(-3);
+
+    if (
+        last3 === "TTT" ||
+        last3 === "XXX"
     ) {
-
-        if (
-            !validPattern(pattern)
-        ) {
-            continue;
-        }
-
-        // Không dùng random.
-        // Dự đoán mẫu dựa trên cấu trúc:
-        //
-        // Nếu 3+ ký tự cuối giống nhau:
-        // ưu tiên đảo.
-        //
-        // Nếu pattern xen kẽ:
-        // tiếp tục đảo.
-        //
-        // Còn lại:
-        // dùng ký tự cuối.
-
-        const last =
-            pattern[
-                pattern.length - 1
-            ];
-
-        const last3 =
-            pattern.slice(-3);
-
-        let prediction;
-
-        if (
-            last3.length === 3 &&
-            (
-                last3 === "TTT" ||
-                last3 === "XXX"
-            )
-        ) {
-
-            prediction =
-                oppositeTX(last);
-
-        } else {
-
-            prediction =
-                oppositeTX(last);
-        }
-
-        result.push({
-
-            pattern,
-
-            prediction:
-                prediction === "T"
-                    ? "TAI"
-                    : "XIU"
-        });
+        return oppositeTX(last);
     }
 
-    return result;
+    return oppositeTX(last);
 }
 
-const STATIC_SAMPLE_MEMORY =
-    buildStaticSampleMemory();
+const STATIC_SAMPLES =
+    PATTERN_SAMPLES.map(
+        pattern => ({
+            pattern,
+            prediction:
+                getStaticPrediction(
+                    pattern
+                ) === "T"
+                    ? "TAI"
+                    : "XIU"
+        })
+    );
 
-// =========================================================
-// LEARNING MEMORY
-// =========================================================
+// =====================================================
+// AI MEMORY
+// =====================================================
 
-function getPatternMemory(
+function getMemory(
     type,
     pattern
 ) {
-
     if (
         !patternMemory[type][pattern]
     ) {
-
         patternMemory[type][pattern] = {
-
             pattern,
-
             tai: 0,
-
             xiu: 0,
-
             wins: 0,
-
             losses: 0,
-
             weight: 1,
-
             total: 0
         };
     }
@@ -937,103 +585,7 @@ function getPatternMemory(
     return patternMemory[type][pattern];
 }
 
-// =========================================================
-// BUILD HISTORICAL PATTERN SAMPLES
-// =========================================================
-//
-// Từ dữ liệu thật:
-// 15 phiên → phiên thứ 16
-//
-
-function learnHistoricalPatterns(
-    type,
-    history
-) {
-
-    if (
-        history.length <
-        PATTERN_LENGTH + 1
-    ) {
-        return;
-    }
-
-    for (
-        let i =
-            PATTERN_LENGTH;
-
-        i < history.length;
-
-        i++
-    ) {
-
-        const window =
-            history.slice(
-                i - PATTERN_LENGTH,
-                i
-            );
-
-        const pattern =
-            buildPattern(
-                window
-            );
-
-        const next =
-            history[i].ket_qua;
-
-        if (
-            !validPattern(pattern) ||
-            !next
-        ) {
-            continue;
-        }
-
-        const memory =
-            getPatternMemory(
-                type,
-                pattern
-            );
-
-        if (
-            next === "TAI"
-        ) {
-
-            memory.tai++;
-
-        } else {
-
-            memory.xiu++;
-        }
-
-        memory.total =
-            memory.tai +
-            memory.xiu;
-
-        const historicalRate =
-            Math.max(
-                memory.tai,
-                memory.xiu
-            ) /
-            memory.total;
-
-        memory.weight =
-            clamp(
-                0.5 +
-                historicalRate,
-                0.5,
-                1.8
-            );
-    }
-
-    trimPatternMemory(type);
-
-    saveAI();
-}
-
-// =========================================================
-// LIMIT MEMORY
-// =========================================================
-
-function trimPatternMemory(type) {
+function trimMemory(type) {
 
     const keys =
         Object.keys(
@@ -1048,39 +600,100 @@ function trimPatternMemory(type) {
     }
 
     keys.sort(
-        (
-            a,
-            b
-        ) => {
-
-            return (
-                patternMemory[type][a].total -
-                patternMemory[type][b].total
-            );
-        }
+        (a, b) =>
+            (
+                patternMemory[type][a]
+                    .total || 0
+            ) -
+            (
+                patternMemory[type][b]
+                    .total || 0
+            )
     );
 
-    const removeCount =
+    const remove =
         keys.length -
         MAX_PATTERN_MEMORY;
 
     for (
         let i = 0;
-        i < removeCount;
+        i < remove;
         i++
     ) {
-
         delete patternMemory[type][
             keys[i]
         ];
     }
 }
 
-// =========================================================
-// SAVE AI
-// =========================================================
+function learnHistoricalPatterns(
+    type,
+    history
+) {
+    if (
+        history.length <
+        PATTERN_LENGTH + 1
+    ) {
+        return;
+    }
 
-function saveAI() {
+    for (
+        let i = PATTERN_LENGTH;
+        i < history.length;
+        i++
+    ) {
+
+        const window =
+            history.slice(
+                i - PATTERN_LENGTH,
+                i
+            );
+
+        const pattern =
+            buildPattern(window);
+
+        const next =
+            history[i].ket_qua;
+
+        if (
+            !validPattern(pattern) ||
+            !next
+        ) {
+            continue;
+        }
+
+        const memory =
+            getMemory(
+                type,
+                pattern
+            );
+
+        if (next === "TAI") {
+            memory.tai++;
+        } else {
+            memory.xiu++;
+        }
+
+        memory.total =
+            memory.tai +
+            memory.xiu;
+
+        const rate =
+            Math.max(
+                memory.tai,
+                memory.xiu
+            ) /
+            memory.total;
+
+        memory.weight =
+            clamp(
+                0.5 + rate,
+                0.5,
+                1.8
+            );
+    }
+
+    trimMemory(type);
 
     saveJSON(
         AI_FILE,
@@ -1088,24 +701,20 @@ function saveAI() {
     );
 }
 
-// =========================================================
-// MATCH SAMPLE
-// =========================================================
+// =====================================================
+// FIND MATCHES
+// =====================================================
 
-function findPatternMatches(
+function findMatches(
     type,
     mainPattern
 ) {
 
     const matches = [];
 
-    // -----------------------------------------
-    // Historical learned patterns
-    // -----------------------------------------
-
+    // Learned patterns
     for (
-        const item
-        of Object.values(
+        const item of Object.values(
             patternMemory[type]
         )
     ) {
@@ -1131,111 +740,67 @@ function findPatternMatches(
             continue;
         }
 
+        let prediction = null;
+
+        if (item.tai > item.xiu) {
+            prediction = "TAI";
+        }
+
+        if (item.xiu > item.tai) {
+            prediction = "XIU";
+        }
+
+        if (!prediction) {
+            continue;
+        }
+
         const baseScore =
             calculatePatternScore(
                 mainPattern,
                 item.pattern
             );
 
-        const learnedWeight =
-            Number(
-                item.weight
-            ) || 1;
-
-        const historicalTotal =
-            Number(
-                item.total
-            ) || 0;
-
-        const historicalConfidence =
-            historicalTotal > 0
-
-                ? (
-                    Math.max(
-                        item.tai,
-                        item.xiu
-                    ) /
-                    historicalTotal
-                )
-
+        const rate =
+            item.total > 0
+                ? Math.max(
+                    item.tai,
+                    item.xiu
+                ) / item.total
                 : 0.5;
 
         const score =
             baseScore *
-            learnedWeight *
-            (
-                0.75 +
-                historicalConfidence *
-                0.5
-            );
-
-        let prediction;
-
-        if (
-            item.tai >
-            item.xiu
-        ) {
-
-            prediction =
-                "TAI";
-
-        } else if (
-            item.xiu >
-            item.tai
-        ) {
-
-            prediction =
-                "XIU";
-
-        } else {
-
-            continue;
-        }
+            (Number(item.weight) || 1) *
+            (0.75 + rate * 0.5);
 
         matches.push({
-
-            source:
-                "history",
-
-            pattern:
-                item.pattern,
-
+            source: "ai",
+            pattern: item.pattern,
             prediction,
-
-            same:
-                compare.same,
-
+            same: compare.same,
             similarity:
                 Number(
-                    compare.similarity.toFixed(2)
+                    compare.similarity
+                        .toFixed(2)
                 ),
-
             score:
                 Number(
                     score.toFixed(4)
                 ),
-
             weight:
-                learnedWeight,
-
+                Number(item.weight) || 1,
             occurrences:
-                historicalTotal,
-
+                item.total || 0,
             wins:
-                item.wins,
-
+                item.wins || 0,
             losses:
-                item.losses
+                item.losses || 0
         });
     }
 
-    // -----------------------------------------
-    // Static pattern samples
-    // -----------------------------------------
-
+    // Static patterns
     for (
-        const item
-        of STATIC_SAMPLE_MEMORY
+        const item of STATIC_SAMPLES
     ) {
 
         const compare =
@@ -1257,53 +822,32 @@ function findPatternMatches(
                 item.pattern
             );
 
-        const score =
-            baseScore *
-            0.65;
-
         matches.push({
-
-            source:
-                "sample",
-
-            pattern:
-                item.pattern,
-
-            prediction:
-                item.prediction,
-
-            same:
-                compare.same,
-
+            source: "sample",
+            pattern: item.pattern,
+            prediction: item.prediction,
+            same: compare.same,
             similarity:
                 Number(
-                    compare.similarity.toFixed(2)
+                    compare.similarity
+                        .toFixed(2)
                 ),
-
             score:
                 Number(
-                    score.toFixed(4)
+                    (
+                        baseScore *
+                        0.65
+                    ).toFixed(4)
                 ),
-
-            weight:
-                0.65,
-
-            occurrences:
-                0,
-
-            wins:
-                0,
-
-            losses:
-                0
+            weight: 0.65,
+            occurrences: 0,
+            wins: 0,
+            losses: 0
         });
     }
 
     matches.sort(
-        (
-            a,
-            b
-        ) =>
+        (a, b) =>
             b.score -
             a.score
     );
@@ -1311,93 +855,46 @@ function findPatternMatches(
     return matches;
 }
 
-// =========================================================
-// PREDICT FROM MAIN PATTERN
-// =========================================================
+// =====================================================
+// PREDICTION
+// =====================================================
 
-function predictFromPattern(
+function predict(
     type,
-    mainPattern
+    pattern
 ) {
 
-    if (
-        !validPattern(mainPattern)
-    ) {
-
-        return {
-
-            prediction:
-                null,
-
-            confidence:
-                0,
-
-            matches: [],
-
-            taiScore: 0,
-
-            xiuScore: 0
-        };
-    }
-
     const matches =
-        findPatternMatches(
+        findMatches(
             type,
-            mainPattern
+            pattern
         );
-
-    // -----------------------------------------
-    // Không có pattern đủ giống
-    // -----------------------------------------
 
     if (!matches.length) {
-
         return {
-
-            prediction:
-                null,
-
-            confidence:
-                0,
-
-            matches: [],
-
+            prediction: null,
+            confidence: 50,
             taiScore: 0,
-
-            xiuScore: 0
+            xiuScore: 0,
+            matches: []
         };
     }
 
-    // -----------------------------------------
-    // Chỉ lấy các pattern tốt nhất
-    // -----------------------------------------
-
-    const bestMatches =
-        matches.slice(
-            0,
-            100
-        );
+    const best =
+        matches.slice(0, 100);
 
     let taiScore = 0;
     let xiuScore = 0;
 
-    for (
-        const item
-        of bestMatches
-    ) {
+    for (const item of best) {
 
         if (
             item.prediction ===
             "TAI"
         ) {
-
-            taiScore +=
-                item.score;
-
+            taiScore += item.score;
         } else {
-
-            xiuScore +=
-                item.score;
+            xiuScore += item.score;
         }
     }
 
@@ -1405,24 +902,13 @@ function predictFromPattern(
         taiScore +
         xiuScore;
 
-    if (
-        total <= 0
-    ) {
-
+    if (!total) {
         return {
-
-            prediction:
-                null,
-
-            confidence:
-                0,
-
-            matches:
-                bestMatches,
-
-            taiScore: 0,
-
-            xiuScore: 0
+            prediction: null,
+            confidence: 50,
+            taiScore,
+            xiuScore,
+            matches: best
         };
     }
 
@@ -1443,53 +929,30 @@ function predictFromPattern(
             xiuScore
         );
 
-    // -----------------------------------------
-    // Độ tin cậy
-    // -----------------------------------------
-
-    const dominance =
-        winner /
-        total;
-
     const difference =
-        (
-            winner -
-            loser
-        ) /
+        (winner - loser) /
         total;
 
     const bestSimilarity =
-        bestMatches.length
-            ? bestMatches[0].similarity
-            : 0;
+        best[0]?.similarity || 0;
 
     let confidence =
         50 +
         difference * 35 +
-        (
-            bestSimilarity /
-            100
-        ) * 12;
+        (bestSimilarity / 100) * 12;
 
-    // Có nhiều pattern đồng thuận
-    const samePredictionCount =
-        bestMatches.filter(
-            x =>
-                x.prediction ===
+    const consensus =
+        best.filter(
+            item =>
+                item.prediction ===
                 prediction
         ).length;
 
-    if (
-        samePredictionCount >= 5
-    ) {
-
+    if (consensus >= 5) {
         confidence += 2;
     }
 
-    if (
-        samePredictionCount >= 10
-    ) {
-
+    if (consensus >= 10) {
         confidence += 2;
     }
 
@@ -1501,76 +964,100 @@ function predictFromPattern(
         );
 
     return {
-
         prediction,
-
         confidence:
             Number(
                 confidence.toFixed(2)
             ),
-
-        matches:
-            bestMatches,
-
         taiScore:
             Number(
                 taiScore.toFixed(4)
             ),
-
         xiuScore:
             Number(
                 xiuScore.toFixed(4)
             ),
-
-        dominance:
-            Number(
-                dominance.toFixed(4)
-            )
+        matches: best
     };
 }
 
-// =========================================================
-// CREATE EVALUATION
-// =========================================================
+// =====================================================
+// HISTORY
+// =====================================================
 
-function createEvaluation(
+function createPending(
     phien,
     prediction
 ) {
-
     return {
-
         phien,
-
         du_doan:
-            displayResult(
-                prediction
-            ),
-
+            displayResult(prediction),
         ket_qua:
             "⌛ Chờ Kết Quả",
-
         danh_gia:
             "⌛ Chờ Kết Quả",
-
         xuc_xac:
             "⌛ Chờ",
-
         tong:
             "⌛ Chờ"
     };
 }
 
-// =========================================================
-// SETTLE RESULT
-// =========================================================
+function addHistory(
+    type,
+    phien,
+    prediction
+) {
 
-function settlePrediction(
+    if (
+        evaluationHistory[type]
+            .some(
+                item =>
+                    item.phien ===
+                    phien
+            )
+    ) {
+        return false;
+    }
+
+    evaluationHistory[type]
+        .unshift(
+            createPending(
+                phien,
+                prediction
+            )
+        );
+
+    if (
+        evaluationHistory[type]
+            .length >
+        MAX_HISTORY
+    ) {
+        evaluationHistory[type]
+            .splice(
+                MAX_HISTORY
+            );
+    }
+
+    saveJSON(
+        HISTORY_FILE,
+        evaluationHistory
+    );
+
+    return true;
+}
+
+// =====================================================
+// SETTLE
+// =====================================================
+
+function settle(
     type,
     session
 ) {
 
-    const evaluation =
+    const item =
         evaluationHistory[type]
             .find(
                 x =>
@@ -1578,45 +1065,41 @@ function settlePrediction(
                     session.phien
             );
 
-    if (!evaluation) {
+    if (!item) {
         return false;
     }
 
     if (
-        evaluation.ket_qua !==
+        item.ket_qua !==
         "⌛ Chờ Kết Quả"
     ) {
         return false;
     }
 
-    evaluation.ket_qua =
+    item.ket_qua =
         displayResult(
             session.ket_qua
         );
 
-    evaluation.xuc_xac =
+    item.xuc_xac =
         session.xuc_xac;
 
-    evaluation.tong =
+    item.tong =
         session.tong;
 
     const prediction =
         normalizeResult(
-            evaluation.du_doan
+            item.du_doan
         );
 
-    const isWin =
+    const win =
         prediction ===
         session.ket_qua;
 
-    evaluation.danh_gia =
-        isWin
+    item.danh_gia =
+        win
             ? "✅ Thắng"
             : "❌ Thua";
-
-    // -----------------------------------------
-    // AI tự học pattern đã sử dụng
-    // -----------------------------------------
 
     const pending =
         pendingPredictions[type]
@@ -1626,168 +1109,67 @@ function settlePrediction(
 
     if (pending) {
 
-        learnPredictionResult(
-            type,
-            pending,
-            session.ket_qua
-        );
+        for (
+            const match
+            of pending.matches
+        ) {
+
+            if (
+                match.source !==
+                "ai"
+            ) {
+                continue;
+            }
+
+            const memory =
+                patternMemory[type][
+                    match.pattern
+                ];
+
+            if (!memory) {
+                continue;
+            }
+
+            memory.total++;
+
+            if (
+                match.prediction ===
+                session.ket_qua
+            ) {
+
+                memory.wins++;
+
+                memory.weight =
+                    clamp(
+                        memory.weight +
+                        0.08,
+                        0.2,
+                        3
+                    );
+
+            } else {
+
+                memory.losses++;
+
+                memory.weight =
+                    clamp(
+                        memory.weight -
+                        0.05,
+                        0.2,
+                        3
+                    );
+            }
+        }
 
         pendingPredictions[type]
             .delete(
                 session.phien
             );
-    }
 
-    saveJSON(
-        HISTORY_FILE,
-        evaluationHistory
-    );
-
-    return true;
-}
-
-// =========================================================
-// AI LEARNING AFTER RESULT
-// =========================================================
-
-function learnPredictionResult(
-    type,
-    pending,
-    actual
-) {
-
-    if (
-        !pending ||
-        !Array.isArray(
-            pending.matches
-        )
-    ) {
-        return;
-    }
-
-    for (
-        const match
-        of pending.matches
-    ) {
-
-        if (
-            match.source !==
-            "history"
-        ) {
-            continue;
-        }
-
-        const item =
-            patternMemory[type][
-                match.pattern
-            ];
-
-        if (!item) {
-            continue;
-        }
-
-        item.total++;
-
-        if (
-            match.prediction ===
-            actual
-        ) {
-
-            item.wins++;
-
-            item.weight =
-                clamp(
-                    item.weight +
-                    0.08,
-                    0.2,
-                    3
-                );
-
-        } else {
-
-            item.losses++;
-
-            item.weight =
-                clamp(
-                    item.weight -
-                    0.05,
-                    0.2,
-                    3
-                );
-        }
-
-        // -------------------------------------
-        // Tính lại xác suất lịch sử
-        // -------------------------------------
-
-        const total =
-            item.tai +
-            item.xiu;
-
-        if (total > 0) {
-
-            const rate =
-                Math.max(
-                    item.tai,
-                    item.xiu
-                ) /
-                total;
-
-            item.weight =
-                clamp(
-                    (
-                        item.weight +
-                        rate
-                    ) / 2,
-                    0.2,
-                    3
-                );
-        }
-    }
-
-    saveAI();
-}
-
-// =========================================================
-// UPDATE HISTORY
-// =========================================================
-
-function addEvaluation(
-    type,
-    phien,
-    prediction
-) {
-
-    const exists =
-        evaluationHistory[type]
-            .some(
-                x =>
-                    x.phien ===
-                    phien
-            );
-
-    if (exists) {
-        return false;
-    }
-
-    evaluationHistory[type]
-        .unshift(
-            createEvaluation(
-                phien,
-                prediction
-            )
+        saveJSON(
+            AI_FILE,
+            patternMemory
         );
-
-    if (
-        evaluationHistory[type]
-            .length >
-        MAX_EVALUATION_HISTORY
-    ) {
-
-        evaluationHistory[type]
-            .splice(
-                MAX_EVALUATION_HISTORY
-            );
     }
 
     saveJSON(
@@ -1798,9 +1180,9 @@ function addEvaluation(
     return true;
 }
 
-// =========================================================
+// =====================================================
 // SSE
-// =========================================================
+// =====================================================
 
 function sendSSE(
     type,
@@ -1808,41 +1190,35 @@ function sendSSE(
     data
 ) {
 
-    const payload =
-        JSON.stringify(data);
+    const message =
+        `event: ${event}\n` +
+        `data: ${JSON.stringify(data)}\n\n`;
 
     for (
-        const res
-        of clients[type]
+        const client
+        of sseClients[type]
     ) {
 
         try {
-
-            res.write(
-                `event: ${event}\n`
-            );
-
-            res.write(
-                `data: ${payload}\n\n`
-            );
-
+            client.write(message);
         } catch {
-
-            clients[type]
-                .delete(res);
+            sseClients[type]
+                .delete(client);
         }
     }
 }
 
-function setupSSE(
+function historyStream(
     req,
     res,
     type
 ) {
 
+    res.status(200);
+
     res.setHeader(
         "Content-Type",
-        "text/event-stream"
+        "text/event-stream; charset=utf-8"
     );
 
     res.setHeader(
@@ -1861,19 +1237,15 @@ function setupSSE(
     );
 
     if (
-        typeof res.flushHeaders ===
-        "function"
+        res.flushHeaders
     ) {
-
         res.flushHeaders();
     }
 
-    clients[type].add(res);
+    sseClients[type]
+        .add(res);
 
-    res.write(
-        "retry: 3000\n\n"
-    );
-
+    // Gửi history ngay lập tức
     res.write(
         "event: history\n"
     );
@@ -1885,25 +1257,19 @@ function setupSSE(
     );
 
     const heartbeat =
-        setInterval(
-            () => {
+        setInterval(() => {
 
-                try {
+            try {
+                res.write(
+                    ": heartbeat\n\n"
+                );
+            } catch {
+                clearInterval(
+                    heartbeat
+                );
+            }
 
-                    res.write(
-                        ": ping\n\n"
-                    );
-
-                } catch {
-
-                    clearInterval(
-                        heartbeat
-                    );
-                }
-
-            },
-            15000
-        );
+        }, 15000);
 
     req.on(
         "close",
@@ -1913,140 +1279,195 @@ function setupSSE(
                 heartbeat
             );
 
-            clients[type]
+            sseClients[type]
                 .delete(res);
         }
     );
 }
 
-// =========================================================
+// =====================================================
 // PROCESS
-// =========================================================
+// =====================================================
 
-async function processType(
-    type
-) {
+async function processType(type) {
 
-    const json =
-        await fetchSource(
-            type
-        );
+    try {
 
-    const sessions =
-        normalizeSessions(
-            json
-        );
+        const json =
+            await fetchSource(type);
 
-    if (!sessions.length) {
+        const sessions =
+            normalizeSessions(json);
 
-        throw new Error(
-            "API không có dữ liệu"
-        );
-    }
+        if (!sessions.length) {
+            throw new Error(
+                "API gốc không trả dữ liệu"
+            );
+        }
 
-    const previous =
-        sourceHistory[type];
+        const oldHistory =
+            sourceHistory[type];
 
-    const previousLatest =
-        previous.length
-            ? previous[
-                previous.length - 1
-            ]
-            : null;
+        const oldLatest =
+            oldHistory.length
+                ? oldHistory[
+                    oldHistory.length - 1
+                ]
+                : null;
 
-    const latest =
-        sessions[
-            sessions.length - 1
-        ];
+        sourceHistory[type] =
+            sessions.slice(
+                -MAX_SOURCE_HISTORY
+            );
 
-    sourceHistory[type] =
-        sessions.slice(
-            -MAX_SOURCE_HISTORY
-        );
+        // ---------------------------------------------
+        // Đánh giá các phiên đã có kết quả
+        // ---------------------------------------------
 
-    // =====================================================
-    // SETTLE CÁC PHIÊN CŨ
-    // =====================================================
+        let historyChanged = false;
 
-    let changed = false;
-
-    for (
-        const session
-        of sourceHistory[type]
-    ) {
-
-        if (
-            settlePrediction(
-                type,
-                session
-            )
+        for (
+            const session
+            of sourceHistory[type]
         ) {
 
-            changed = true;
+            if (
+                settle(
+                    type,
+                    session
+                )
+            ) {
+                historyChanged = true;
+            }
         }
-    }
 
-    // =====================================================
-    // HỌC PATTERN TỪ DỮ LIỆU THẬT
-    // =====================================================
+        // ---------------------------------------------
+        // AI học dữ liệu lịch sử
+        // ---------------------------------------------
 
-    learnHistoricalPatterns(
-        type,
-        sourceHistory[type]
-    );
-
-    // =====================================================
-    // CHỈ PHÂN TÍCH KHI ĐỦ 15 PHIÊN
-    // =====================================================
-
-    if (
-        sourceHistory[type].length <
-        PATTERN_LENGTH
-    ) {
-
-        return null;
-    }
-
-    const mainPattern =
-        buildPattern(
+        learnHistoricalPatterns(
+            type,
             sourceHistory[type]
         );
 
-    if (
-        !validPattern(mainPattern)
-    ) {
+        // ---------------------------------------------
+        // Cần đủ 15 phiên
+        // ---------------------------------------------
 
-        return null;
-    }
+        if (
+            sourceHistory[type].length <
+            PATTERN_LENGTH
+        ) {
+            return null;
+        }
 
-    // =====================================================
-    // SO SÁNH PATTERN CHÍNH
-    // =====================================================
+        const latest =
+            sourceHistory[type][
+                sourceHistory[type].length - 1
+            ];
 
-    const prediction =
-        predictFromPattern(
-            type,
-            mainPattern
-        );
+        const pattern =
+            buildPattern(
+                sourceHistory[type]
+            );
 
-    const currentPhien =
-        latest.phien;
+        const result =
+            predict(
+                type,
+                pattern
+            );
 
-    const nextPhien =
-        currentPhien + 1;
+        const nextPhien =
+            latest.phien + 1;
 
-    // =====================================================
-    // KHÔNG CÓ PATTERN ĐỦ ĐIỂM
-    // =====================================================
+        // ---------------------------------------------
+        // Tạo prediction mới
+        // ---------------------------------------------
 
-    if (
-        !prediction.prediction
-    ) {
+        if (
+            result.prediction
+        ) {
+
+            if (
+                !pendingPredictions[type]
+                    .has(nextPhien)
+            ) {
+
+                pendingPredictions[type]
+                    .set(
+                        nextPhien,
+                        {
+                            pattern,
+                            prediction:
+                                result.prediction,
+                            matches:
+                                result.matches
+                        }
+                    );
+            }
+
+            if (
+                addHistory(
+                    type,
+                    nextPhien,
+                    result.prediction
+                )
+            ) {
+
+                historyChanged = true;
+            }
+        }
+
+        // ---------------------------------------------
+        // Nếu phiên mới xuất hiện
+        // ---------------------------------------------
+
+        const newSession =
+            !oldLatest ||
+            oldLatest.phien !==
+            latest.phien;
+
+        if (newSession) {
+
+            sendSSE(
+                type,
+                "result",
+                {
+                    phien:
+                        latest.phien,
+                    xuc_xac:
+                        latest.xuc_xac,
+                    tong:
+                        latest.tong,
+                    ket_qua:
+                        displayResult(
+                            latest.ket_qua
+                        )
+                }
+            );
+
+            historyChanged = true;
+        }
+
+        // ---------------------------------------------
+        // Gửi toàn bộ history realtime
+        // ---------------------------------------------
+
+        if (
+            newSession ||
+            historyChanged
+        ) {
+
+            sendSSE(
+                type,
+                "history",
+                evaluationHistory[type]
+            );
+        }
 
         return {
-
             phien:
-                currentPhien,
+                latest.phien,
 
             xuc_xac:
                 latest.xuc_xac,
@@ -2062,250 +1483,87 @@ async function processType(
             phien_hien_tai:
                 nextPhien,
 
-            pattern:
-                mainPattern,
+            pattern,
 
             du_doan:
-                "Không rõ",
+                result.prediction
+                    ? displayResult(
+                        result.prediction
+                    )
+                    : "Không rõ",
 
             do_tin_cay:
-                "50.00%"
+                `${result.confidence.toFixed(2)}%`
         };
-    }
 
-    // =====================================================
-    // LƯU PREDICTION CHO PHIÊN KẾ
-    // =====================================================
+    } catch (error) {
 
-    if (
-        !pendingPredictions[type]
-            .has(nextPhien)
-    ) {
-
-        pendingPredictions[type]
-            .set(
-                nextPhien,
-                {
-
-                    prediction:
-                        prediction.prediction,
-
-                    mainPattern,
-
-                    matches:
-                        prediction.matches,
-
-                    confidence:
-                        prediction.confidence
-                }
-            );
-    }
-
-    // =====================================================
-    // HISTORY PENDING
-    // =====================================================
-
-    if (
-        addEvaluation(
-            type,
-            nextPhien,
-            prediction.prediction
-        )
-    ) {
-
-        changed = true;
-    }
-
-    // =====================================================
-    // REALTIME
-    // =====================================================
-
-    const newSession =
-        !previousLatest ||
-        previousLatest.phien !==
-        latest.phien;
-
-    if (newSession) {
-
-        sendSSE(
-            type,
-            "result",
-            {
-
-                phien:
-                    currentPhien,
-
-                xuc_xac:
-                    latest.xuc_xac,
-
-                tong:
-                    latest.tong,
-
-                ket_qua:
-                    displayResult(
-                        latest.ket_qua
-                    )
-            }
+        console.error(
+            `[${type.toUpperCase()}]`,
+            error.message
         );
+
+        return null;
     }
-
-    if (
-        newSession ||
-        changed
-    ) {
-
-        sendSSE(
-            type,
-            "history",
-            evaluationHistory[type]
-        );
-    }
-
-    // =====================================================
-    // OUTPUT CHỈ 8 FIELD
-    // =====================================================
-
-    return {
-
-        phien:
-            currentPhien,
-
-        xuc_xac:
-            latest.xuc_xac,
-
-        tong:
-            latest.tong,
-
-        ket_qua:
-            displayResult(
-                latest.ket_qua
-            ),
-
-        phien_hien_tai:
-            nextPhien,
-
-        pattern:
-            mainPattern,
-
-        du_doan:
-            displayResult(
-                prediction.prediction
-            ),
-
-        do_tin_cay:
-            `${prediction.confidence.toFixed(2)}%`
-    };
 }
 
-// =========================================================
-// API HU
-// =========================================================
+// =====================================================
+// MAIN API
+// =====================================================
 
 app.get(
     "/lc79/tx/hu",
     async (req, res) => {
 
-        try {
+        const result =
+            await processType("hu");
 
-            const data =
-                await processType(
-                    "tx"
-                );
+        if (!result) {
 
-            res.json(
-                data || {
-                    phien: null,
-                    xuc_xac: [],
-                    tong: null,
-                    ket_qua: "⌛ Chờ",
-                    phien_hien_tai: null,
-                    pattern: "",
-                    du_doan: "Không rõ",
-                    do_tin_cay: "50.00%"
-                }
-            );
-
-        } catch (error) {
-
-            console.error(
-                "[HU]",
-                error.message
-            );
-
-            res.status(502).json({
-
+            return res.status(502).json({
                 error: true,
-
                 message:
-                    error.message
+                    "Không lấy được dữ liệu API gốc"
             });
         }
+
+        res.json(result);
     }
 );
-
-// =========================================================
-// API MD5
-// =========================================================
 
 app.get(
     "/lc79/tx/md5",
     async (req, res) => {
 
-        try {
+        const result =
+            await processType("md5");
 
-            const data =
-                await processType(
-                    "md5"
-                );
+        if (!result) {
 
-            res.json(
-                data || {
-                    phien: null,
-                    xuc_xac: [],
-                    tong: null,
-                    ket_qua: "⌛ Chờ",
-                    phien_hien_tai: null,
-                    pattern: "",
-                    du_doan: "Không rõ",
-                    do_tin_cay: "50.00%"
-                }
-            );
-
-        } catch (error) {
-
-            console.error(
-                "[MD5]",
-                error.message
-            );
-
-            res.status(502).json({
-
+            return res.status(502).json({
                 error: true,
-
                 message:
-                    error.message
+                    "Không lấy được dữ liệu API gốc"
             });
         }
+
+        res.json(result);
     }
 );
 
-// =========================================================
-// HU HISTORY
-// =========================================================
+// =====================================================
+// HISTORY
+// =====================================================
 
 app.get(
     "/api/lc79/hu/history",
     (req, res) => {
 
         res.json(
-            evaluationHistory.tx
+            evaluationHistory.hu
         );
     }
 );
-
-// =========================================================
-// MD5 HISTORY
-// =========================================================
 
 app.get(
     "/api/lc79/md5/history",
@@ -2317,31 +1575,27 @@ app.get(
     }
 );
 
-// =========================================================
-// HU REALTIME HISTORY
-// =========================================================
+// =====================================================
+// REALTIME HISTORY SSE
+// =====================================================
 
 app.get(
     "/api/lc79/hu/history/stream",
     (req, res) => {
 
-        setupSSE(
+        historyStream(
             req,
             res,
-            "tx"
+            "hu"
         );
     }
 );
-
-// =========================================================
-// MD5 REALTIME HISTORY
-// =========================================================
 
 app.get(
     "/api/lc79/md5/history/stream",
     (req, res) => {
 
-        setupSSE(
+        historyStream(
             req,
             res,
             "md5"
@@ -2349,21 +1603,20 @@ app.get(
     }
 );
 
-// =========================================================
-// PATTERN SAMPLE API
-// =========================================================
+// =====================================================
+// PATTERN SAMPLE
+// =====================================================
 
 app.get(
     "/api/lc79/patterns",
     (req, res) => {
 
         res.json({
+            length:
+                PATTERN_LENGTH,
 
             total:
                 PATTERN_SAMPLES.length,
-
-            length:
-                PATTERN_LENGTH,
 
             patterns:
                 PATTERN_SAMPLES
@@ -2371,19 +1624,18 @@ app.get(
     }
 );
 
-// =========================================================
-// PATTERN MEMORY API
-// =========================================================
+// =====================================================
+// PATTERN MEMORY
+// =====================================================
 
 app.get(
     "/api/lc79/pattern-memory",
     (req, res) => {
 
         res.json({
-
-            tx:
+            hu:
                 Object.values(
-                    patternMemory.tx
+                    patternMemory.hu
                 ),
 
             md5:
@@ -2394,44 +1646,41 @@ app.get(
     }
 );
 
-// =========================================================
-// ANALYZE PATTERN
-// =========================================================
+// =====================================================
+// ANALYZE
+// =====================================================
 
 app.get(
     "/api/lc79/pattern/analyze",
-    async (req, res) => {
+    (req, res) => {
 
         const type =
             req.query.type === "md5"
                 ? "md5"
-                : "tx";
+                : "hu";
 
         const pattern =
             String(
                 req.query.pattern || ""
             )
-                .toUpperCase()
-                .trim();
+                .trim()
+                .toUpperCase();
 
         if (
             !validPattern(pattern)
         ) {
 
             return res.status(400).json({
-
                 error: true,
-
                 message:
-                    `pattern phải đúng ${PATTERN_LENGTH} ký tự T/X`,
-
+                    `Pattern phải đúng ${PATTERN_LENGTH} ký tự T/X`,
                 example:
                     "TTXTTXXTXTTXXTX"
             });
         }
 
-        const prediction =
-            predictFromPattern(
+        const result =
+            predict(
                 type,
                 pattern
             );
@@ -2441,59 +1690,57 @@ app.get(
             pattern,
 
             du_doan:
-                prediction.prediction
+                result.prediction
                     ? displayResult(
-                        prediction.prediction
+                        result.prediction
                     )
                     : "Không rõ",
 
             do_tin_cay:
-                `${(
-                    prediction.confidence || 0
-                ).toFixed(2)}%`,
+                `${result.confidence.toFixed(2)}%`,
 
             tai_score:
-                prediction.taiScore,
+                result.taiScore,
 
             xiu_score:
-                prediction.xiuScore,
+                result.xiuScore,
 
             matches:
-                prediction.matches
-                    .slice(
-                        0,
-                        30
-                    )
+                result.matches.slice(
+                    0,
+                    50
+                )
         });
     }
 );
 
-// =========================================================
+// =====================================================
 // RESET AI
-// =========================================================
+// =====================================================
 
 app.post(
     "/api/lc79/pattern-memory/reset",
     (req, res) => {
 
-        patternMemory.tx = {};
+        patternMemory.hu = {};
         patternMemory.md5 = {};
 
-        saveAI();
+        saveJSON(
+            AI_FILE,
+            patternMemory
+        );
 
         res.json({
-
             success: true,
-
             message:
-                "Đã reset Pattern AI"
+                "Đã reset toàn bộ AI Pattern"
         });
     }
 );
 
-// =========================================================
+// =====================================================
 // HEALTH
-// =========================================================
+// =====================================================
 
 app.get(
     "/",
@@ -2501,17 +1748,13 @@ app.get(
 
         res.json({
 
-            status:
-                "online",
+            status: "online",
 
             version:
-                "LC79 Pattern AI 5.0",
+                "LC79 Pattern AI 6.0",
 
             algorithm:
-                "MAIN_PATTERN_15",
-
-            old_algorithms:
-                false,
+                "MAIN PATTERN 15",
 
             pattern_length:
                 PATTERN_LENGTH,
@@ -2519,20 +1762,16 @@ app.get(
             compare_min:
                 COMPARE_MIN,
 
-            sample_patterns:
+            pattern_samples:
                 PATTERN_SAMPLES.length,
 
-            ai_learning:
-                true,
-
             realtime:
-                true,
+                "SSE",
 
             poll:
-                "3s",
+                "3000ms",
 
             endpoints: {
-
                 hu:
                     "/lc79/tx/hu",
 
@@ -2554,42 +1793,36 @@ app.get(
                 patterns:
                     "/api/lc79/patterns",
 
-                pattern_memory:
+                memory:
                     "/api/lc79/pattern-memory",
 
                 analyze:
-                    "/api/lc79/pattern/analyze",
-
-                reset:
-                    "/api/lc79/pattern-memory/reset"
+                    "/api/lc79/pattern/analyze"
             }
         });
     }
 );
 
-// =========================================================
+// =====================================================
 // 404
-// =========================================================
+// =====================================================
 
 app.use(
     (req, res) => {
 
         res.status(404).json({
-
             error: true,
-
             message:
                 "Endpoint không tồn tại",
-
             path:
                 req.path
         });
     }
 );
 
-// =========================================================
+// =====================================================
 // SERVER
-// =========================================================
+// =====================================================
 
 app.listen(
     PORT,
@@ -2598,27 +1831,59 @@ app.listen(
 
         console.log(`
 ╔════════════════════════════════════════════════════╗
-║             LC79 PATTERN AI 5.0                   ║
+║              LC79 PATTERN AI 6.0                  ║
 ╠════════════════════════════════════════════════════╣
-║ Core Algorithm : MAIN PATTERN 15                  ║
-║ Old Algorithms : OFF                              ║
-║ Pattern Length : 15                               ║
-║ Compare Min    : ${COMPARE_MIN}                              ║
-║ Samples        : ${PATTERN_SAMPLES.length}                              ║
-║ AI Learning    : ON                               ║
-║ Realtime SSE   : ON                               ║
-║ Poll           : 3 seconds                        ║
-╠════════════════════════════════════════════════════╣
-║ /lc79/tx/hu                                      ║
-║ /lc79/tx/md5                                     ║
-║ /api/lc79/hu/history                             ║
-║ /api/lc79/md5/history                            ║
-║ /api/lc79/hu/history/stream                     ║
-║ /api/lc79/md5/history/stream                    ║
-║ /api/lc79/patterns                               ║
-║ /api/lc79/pattern-memory                        ║
-║ /api/lc79/pattern/analyze                       ║
+║ Pattern chính : 15 phiên                          ║
+║ Pattern mẫu   : ${PATTERN_SAMPLES.length}                             ║
+║ So sánh       : >= ${COMPARE_MIN}/15                           ║
+║ AI Learning   : ON                                ║
+║ SSE History   : ON                                ║
+║ Polling       : 3 giây                            ║
+║ Realtime      : KHÔNG CẦN F5                     ║
 ╚════════════════════════════════════════════════════╝
 `);
     }
+);
+
+// =====================================================
+// AUTO POLLING
+// =====================================================
+
+let polling = false;
+
+async function autoUpdate() {
+
+    if (polling) {
+        return;
+    }
+
+    polling = true;
+
+    try {
+
+        await Promise.allSettled([
+            processType("hu"),
+            processType("md5")
+        ]);
+
+    } catch (error) {
+
+        console.error(
+            "[AUTO UPDATE]",
+            error.message
+        );
+
+    } finally {
+
+        polling = false;
+    }
+}
+
+// Chạy ngay khi server khởi động
+autoUpdate();
+
+// Sau đó tự cập nhật mỗi 3 giây
+setInterval(
+    autoUpdate,
+    POLL_INTERVAL
 );
