@@ -1,3 +1,4 @@
+"use strict";
 
 const express = require("express");
 const fs = require("fs");
@@ -5,7 +6,7 @@ const path = require("path");
 
 const app = express();
 
-const PORT = Number(process.env.PORT || 3001);
+const PORT = Number(process.env.PORT || 10000);
 const POLL_MS = 3000;
 
 const PATTERN_LENGTH = 20;
@@ -44,7 +45,7 @@ const PATHS = {
 };
 
 // ============================================================
-// UTILITIES (KHÔNG ĐỔI)
+// UTILITIES
 // ============================================================
 
 function loadJSON(file, fallback) {
@@ -107,10 +108,10 @@ function validPattern(pattern) {
 }
 
 // ============================================================
-// ========== THUẬT TOÁN DỰ ĐOÁN MỚI (THAY THẾ 11 MODEL CŨ) ==========
+// ========== THUẬT TOÁN DỰ ĐOÁN MỚI ==========================
 // ============================================================
 
-// Các hàm chuyển đổi
+// ---------- HÀM CHUYỂN ĐỔI ----------
 function historyToBinary(history) {
     if (!Array.isArray(history) || history.length === 0) return '';
     return history.map(h => (h.ket_qua === 'TAI' || h.ket_qua === 'Tài') ? '1' : '0').join('');
@@ -136,17 +137,55 @@ function tailStreakLength(binaryString) {
     return length;
 }
 
-// ------------------ CÁC MÔ HÌNH CON (sửa lỗi) ------------------
+// ---------- CÁC MÔ HÌNH CON ----------
+function analyzeBet(fullHistory, recentHistory, recentArray) {
+    const n = recentHistory.length;
+    if (n < 3) return { confidence: 0 };
+    const lastChar = recentHistory[n - 1];
+    const length = tailStreakLength(recentHistory);
+    if (length >= 3) {
+        const prediction = inverseBinaryToLabel(lastChar);
+        const confidence = Math.min(75, 60 + length * 3) / 100;
+        return { prediction, confidence, pattern_note: `Cầu bệt ${length} phiên ${binaryToLabel(lastChar)}, dự đoán đảo chiều` };
+    }
+    return { confidence: 0 };
+}
+
 function analyzeCau11(fullHistory, recentHistory, recentArray) {
     const n = recentHistory.length;
     if (n < 6) return { confidence: 0 };
-    const last5 = recentHistory.slice(-5); // chuỗi
-    // Chuyển thành mảng để dùng every
+    const last5 = recentHistory.slice(-5);
     const arr = last5.split('');
     const isAlternate = arr.every((c, i) => i === 0 || c !== arr[i - 1]);
     if (isAlternate) {
         const lastChar = recentHistory[n - 1];
         return { prediction: inverseBinaryToLabel(lastChar), confidence: 0.72, pattern_note: 'Cầu 1-1 (xen kẽ), tiếp tục chu kỳ' };
+    }
+    return { confidence: 0 };
+}
+
+function analyzeCau22(fullHistory, recentHistory, recentArray) {
+    const n = recentHistory.length;
+    if (n < 8) return { confidence: 0 };
+    const last8 = recentHistory.slice(-8);
+    let nextBinary = null;
+    if (last8 === '00110011') nextBinary = '0';
+    else if (last8 === '11001100') nextBinary = '1';
+    if (nextBinary !== null) {
+        return { prediction: binaryToLabel(nextBinary), confidence: 0.78, pattern_note: 'Cầu 2-2 (AA BB AA BB), tiếp tục chu kỳ' };
+    }
+    return { confidence: 0 };
+}
+
+function analyzeCau33(fullHistory, recentHistory, recentArray) {
+    const n = recentHistory.length;
+    if (n < 12) return { confidence: 0 };
+    const last12 = recentHistory.slice(-12);
+    let nextBinary = null;
+    if (last12 === '000111000111') nextBinary = '0';
+    else if (last12 === '111000111000') nextBinary = '1';
+    if (nextBinary !== null) {
+        return { prediction: binaryToLabel(nextBinary), confidence: 0.82, pattern_note: 'Cầu 3-3 (AAA BBB AAA BBB), tiếp tục chu kỳ' };
     }
     return { confidence: 0 };
 }
@@ -160,6 +199,19 @@ function analyzeCauABAB(fullHistory, recentHistory, recentArray) {
     if (isCycle2) {
         const nextBinary = recentHistory[n - 2];
         return { prediction: binaryToLabel(nextBinary), confidence: 0.75, pattern_note: 'Cầu ABAB (chu kỳ 2)' };
+    }
+    return { confidence: 0 };
+}
+
+function analyzeCauAABB(fullHistory, recentHistory, recentArray) {
+    const n = recentHistory.length;
+    if (n < 8) return { confidence: 0 };
+    const last8 = recentHistory.slice(-8);
+    if (last8 === '00110011') {
+        return { prediction: 'Xỉu', confidence: 0.76, pattern_note: 'Cầu AABB (00 11 00 11), tiếp tục chu kỳ' };
+    }
+    if (last8 === '11001100') {
+        return { prediction: 'Tài', confidence: 0.76, pattern_note: 'Cầu AABB (11 00 11 00), tiếp tục chu kỳ' };
     }
     return { confidence: 0 };
 }
@@ -431,7 +483,7 @@ function analyzeWavelet(fullHistory, recentHistory, recentArray) {
     return { confidence: 0 };
 }
 
-// ------------------ FALLBACK ------------------
+// ---------- FALLBACK ----------
 function generateFallbackPrediction(recentHistory, currentResult) {
     const historyString = historyToBinary(recentHistory);
     const n = historyString.length;
@@ -478,7 +530,7 @@ function generateFallbackPrediction(recentHistory, currentResult) {
     };
 }
 
-// ------------------ DỰ ĐOÁN CHÍNH ------------------
+// ---------- DỰ ĐOÁN CHÍNH ----------
 function predictNextAdvancedPro(currentResult, history) {
     if (!Array.isArray(history)) history = [];
     if (history.length < 15) {
@@ -620,7 +672,7 @@ function ensureEngine(engine, type) {
 }
 
 // ============================================================
-// LOAD ENGINES (GIỮ NGUYÊN)
+// LOAD ENGINES
 // ============================================================
 
 const engines = {
@@ -637,7 +689,7 @@ if (!Array.isArray(histories.hu)) histories.hu = [];
 if (!Array.isArray(histories.md5)) histories.md5 = [];
 
 // ============================================================
-// SOURCE CACHE, PENDING, SSE (GIỮ NGUYÊN)
+// SOURCE CACHE, PENDING, SSE
 // ============================================================
 
 const sourceHistory = { hu: [], md5: [] };
@@ -654,7 +706,7 @@ function sendSSE(type, event, data) {
 }
 
 // ============================================================
-// NORMALIZE SOURCE (GIỮ NGUYÊN)
+// NORMALIZE SOURCE
 // ============================================================
 
 function normalizeSessions(json) {
@@ -680,7 +732,7 @@ function normalizeSessions(json) {
 }
 
 // ============================================================
-// FETCH (GIỮ NGUYÊN)
+// FETCH
 // ============================================================
 
 async function fetchSource(type) {
@@ -699,7 +751,7 @@ async function fetchSource(type) {
 }
 
 // ============================================================
-// PATTERN FUNCTIONS (GIỮ NGUYÊN)
+// PATTERN FUNCTIONS
 // ============================================================
 
 function buildPattern(sessions, length = PATTERN_LENGTH) {
@@ -922,7 +974,7 @@ function analyze(type, sessions) {
 }
 
 // ============================================================
-// PENDING, SETTLE, PERFORMANCE (GIỮ NGUYÊN)
+// PENDING, SETTLE, PERFORMANCE
 // ============================================================
 
 function addPending(type, phien, prediction) {
@@ -989,7 +1041,7 @@ function updatePerformance(type, phien, actual) {
 }
 
 // ============================================================
-// PROCESS TYPE (GIỮ NGUYÊN)
+// PROCESS TYPE
 // ============================================================
 
 async function processType(type) {
@@ -1045,7 +1097,7 @@ async function processType(type) {
 }
 
 // ============================================================
-// API ENDPOINTS (GIỮ NGUYÊN)
+// API ENDPOINTS
 // ============================================================
 
 app.get("/lc79/tx/hu", async (req, res) => {
@@ -1183,6 +1235,8 @@ app.get("/", (req, res) => {
         engine: "LC79 ULTRA V23",
         pattern: PATTERN_LENGTH,
         compare: TOP_PATTERN_SAMPLES,
+        hu: { isolated: true, source: SOURCES.hu },
+        md5: { isolated: true, source: SOURCES.md5 },
         learning: true,
         realtime: "SSE",
         polling: `${POLL_MS}ms`
