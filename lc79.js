@@ -17,30 +17,21 @@ const SOURCE_API = {
     md5: "https://wtxmd52.tele68.com/v1/txmd5/sessions"
 };
 
-const DATA_DIR = path.join(__dirname, "data");
-
-const HISTORY_FILE =
-    path.join(DATA_DIR, "evaluation-history.json");
-
-const AI_FILE =
-    path.join(DATA_DIR, "ai-memory.json");
-
-const PATTERN_FILE =
-    path.join(DATA_DIR, "pattern-memory.json");
-
 const POLL_INTERVAL = 3000;
 
+const PATTERN_LENGTH = 15;
+const COMPARE_MIN = 10;
+
 const MAX_SOURCE_HISTORY = 200;
-const MAX_PATTERN_HISTORY = 15;
+const MAX_PATTERN_MEMORY = 5000;
 const MAX_EVALUATION_HISTORY = 100;
 
-const COMPARE_LENGTH = 5;
-
-const MIN_ANALYSIS_HISTORY = 15;
-
 // =========================================================
-// INIT DATA
+// DATA
 // =========================================================
+
+const DATA_DIR =
+    path.join(__dirname, "data");
 
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, {
@@ -48,29 +39,98 @@ if (!fs.existsSync(DATA_DIR)) {
     });
 }
 
+const AI_FILE =
+    path.join(
+        DATA_DIR,
+        "pattern-ai.json"
+    );
+
+const HISTORY_FILE =
+    path.join(
+        DATA_DIR,
+        "history.json"
+    );
+
+const savedAI =
+    loadJSON(
+        AI_FILE,
+        {
+            tx: {},
+            md5: {}
+        }
+    );
+
+const savedHistory =
+    loadJSON(
+        HISTORY_FILE,
+        {
+            tx: [],
+            md5: []
+        }
+    );
+
+const patternMemory = {
+    tx:
+        normalizePatternMemory(
+            savedAI.tx
+        ),
+
+    md5:
+        normalizePatternMemory(
+            savedAI.md5
+        )
+};
+
+const evaluationHistory = {
+    tx:
+        Array.isArray(savedHistory.tx)
+            ? savedHistory.tx
+            : [],
+
+    md5:
+        Array.isArray(savedHistory.md5)
+            ? savedHistory.md5
+            : []
+};
+
+const sourceHistory = {
+    tx: [],
+    md5: []
+};
+
+const pendingPredictions = {
+    tx: new Map(),
+    md5: new Map()
+};
+
+const clients = {
+    tx: new Set(),
+    md5: new Set()
+};
+
 // =========================================================
-// JSON STORAGE
+// JSON
 // =========================================================
 
 function loadJSON(file, fallback) {
+
     try {
+
         if (!fs.existsSync(file)) {
             return fallback;
         }
 
-        const data =
+        return JSON.parse(
             fs.readFileSync(
                 file,
                 "utf8"
-            );
-
-        return JSON.parse(data);
+            )
+        );
 
     } catch (error) {
 
         console.error(
-            "[LOAD]",
-            file,
+            "[JSON LOAD]",
             error.message
         );
 
@@ -79,6 +139,7 @@ function loadJSON(file, fallback) {
 }
 
 function saveJSON(file, data) {
+
     try {
 
         fs.writeFileSync(
@@ -94,186 +155,73 @@ function saveJSON(file, data) {
     } catch (error) {
 
         console.error(
-            "[SAVE]",
-            file,
+            "[JSON SAVE]",
             error.message
         );
     }
 }
 
 // =========================================================
-// MEMORY
+// NORMALIZE PATTERN MEMORY
 // =========================================================
 
-const sourceHistory = {
-    tx: [],
-    md5: []
-};
+function normalizePatternMemory(data) {
 
-let evaluationHistory =
-    loadJSON(
-        HISTORY_FILE,
-        {
-            tx: [],
-            md5: []
-        }
-    );
-
-const pendingPredictions = {
-    tx: new Map(),
-    md5: new Map()
-};
-
-const sseClients = {
-    tx: new Set(),
-    md5: new Set()
-};
-
-// =========================================================
-// MODEL MEMORY
-// =========================================================
-
-const MODEL_NAMES = [
-    "streak",
-    "alternating",
-    "markov1",
-    "markov2",
-    "markov3",
-    "ngram3",
-    "ngram4",
-    "ngram5",
-    "ngram6",
-    "pattern15",
-    "similarity",
-    "transform",
-    "runLength",
-    "transition",
-    "recency",
-    "balance",
-    "momentum",
-    "reversal",
-    "cycle",
-    "template",
-    "weightedPattern",
-    "ensemble",
-    "calibration",
-    "consensus"
-];
-
-function createModelMemory() {
-
-    const memory = {};
-
-    for (
-        const name of MODEL_NAMES
-    ) {
-
-        memory[name] = {
-            weight: 1,
-            wins: 0,
-            losses: 0,
-            total: 0
-        };
+    if (!data || typeof data !== "object") {
+        return {};
     }
 
-    return memory;
-}
-
-function normalizeModelMemory(memory) {
-
-    const result =
-        createModelMemory();
-
-    if (!memory) {
-        return result;
-    }
+    const result = {};
 
     for (
-        const name of MODEL_NAMES
+        const [pattern, value]
+        of Object.entries(data)
     ) {
 
-        if (!memory[name]) {
+        if (
+            typeof pattern !== "string" ||
+            pattern.length !== PATTERN_LENGTH ||
+            !/^[TX]+$/.test(pattern)
+        ) {
             continue;
         }
 
-        result[name] = {
+        result[pattern] = {
 
-            weight:
-                Number(
-                    memory[name].weight
-                ) || 1,
+            pattern,
+
+            tai:
+                Number(value.tai) || 0,
+
+            xiu:
+                Number(value.xiu) || 0,
 
             wins:
-                Number(
-                    memory[name].wins
-                ) || 0,
+                Number(value.wins) || 0,
 
             losses:
-                Number(
-                    memory[name].losses
-                ) || 0,
+                Number(value.losses) || 0,
+
+            weight:
+                Number(value.weight) > 0
+                    ? Number(value.weight)
+                    : 1,
 
             total:
-                Number(
-                    memory[name].total
-                ) || 0
+                Number(value.total) || 0
         };
     }
 
     return result;
 }
 
-const savedAI =
-    loadJSON(
-        AI_FILE,
-        {}
-    );
-
-const aiMemory = {
-    tx:
-        normalizeModelMemory(
-            savedAI.tx
-        ),
-
-    md5:
-        normalizeModelMemory(
-            savedAI.md5
-        )
-};
-
 // =========================================================
-// PATTERN MEMORY
-// =========================================================
-
-const savedPatterns =
-    loadJSON(
-        PATTERN_FILE,
-        {}
-    );
-
-const patternMemory = {
-    tx:
-        Array.isArray(
-            savedPatterns.tx
-        )
-            ? savedPatterns.tx
-            : [],
-
-    md5:
-        Array.isArray(
-            savedPatterns.md5
-        )
-            ? savedPatterns.md5
-            : []
-};
-
-// =========================================================
-// RESULT NORMALIZATION
+// RESULT
 // =========================================================
 
 function normalizeResult(value) {
 
-    if (!value) {
+    if (value === null || value === undefined) {
         return null;
     }
 
@@ -315,7 +263,7 @@ function displayResult(value) {
     return "Không rõ";
 }
 
-function txValue(value) {
+function toTX(value) {
 
     return normalizeResult(value) ===
         "TAI"
@@ -324,10 +272,29 @@ function txValue(value) {
 }
 
 // =========================================================
-// SOURCE FETCH
+// CLAMP
 // =========================================================
 
-async function fetchSource(url) {
+function clamp(
+    value,
+    min,
+    max
+) {
+
+    return Math.max(
+        min,
+        Math.min(
+            max,
+            value
+        )
+    );
+}
+
+// =========================================================
+// SOURCE API
+// =========================================================
+
+async function fetchSource(type) {
 
     const controller =
         new AbortController();
@@ -342,7 +309,7 @@ async function fetchSource(url) {
 
         const response =
             await fetch(
-                url,
+                SOURCE_API[type],
                 {
                     method: "GET",
 
@@ -351,7 +318,7 @@ async function fetchSource(url) {
                             "application/json",
 
                         "User-Agent":
-                            "Mozilla/5.0 LC79-AI"
+                            "LC79-Pattern-AI/1.0"
                     },
 
                     signal:
@@ -375,7 +342,7 @@ async function fetchSource(url) {
 }
 
 // =========================================================
-// NORMALIZE SOURCE
+// NORMALIZE SESSIONS
 // =========================================================
 
 function normalizeSessions(json) {
@@ -409,8 +376,11 @@ function normalizeSessions(json) {
 
                 point =
                     dices.reduce(
-                        (a, b) =>
-                            a + b,
+                        (
+                            total,
+                            value
+                        ) =>
+                            total + value,
                         0
                     );
             }
@@ -454,19 +424,19 @@ function normalizeSessions(json) {
 }
 
 // =========================================================
-// BUILD PATTERN
+// BUILD MAIN PATTERN
 // =========================================================
 
 function buildPattern(
     history,
-    length = MAX_PATTERN_HISTORY
+    length = PATTERN_LENGTH
 ) {
 
     return history
         .slice(-length)
         .map(
             item =>
-                txValue(
+                toTX(
                     item.ket_qua
                 )
         )
@@ -474,475 +444,43 @@ function buildPattern(
 }
 
 // =========================================================
-// LAST RESULT
+// VALID PATTERN
 // =========================================================
 
-function lastResult(history) {
+function validPattern(pattern) {
 
-    if (!history.length) {
-        return null;
-    }
-
-    return history[
-        history.length - 1
-    ].ket_qua;
-}
-
-// =========================================================
-// OPPOSITE
-// =========================================================
-
-function opposite(result) {
-
-    return result === "TAI"
-        ? "XIU"
-        : "TAI";
-}
-
-// =========================================================
-// SCORE NORMALIZATION
-// =========================================================
-
-function clamp(
-    value,
-    min,
-    max
-) {
-
-    return Math.max(
-        min,
-        Math.min(
-            max,
-            value
-        )
-    );
-}
-
-function confidenceFromCounts(
-    a,
-    b
-) {
-
-    const total =
-        a + b;
-
-    if (!total) {
-        return 50;
-    }
-
-    return clamp(
-        50 +
-        (
-            Math.max(a, b) /
-            total
-        ) * 45,
-        50,
-        95
+    return (
+        typeof pattern === "string" &&
+        pattern.length === PATTERN_LENGTH &&
+        /^[TX]+$/.test(pattern)
     );
 }
 
 // =========================================================
-// 1. STREAK
+// PATTERN SIMILARITY
 // =========================================================
 
-function algorithmStreak(
-    history
-) {
-
-    if (!history.length) {
-        return null;
-    }
-
-    const last =
-        lastResult(history);
-
-    let streak = 0;
-
-    for (
-        let i =
-            history.length - 1;
-
-        i >= 0;
-
-        i--
-    ) {
-
-        if (
-            history[i].ket_qua ===
-            last
-        ) {
-
-            streak++;
-
-        } else {
-
-            break;
-        }
-    }
-
-    let prediction;
-
-    if (
-        streak >= 4
-    ) {
-
-        prediction =
-            opposite(last);
-
-    } else {
-
-        prediction =
-            last;
-    }
-
-    return {
-
-        prediction,
-
-        confidence:
-            clamp(
-                55 +
-                streak * 6,
-                50,
-                94
-            )
-    };
-}
-
-// =========================================================
-// 2. ALTERNATING
-// =========================================================
-
-function algorithmAlternating(
-    pattern
-) {
-
-    const p =
-        pattern.slice(-8);
-
-    if (
-        p.length < 6
-    ) {
-        return null;
-    }
-
-    let alternating = true;
-
-    for (
-        let i = 1;
-        i < p.length;
-        i++
-    ) {
-
-        if (
-            p[i] ===
-            p[i - 1]
-        ) {
-
-            alternating = false;
-
-            break;
-        }
-    }
-
-    if (!alternating) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            p[p.length - 1] === "T"
-                ? "XIU"
-                : "TAI",
-
-        confidence: 86
-    };
-}
-
-// =========================================================
-// GENERIC N-GRAM
-// =========================================================
-
-function ngramAlgorithm(
-    history,
-    size
+function comparePattern(
+    main,
+    sample
 ) {
 
     if (
-        history.length <
-        size + 5
+        !main ||
+        !sample
     ) {
-        return null;
-    }
-
-    const arr =
-        history.map(
-            x =>
-                txValue(
-                    x.ket_qua
-                )
-        );
-
-    const current =
-        arr.slice(-size)
-            .join("");
-
-    let tai = 0;
-    let xiu = 0;
-
-    for (
-        let i = 0;
-        i <= arr.length - size - 1;
-        i++
-    ) {
-
-        const sample =
-            arr
-                .slice(
-                    i,
-                    i + size
-                )
-                .join("");
-
-        if (
-            sample !== current
-        ) {
-            continue;
-        }
-
-        const next =
-            arr[i + size];
-
-        if (
-            next === "T"
-        ) {
-
-            tai++;
-
-        } else {
-
-            xiu++;
-        }
-    }
-
-    if (
-        tai + xiu === 0
-    ) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            confidenceFromCounts(
-                tai,
-                xiu
-            )
-    };
-}
-
-// =========================================================
-// 3. MARKOV 1
-// =========================================================
-
-function algorithmMarkov1(
-    history
-) {
-
-    return ngramAlgorithm(
-        history,
-        1
-    );
-}
-
-// =========================================================
-// 4. MARKOV 2
-// =========================================================
-
-function algorithmMarkov2(
-    history
-) {
-
-    return ngramAlgorithm(
-        history,
-        2
-    );
-}
-
-// =========================================================
-// 5. MARKOV 3
-// =========================================================
-
-function algorithmMarkov3(
-    history
-) {
-
-    return ngramAlgorithm(
-        history,
-        3
-    );
-}
-
-// =========================================================
-// 6. NGRAM 3
-// =========================================================
-
-function algorithmNgram3(
-    history
-) {
-
-    return ngramAlgorithm(
-        history,
-        3
-    );
-}
-
-// =========================================================
-// 7. NGRAM 4
-// =========================================================
-
-function algorithmNgram4(
-    history
-) {
-
-    return ngramAlgorithm(
-        history,
-        4
-    );
-}
-
-// =========================================================
-// 8. NGRAM 5
-// =========================================================
-
-function algorithmNgram5(
-    history
-) {
-
-    return ngramAlgorithm(
-        history,
-        5
-    );
-}
-
-// =========================================================
-// 9. NGRAM 6
-// =========================================================
-
-function algorithmNgram6(
-    history
-) {
-
-    return ngramAlgorithm(
-        history,
-        6
-    );
-}
-
-// =========================================================
-// 10. PATTERN 15
-// =========================================================
-
-function algorithmPattern15(
-    history,
-    type
-) {
-
-    if (
-        history.length <
-        MAX_PATTERN_HISTORY + 1
-    ) {
-        return null;
-    }
-
-    const current =
-        buildPattern(
-            history.slice(
-                0,
-                history.length - 1
-            ),
-            MAX_PATTERN_HISTORY
-        );
-
-    const memory =
-        patternMemory[type];
-
-    let tai = 0;
-    let xiu = 0;
-
-    for (
-        const item of memory
-    ) {
-
-        if (
-            item.pattern !==
-            current
-        ) {
-            continue;
-        }
-
-        if (
-            item.next ===
-            "TAI"
-        ) {
-
-            tai++;
-
-        } else {
-
-            xiu++;
-        }
-    }
-
-    if (
-        tai + xiu === 0
-    ) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            confidenceFromCounts(
-                tai,
-                xiu
-            )
-    };
-}
-
-// =========================================================
-// SIMILARITY
-// =========================================================
-
-function similarity(
-    a,
-    b
-) {
-
-    if (!a || !b) {
-        return 0;
+        return {
+            same: 0,
+            similarity: 0,
+            distance: 15
+        };
     }
 
     const length =
         Math.min(
-            a.length,
-            b.length
+            main.length,
+            sample.length
         );
-
-    if (!length) {
-        return 0;
-    }
 
     let same = 0;
 
@@ -953,803 +491,142 @@ function similarity(
     ) {
 
         if (
-            a[i] ===
-            b[i]
+            main[i] ===
+            sample[i]
         ) {
             same++;
         }
     }
 
-    return (
-        same / length
-    ) * 100;
-}
-
-// =========================================================
-// 11. SIMILARITY
-// =========================================================
-
-function algorithmSimilarity(
-    history,
-    type
-) {
-
-    if (
-        history.length <
-        MAX_PATTERN_HISTORY
-    ) {
-        return null;
-    }
-
-    const current =
-        buildPattern(
-            history
-        );
-
-    const memory =
-        patternMemory[type];
-
-    let tai = 0;
-    let xiu = 0;
-
-    let best = 0;
-
-    for (
-        const item of memory
-    ) {
-
-        const score =
-            similarity(
-                current,
-                item.pattern
-            );
-
-        if (
-            score < 60
-        ) {
-            continue;
-        }
-
-        const weight =
-            Math.pow(
-                score / 100,
-                4
-            );
-
-        if (
-            item.next ===
-            "TAI"
-        ) {
-
-            tai += weight;
-
-        } else {
-
-            xiu += weight;
-        }
-
-        best =
-            Math.max(
-                best,
-                score
-            );
-    }
-
-    if (
-        tai + xiu === 0
-    ) {
-        return null;
-    }
+    const similarity =
+        (
+            same /
+            PATTERN_LENGTH
+        ) * 100;
 
     return {
 
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
+        same,
 
-        confidence:
-            clamp(
-                50 +
-                (
-                    Math.max(
-                        tai,
-                        xiu
-                    ) /
-                    (
-                        tai + xiu
-                    )
-                ) * 45 +
-                best * 0.03,
-                50,
-                97
-            )
+        similarity,
+
+        distance:
+            PATTERN_LENGTH - same
     };
 }
 
 // =========================================================
-// 12. TRANSFORM
+// POSITION WEIGHT
+// Phiên gần cuối quan trọng hơn
 // =========================================================
 
-function transformPattern(
-    pattern
-) {
+function positionWeight(index) {
 
-    return pattern
-        .split("")
-        .map(
-            x =>
-                x === "T"
-                    ? "X"
-                    : "T"
-        )
-        .join("");
-}
+    const weight =
+        0.75 +
+        (
+            index /
+            (PATTERN_LENGTH - 1)
+        ) * 0.75;
 
-function algorithmTransform(
-    history,
-    type
-) {
-
-    const current =
-        buildPattern(
-            history
-        );
-
-    const transformed =
-        transformPattern(
-            current
-        );
-
-    const memory =
-        patternMemory[type];
-
-    let tai = 0;
-    let xiu = 0;
-
-    for (
-        const item of memory
-    ) {
-
-        const score =
-            similarity(
-                transformed,
-                item.pattern
-            );
-
-        if (
-            score < 70
-        ) {
-            continue;
-        }
-
-        if (
-            item.next ===
-            "TAI"
-        ) {
-
-            tai += score;
-
-        } else {
-
-            xiu += score;
-        }
-    }
-
-    if (
-        tai + xiu === 0
-    ) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            confidenceFromCounts(
-                tai,
-                xiu
-            )
-    };
+    return weight;
 }
 
 // =========================================================
-// RUN LENGTH
+// PATTERN SCORE
 // =========================================================
 
-function getCurrentRun(
-    pattern
-) {
-
-    if (!pattern.length) {
-        return null;
-    }
-
-    const last =
-        pattern[
-            pattern.length - 1
-        ];
-
-    let count = 0;
-
-    for (
-        let i =
-            pattern.length - 1;
-
-        i >= 0;
-
-        i--
-    ) {
-
-        if (
-            pattern[i] ===
-            last
-        ) {
-
-            count++;
-
-        } else {
-
-            break;
-        }
-    }
-
-    return {
-
-        value: last,
-
-        length: count
-    };
-}
-
-// =========================================================
-// 13. RUN LENGTH
-// =========================================================
-
-function algorithmRunLength(
-    history
+function calculatePatternScore(
+    main,
+    sample
 ) {
 
     if (
-        history.length < 10
+        !validPattern(main) ||
+        !validPattern(sample)
     ) {
-        return null;
+        return 0;
     }
-
-    const pattern =
-        buildPattern(
-            history
-        );
-
-    const current =
-        getCurrentRun(
-            pattern
-        );
-
-    if (!current) {
-        return null;
-    }
-
-    let tai = 0;
-    let xiu = 0;
-
-    for (
-        let i = 1;
-        i < pattern.length - 1;
-        i++
-    ) {
-
-        let run = 1;
-
-        for (
-            let j = i - 1;
-            j >= 0;
-            j--
-        ) {
-
-            if (
-                pattern[j] ===
-                pattern[i]
-            ) {
-
-                run++;
-
-            } else {
-
-                break;
-            }
-        }
-
-        if (
-            run !==
-            current.length
-        ) {
-            continue;
-        }
-
-        if (
-            pattern[i + 1] ===
-            "T"
-        ) {
-
-            tai++;
-
-        } else {
-
-            xiu++;
-        }
-    }
-
-    if (
-        tai + xiu === 0
-    ) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            confidenceFromCounts(
-                tai,
-                xiu
-            )
-    };
-}
-
-// =========================================================
-// 14. TRANSITION MATRIX
-// =========================================================
-
-function algorithmTransition(
-    history
-) {
-
-    if (
-        history.length < 10
-    ) {
-        return null;
-    }
-
-    const matrix = {
-        T: {
-            T: 0,
-            X: 0
-        },
-        X: {
-            T: 0,
-            X: 0
-        }
-    };
-
-    const arr =
-        history.map(
-            x =>
-                txValue(
-                    x.ket_qua
-                )
-        );
-
-    for (
-        let i = 0;
-        i < arr.length - 1;
-        i++
-    ) {
-
-        matrix[
-            arr[i]
-        ][
-            arr[i + 1]
-        ]++;
-    }
-
-    const last =
-        arr[arr.length - 1];
-
-    const tai =
-        matrix[last].T;
-
-    const xiu =
-        matrix[last].X;
-
-    if (
-        tai + xiu === 0
-    ) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            confidenceFromCounts(
-                tai,
-                xiu
-            )
-    };
-}
-
-// =========================================================
-// 15. RECENCY
-// =========================================================
-
-function algorithmRecency(
-    history
-) {
-
-    const recent =
-        history.slice(-15);
-
-    if (
-        recent.length < 8
-    ) {
-        return null;
-    }
-
-    let tai = 0;
-    let xiu = 0;
-
-    for (
-        let i = 0;
-        i < recent.length;
-        i++
-    ) {
-
-        const weight =
-            i + 1;
-
-        if (
-            recent[i].ket_qua ===
-            "TAI"
-        ) {
-
-            tai += weight;
-
-        } else {
-
-            xiu += weight;
-        }
-    }
-
-    return {
-
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            confidenceFromCounts(
-                tai,
-                xiu
-            )
-    };
-}
-
-// =========================================================
-// 16. BALANCE
-// =========================================================
-
-function algorithmBalance(
-    history
-) {
-
-    const recent =
-        history.slice(-15);
-
-    if (
-        recent.length < 8
-    ) {
-        return null;
-    }
-
-    let tai = 0;
-    let xiu = 0;
-
-    for (
-        const item of recent
-    ) {
-
-        if (
-            item.ket_qua ===
-            "TAI"
-        ) {
-
-            tai++;
-
-        } else {
-
-            xiu++;
-        }
-    }
-
-    if (
-        tai === xiu
-    ) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            tai > xiu
-                ? "XIU"
-                : "TAI",
-
-        confidence:
-            clamp(
-                55 +
-                Math.abs(
-                    tai - xiu
-                ) * 3,
-                50,
-                82
-            )
-    };
-}
-
-// =========================================================
-// 17. MOMENTUM
-// =========================================================
-
-function algorithmMomentum(
-    history
-) {
-
-    if (
-        history.length < 10
-    ) {
-        return null;
-    }
-
-    const arr =
-        history
-            .slice(-10)
-            .map(
-                x =>
-                    txValue(
-                        x.ket_qua
-                    )
-            );
 
     let score = 0;
 
     for (
         let i = 0;
-        i < arr.length;
-        i++
-    ) {
-
-        const weight =
-            i + 1;
-
-        score +=
-            arr[i] === "T"
-                ? weight
-                : -weight;
-    }
-
-    if (
-        score === 0
-    ) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            score > 0
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            clamp(
-                50 +
-                Math.abs(score) /
-                3,
-                50,
-                90
-            )
-    };
-}
-
-// =========================================================
-// 18. REVERSAL
-// =========================================================
-
-function algorithmReversal(
-    history
-) {
-
-    const pattern =
-        buildPattern(
-            history
-        );
-
-    if (
-        pattern.length < 10
-    ) {
-        return null;
-    }
-
-    const last =
-        pattern[
-            pattern.length - 1
-        ];
-
-    let same = 0;
-    let oppositeCount = 0;
-
-    for (
-        let i = 0;
-        i < pattern.length - 1;
+        i < PATTERN_LENGTH;
         i++
     ) {
 
         if (
-            pattern[i] ===
-            last
+            main[i] ===
+            sample[i]
         ) {
 
-            same++;
-
-            if (
-                pattern[i + 1] &&
-                pattern[i + 1] !==
-                last
-            ) {
-
-                oppositeCount++;
-            }
+            score +=
+                positionWeight(i);
         }
     }
 
-    if (!same) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            oppositeCount >=
-            same / 2
-                ? opposite(
-                    last === "T"
-                        ? "TAI"
-                        : "XIU"
-                )
-                : last === "T"
-                    ? "TAI"
-                    : "XIU",
-
-        confidence:
-            clamp(
-                50 +
-                (
-                    oppositeCount /
-                    same
-                ) * 40,
-                50,
-                90
-            )
-    };
+    return score;
 }
 
 // =========================================================
-// 19. CYCLE DETECTOR
+// PATTERN SAMPLE GENERATOR
 // =========================================================
 
-function algorithmCycle(
-    history
+function generateRunPattern(
+    firstRun,
+    secondRun,
+    firstChar
 ) {
 
-    const pattern =
-        buildPattern(
-            history
-        );
+    let result = "";
 
-    if (
-        pattern.length < 12
-    ) {
-        return null;
-    }
+    let current =
+        firstChar;
 
-    let best = null;
-
-    for (
-        let size = 2;
-        size <= 6;
-        size++
+    while (
+        result.length <
+        PATTERN_LENGTH
     ) {
 
-        const unit =
-            pattern.slice(-size);
+        const count =
+            current === firstChar
+                ? firstRun
+                : secondRun;
 
-        let matches = 0;
+        result +=
+            current.repeat(count);
 
-        for (
-            let i = 0;
-            i <=
-            pattern.length -
-            size * 2;
-            i++
-        ) {
-
-            const sample =
-                pattern.slice(
-                    i,
-                    i + size
-                );
-
-            if (
-                sample === unit
-            ) {
-
-                matches++;
-            }
-        }
-
-        if (
-            matches >= 2
-        ) {
-
-            const next =
-                unit[
-                    unit.length - 1
-                ];
-
-            best = {
-
-                prediction:
-                    next === "T"
-                        ? "TAI"
-                        : "XIU",
-
-                confidence:
-                    clamp(
-                        55 +
-                        matches * 7,
-                        50,
-                        91
-                    )
-            };
-        }
+        current =
+            current === "T"
+                ? "X"
+                : "T";
     }
 
-    return best;
+    return result.slice(
+        0,
+        PATTERN_LENGTH
+    );
 }
 
-// =========================================================
-// SAMPLE PATTERN GENERATOR
-// =========================================================
+function generatePatternSamples() {
 
-function generateRunPatterns(
-    maxRun = 10
-) {
+    const samples =
+        new Set();
 
-    const patterns = [];
+    // -----------------------------------------
+    // 1-1 đến 10-10
+    // -----------------------------------------
 
     for (
         let a = 1;
-        a <= maxRun;
+        a <= 10;
         a++
     ) {
 
         for (
             let b = 1;
-            b <= maxRun;
+            b <= 10;
             b++
         ) {
 
@@ -1759,813 +636,293 @@ function generateRunPatterns(
                 continue;
             }
 
-            let pattern = "";
-
-            while (
-                pattern.length < 15
-            ) {
-
-                pattern +=
-                    "T".repeat(a);
-
-                if (
-                    pattern.length >=
-                    15
-                ) {
-                    break;
-                }
-
-                pattern +=
-                    "X".repeat(b);
-            }
-
-            patterns.push(
-                pattern.slice(0, 15)
+            samples.add(
+                generateRunPattern(
+                    a,
+                    b,
+                    "T"
+                )
             );
 
-            let reverse = "";
-
-            while (
-                reverse.length < 15
-            ) {
-
-                reverse +=
-                    "X".repeat(a);
-
-                if (
-                    reverse.length >=
-                    15
-                ) {
-                    break;
-                }
-
-                reverse +=
-                    "T".repeat(b);
-            }
-
-            patterns.push(
-                reverse.slice(0, 15)
+            samples.add(
+                generateRunPattern(
+                    a,
+                    b,
+                    "X"
+                )
             );
         }
     }
 
-    return patterns;
-}
+    // -----------------------------------------
+    // Alternating
+    // -----------------------------------------
 
-// =========================================================
-// STATIC PATTERNS
-// =========================================================
+    samples.add(
+        "TXTXTXTXTXTXTXT"
+    );
 
-const STATIC_PATTERNS = [
+    samples.add(
+        "XTXTXTXTXTXTXTX"
+    );
 
-    "TXTXTXTXTXTXTXT",
-    "XTXTXTXTXTXTXTX",
+    // -----------------------------------------
+    // Các pattern phổ biến
+    // -----------------------------------------
 
-    "TTXXTTXXTTXXTTX",
-    "XXTTXXTTXXTTXXT",
+    const predefined = [
 
-    "TXXTTXXTTXXTTXX",
-    "XTTXXTTXXTTXXTT",
+        "TTXXTTXXTTXXTTX",
+        "XXTTXXTTXXTTXXT",
 
-    "TTXTTXTTXTTXTTX",
-    "XXTXXTXXTXXTXXT",
+        "TXXTTXXTTXXTTXX",
+        "XTTXXTTXXTTXXTT",
 
-    "TTTXTTTXTTTXTTT",
-    "XXXTXXXTXXXTXXX",
+        "TTXTTXTTXTTXTTX",
+        "XXTXXTXXTXXTXXT",
 
-    "TXXXTXXXTXXXTXXX",
-    "XTTTXTTTXTTTXTT",
+        "TTTXTTTXTTTXTTT",
+        "XXXTXXXTXXXTXXX",
 
-    "TTTXXTTTXXTTTXX",
-    "XXXTTXXXTTXXXTT",
+        "TXXXTXXXTXXXTXXX",
+        "XTTTXTTTXTTTXTT",
 
-    "TTXXXTTXXXTTXXX",
-    "XXTTTXXTTTXXTTT",
+        "TTTXXTTTXXTTTXX",
+        "XXXTTXXXTTXXXTT",
 
-    "TTTTXTTTTXTTTTX",
-    "XXXXTXXXXTXXXXT",
+        "TTXXXTTXXXTTXXX",
+        "XXTTTXXTTTXXTTT",
 
-    "TXXXXTXXXXTXXXXT",
-    "XTTTTXTTTTXTTTTX",
+        "TTTTXTTTTXTTTTX",
+        "XXXXTXXXXTXXXXT",
 
-    "TTTTXXTTTTXXTTT",
-    "XXXXTTXXXXTTXXX",
+        "TXXXXTXXXXTXXXXT",
+        "XTTTTXTTTTXTTTTX",
 
-    "TTXXXXTTXXXXTTX",
-    "XXTTTTXXTTTTXXT",
+        "TTTTXXTTTTXXTTT",
+        "XXXXTTXXXXTTXXX",
 
-    "TTTTTXTTTTTXTTT",
-    "XXXXXTXXXXXTXXX",
+        "TTXXXXTTXXXXTTX",
+        "XXTTTTXXTTTTXXT",
 
-    "TXXXXXTXXXXXTXXX",
-    "XTTTTTXTTTTTXTT",
+        "TTTTTXTTTTTXTTT",
+        "XXXXXTXXXXXTXXX",
 
-    "TTTTTTXTTTTTTXT",
-    "XXXXXXTXXXXXXTX",
+        "TXXXXXTXXXXXTXXX",
+        "XTTTTTXTTTTTXTT",
 
-    "TXXXXXXTXXXXXXT",
-    "XTTTTTTXTTTTTTX",
+        "TTTTTTXTTTTTTXT",
+        "XXXXXXTXXXXXXTX",
 
-    "TTTTTTTXTTTTTTX",
-    "XXXXXXXTXXXXXXX",
+        "TXXXXXXTXXXXXXT",
+        "XTTTTTTXTTTTTTX",
 
-    "TXXXXXXXTXXXXXX",
-    "XTTTTTTTXTTTTTT",
+        "TTTTTTTXTTTTTTX",
+        "XXXXXXXTXXXXXXX",
 
-    "TTTTTTTTXTTTTTT",
-    "XXXXXXXXTXXXXXXX",
+        "TXXXXXXXTXXXXXX",
+        "XTTTTTTTXTTTTTT",
 
-    "TXXXXXXXXTXXXXXX",
-    "XTTTTTTTTXTTTTTT",
+        "TTTTTTTTXTTTTTT",
+        "XXXXXXXXTXXXXXXX",
 
-    "TTTTTTTTTXTTTTT",
-    "XXXXXXX XTXXXXXX".replace(
-        / /g,
-        ""
-    ),
+        "TXXXXXXXXTXXXXXX",
+        "XTTTTTTTTXTTTTTT",
 
-    "TTTTTTTTTTXTTTT",
-    "XXXXXXXXXXTXXXX",
+        "TTTTTTTTTXTTTTT",
+        "XXXXXXXXXTXXXXXX",
 
-    "TXTTXTTXTTXTTXX",
-    "XTTXTTXTTXTTXTT",
+        "TTTTTTTTTTXTTTT",
+        "XXXXXXXXXXTXXXX",
 
-    "TTXTXTTXTXTTXTX",
-    "XXTXTXXTXTXXTXT",
+        "TTXXTTXXTTXXTTX",
+        "XXTTXXTTXXTTXXT",
 
-    "TXTTXXTTXTXTTXX",
-    "XTTXXTXXTXTXXTT",
+        "TTTXXXTTTXXXTTT",
+        "XXXTTTXXXTTTXXX",
 
-    "TTXTXTXTXTXTXTT",
-    "XXTXT TXTXTXTXTT".replace(
-        / /g,
-        ""
-    ),
+        "TTTTXXXXTTTTXXX",
+        "XXXXTTTTXXXXTTT",
 
-    "TTXXXTXXTTXXTXT",
-    "XXTTTXTTXXTTXTX",
+        "TTXXXXTTTTXXTTT",
+        "XXTTTTXXXXTTXXX",
 
-    "TTXXTTTXXTTXXTX",
-    "XXTTXXXTTXXTTXT",
+        "TXTTXTTXTTXTTXX",
+        "XTTXTTXTTXTTXTT",
 
-    "TXXTXXTXXTXXTXX",
-    "XTTXTTXTTXTTXTT",
+        "TTXTXTTXTXTTXTX",
+        "XXTXTXXTXTXXTXT",
 
-    "TTTTTTTTTTTTTTX",
-    "XXXXXXXXXXXXXXT",
+        "TXTTXXTTXTXTTXX",
+        "XTTXXTXXTXTXXTT",
 
-    "TTTTTTTTTTTTTXT",
-    "XXXXXXXXXXXXXXTX",
+        "TTXTXTXTXTXTXTT",
+        "XXTXT XTXTXTXTT".replace(
+            / /g,
+            ""
+        ),
 
-    "TTXXTTXXTTXXTTX",
-    "XXTTXXTTXXTTXXT",
+        "TTXXXTXXTTXXTXT",
+        "XXTTTXTTXXTTXTX",
 
-    "TTTXXXTTTXXXTTT",
-    "XXXTTTXXXTTTXXX",
+        "TTXXTTTXXTTXXTX",
+        "XXTTXXXTTXXTTXT",
 
-    "TTTTXXXXTTTTXXX",
-    "XXXXTTTTXXXXTTT",
+        "TXXTXXTXXTXXTXX",
+        "XTTXTTXTTXTTXTT",
 
-    "TTXXXXTTTTXXTTT",
-    "XXTTTTXXXXTTXXX"
-];
+        "TTXXTXXXTTXXTTX",
+        "XXTTXTTTXXTTXXT",
 
-// =========================================================
-// BUILD 200+ PATTERNS
-// =========================================================
+        "TTXTTXXXTTXTTXX",
+        "XXTXXTTTX XTTXX".replace(
+            / /g,
+            ""
+        ),
 
-const SAMPLE_PATTERNS = [
-    ...new Set(
-        [
-            ...STATIC_PATTERNS,
-            ...generateRunPatterns(10)
-        ]
-        .filter(
-            p =>
-                typeof p === "string" &&
-                p.length === 15 &&
-                /^[TX]+$/.test(p)
-        )
-    )
-];
+        "TTTTTTTTTTTTTTX",
+        "XXXXXXXXXXXXXXT",
 
-// =========================================================
-// 20. TEMPLATE MATCHER
-// =========================================================
+        "TTTTTTTTTTTTTXT",
+        "XXXXXXXXXXXXXXTX",
 
-function algorithmTemplate(
-    history
-) {
-
-    const current =
-        buildPattern(
-            history
-        );
-
-    if (
-        current.length <
-        MAX_PATTERN_HISTORY
-    ) {
-        return null;
-    }
-
-    const recent =
-        current.slice(
-            -COMPARE_LENGTH
-        );
-
-    let tai = 0;
-    let xiu = 0;
+        "TTTTTTTTTTTTTXX",
+        "XXXXXXXXXXXXXTT"
+    ];
 
     for (
-        const sample
-        of SAMPLE_PATTERNS
+        const pattern
+        of predefined
     ) {
 
-        const sampleRecent =
-            sample.slice(
-                -COMPARE_LENGTH
-            );
+        if (
+            validPattern(pattern)
+        ) {
 
-        const score =
-            similarity(
-                recent,
-                sampleRecent
+            samples.add(
+                pattern
             );
+        }
+    }
+
+    return [
+        ...samples
+    ].filter(
+        validPattern
+    );
+}
+
+const PATTERN_SAMPLES =
+    generatePatternSamples();
+
+// =========================================================
+// SAMPLE PREDICTION
+// =========================================================
+//
+// Pattern mẫu phải có kết quả tiếp theo.
+// Với mẫu sinh sẵn, kết quả tiếp theo
+// được suy ra từ ký tự cuối theo dạng
+// đảo cầu / tiếp cầu.
+//
+
+function oppositeTX(value) {
+
+    return value === "T"
+        ? "X"
+        : "T";
+}
+
+function buildStaticSampleMemory() {
+
+    const result = [];
+
+    for (
+        const pattern
+        of PATTERN_SAMPLES
+    ) {
 
         if (
-            score < 60
+            !validPattern(pattern)
         ) {
             continue;
         }
 
-        const next =
-            sample[
-                sample.length - 1
+        // Không dùng random.
+        // Dự đoán mẫu dựa trên cấu trúc:
+        //
+        // Nếu 3+ ký tự cuối giống nhau:
+        // ưu tiên đảo.
+        //
+        // Nếu pattern xen kẽ:
+        // tiếp tục đảo.
+        //
+        // Còn lại:
+        // dùng ký tự cuối.
+
+        const last =
+            pattern[
+                pattern.length - 1
             ];
 
-        const weight =
-            Math.pow(
-                score / 100,
-                3
-            );
+        const last3 =
+            pattern.slice(-3);
+
+        let prediction;
 
         if (
-            next === "T"
-        ) {
-
-            tai += weight;
-
-        } else {
-
-            xiu += weight;
-        }
-    }
-
-    if (
-        tai + xiu === 0
-    ) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            confidenceFromCounts(
-                tai,
-                xiu
-            )
-    };
-}
-
-// =========================================================
-// 21. WEIGHTED PATTERN
-// =========================================================
-
-function algorithmWeightedPattern(
-    history,
-    type
-) {
-
-    const current =
-        buildPattern(
-            history
-        );
-
-    const memory =
-        patternMemory[type];
-
-    let tai = 0;
-    let xiu = 0;
-
-    for (
-        const item of memory
-    ) {
-
-        const score =
-            similarity(
-                current,
-                item.pattern
-            );
-
-        if (
-            score < 55
-        ) {
-            continue;
-        }
-
-        const historicalWeight =
-            Number(
-                item.weight
-            ) || 1;
-
-        const winRate =
-            Number(
-                item.winRate
-            ) || 50;
-
-        const weight =
+            last3.length === 3 &&
             (
-                score / 100
-            ) *
-            historicalWeight *
-            (
-                winRate / 50
-            );
-
-        if (
-            item.next ===
-            "TAI"
+                last3 === "TTT" ||
+                last3 === "XXX"
+            )
         ) {
 
-            tai += weight;
+            prediction =
+                oppositeTX(last);
 
         } else {
 
-            xiu += weight;
-        }
-    }
-
-    if (
-        tai + xiu === 0
-    ) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            confidenceFromCounts(
-                tai,
-                xiu
-            )
-    };
-}
-
-// =========================================================
-// 22. ENSEMBLE
-// =========================================================
-
-function algorithmEnsemble(
-    models,
-    type
-) {
-
-    const memory =
-        aiMemory[type];
-
-    let tai = 0;
-    let xiu = 0;
-
-    let active = 0;
-
-    for (
-        const name
-        of MODEL_NAMES
-    ) {
-
-        if (
-            name === "ensemble" ||
-            name === "calibration" ||
-            name === "consensus"
-        ) {
-            continue;
+            prediction =
+                oppositeTX(last);
         }
 
-        const model =
-            models[name];
-
-        if (
-            !model ||
-            !model.prediction
-        ) {
-            continue;
-        }
-
-        const modelMemory =
-            memory[name];
-
-        const score =
-            (
-                Number(
-                    model.confidence
-                ) || 50
-            ) *
-            (
-                Number(
-                    modelMemory.weight
-                ) || 1
-            );
-
-        if (
-            model.prediction ===
-            "TAI"
-        ) {
-
-            tai += score;
-
-        } else {
-
-            xiu += score;
-        }
-
-        active++;
-    }
-
-    if (!active) {
-        return null;
-    }
-
-    return {
-
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            clamp(
-                50 +
-                (
-                    Math.abs(
-                        tai - xiu
-                    ) /
-                    (
-                        tai + xiu
-                    )
-                ) * 47,
-                50,
-                97
-            )
-    };
-}
-
-// =========================================================
-// 23. CALIBRATION
-// =========================================================
-
-function algorithmCalibration(
-    models
-) {
-
-    let tai = 0;
-    let xiu = 0;
-
-    let confidenceTotal = 0;
-    let count = 0;
-
-    for (
-        const model
-        of Object.values(models)
-    ) {
-
-        if (
-            !model ||
-            !model.prediction
-        ) {
-            continue;
-        }
-
-        if (
-            model.prediction ===
-            "TAI"
-        ) {
-
-            tai++;
-
-        } else {
-
-            xiu++;
-        }
-
-        confidenceTotal +=
-            Number(
-                model.confidence
-            ) || 50;
-
-        count++;
-    }
-
-    if (!count) {
-        return null;
-    }
-
-    const agreement =
-        Math.max(
-            tai,
-            xiu
-        ) / count;
-
-    const avgConfidence =
-        confidenceTotal /
-        count;
-
-    return {
-
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            clamp(
-                avgConfidence *
-                0.65 +
-                agreement *
-                35,
-                50,
-                97
-            )
-    };
-}
-
-// =========================================================
-// 24. CONSENSUS
-// =========================================================
-
-function algorithmConsensus(
-    models
-) {
-
-    let tai = 0;
-    let xiu = 0;
-
-    for (
-        const model
-        of Object.values(models)
-    ) {
-
-        if (
-            !model ||
-            !model.prediction
-        ) {
-            continue;
-        }
-
-        if (
-            model.prediction ===
-            "TAI"
-        ) {
-
-            tai++;
-
-        } else {
-
-            xiu++;
-        }
-    }
-
-    const total =
-        tai + xiu;
-
-    if (!total) {
-        return null;
-    }
-
-    const agreement =
-        Math.max(
-            tai,
-            xiu
-        ) / total;
-
-    return {
-
-        prediction:
-            tai >= xiu
-                ? "TAI"
-                : "XIU",
-
-        confidence:
-            clamp(
-                50 +
-                agreement * 47,
-                50,
-                97
-            )
-    };
-}
-
-// =========================================================
-// RUN ALL
-// =========================================================
-
-function runAllAlgorithms(
-    history,
-    type
-) {
-
-    const pattern =
-        buildPattern(
-            history
-        );
-
-    const models = {};
-
-    models.streak =
-        algorithmStreak(
-            history
-        );
-
-    models.alternating =
-        algorithmAlternating(
-            pattern
-        );
-
-    models.markov1 =
-        algorithmMarkov1(
-            history
-        );
-
-    models.markov2 =
-        algorithmMarkov2(
-            history
-        );
-
-    models.markov3 =
-        algorithmMarkov3(
-            history
-        );
-
-    models.ngram3 =
-        algorithmNgram3(
-            history
-        );
-
-    models.ngram4 =
-        algorithmNgram4(
-            history
-        );
-
-    models.ngram5 =
-        algorithmNgram5(
-            history
-        );
-
-    models.ngram6 =
-        algorithmNgram6(
-            history
-        );
-
-    models.pattern15 =
-        algorithmPattern15(
-            history,
-            type
-        );
-
-    models.similarity =
-        algorithmSimilarity(
-            history,
-            type
-        );
-
-    models.transform =
-        algorithmTransform(
-            history,
-            type
-        );
-
-    models.runLength =
-        algorithmRunLength(
-            history
-        );
-
-    models.transition =
-        algorithmTransition(
-            history
-        );
-
-    models.recency =
-        algorithmRecency(
-            history
-        );
-
-    models.balance =
-        algorithmBalance(
-            history
-        );
-
-    models.momentum =
-        algorithmMomentum(
-            history
-        );
-
-    models.reversal =
-        algorithmReversal(
-            history
-        );
-
-    models.cycle =
-        algorithmCycle(
-            history
-        );
-
-    models.template =
-        algorithmTemplate(
-            history
-        );
-
-    models.weightedPattern =
-        algorithmWeightedPattern(
-            history,
-            type
-        );
-
-    models.ensemble =
-        algorithmEnsemble(
-            models,
-            type
-        );
-
-    models.calibration =
-        algorithmCalibration(
-            models
-        );
-
-    models.consensus =
-        algorithmConsensus(
-            models
-        );
-
-    return models;
-}
-
-// =========================================================
-// PATTERN MEMORY UPDATE
-// =========================================================
-
-function updatePatternMemory(
-    type,
-    history
-) {
-
-    if (
-        history.length <
-        MAX_PATTERN_HISTORY + 1
-    ) {
-        return;
-    }
-
-    const pattern =
-        buildPattern(
-            history.slice(
-                0,
-                history.length - 1
-            )
-        );
-
-    const actual =
-        history[
-            history.length - 1
-        ];
-
-    let item =
-        patternMemory[type]
-            .find(
-                x =>
-                    x.pattern ===
-                    pattern
-            );
-
-    if (!item) {
-
-        item = {
+        result.push({
 
             pattern,
 
-            next:
-                actual.ket_qua,
+            prediction:
+                prediction === "T"
+                    ? "TAI"
+                    : "XIU"
+        });
+    }
 
-            occurrences: 1,
+    return result;
+}
+
+const STATIC_SAMPLE_MEMORY =
+    buildStaticSampleMemory();
+
+// =========================================================
+// LEARNING MEMORY
+// =========================================================
+
+function getPatternMemory(
+    type,
+    pattern
+) {
+
+    if (
+        !patternMemory[type][pattern]
+    ) {
+
+        patternMemory[type][pattern] = {
+
+            pattern,
+
+            tai: 0,
+
+            xiu: 0,
 
             wins: 0,
 
@@ -2573,206 +930,607 @@ function updatePatternMemory(
 
             weight: 1,
 
-            winRate: 50
+            total: 0
         };
-
-        patternMemory[type]
-            .push(item);
-
-    } else {
-
-        item.occurrences++;
-
-        item.next =
-            actual.ket_qua;
     }
 
+    return patternMemory[type][pattern];
+}
+
+// =========================================================
+// BUILD HISTORICAL PATTERN SAMPLES
+// =========================================================
+//
+// Từ dữ liệu thật:
+// 15 phiên → phiên thứ 16
+//
+
+function learnHistoricalPatterns(
+    type,
+    history
+) {
+
     if (
-        patternMemory[type]
-            .length > 5000
+        history.length <
+        PATTERN_LENGTH + 1
+    ) {
+        return;
+    }
+
+    for (
+        let i =
+            PATTERN_LENGTH;
+
+        i < history.length;
+
+        i++
     ) {
 
-        patternMemory[type]
-            .splice(
-                0,
-                patternMemory[type]
-                    .length - 5000
+        const window =
+            history.slice(
+                i - PATTERN_LENGTH,
+                i
+            );
+
+        const pattern =
+            buildPattern(
+                window
+            );
+
+        const next =
+            history[i].ket_qua;
+
+        if (
+            !validPattern(pattern) ||
+            !next
+        ) {
+            continue;
+        }
+
+        const memory =
+            getPatternMemory(
+                type,
+                pattern
+            );
+
+        if (
+            next === "TAI"
+        ) {
+
+            memory.tai++;
+
+        } else {
+
+            memory.xiu++;
+        }
+
+        memory.total =
+            memory.tai +
+            memory.xiu;
+
+        const historicalRate =
+            Math.max(
+                memory.tai,
+                memory.xiu
+            ) /
+            memory.total;
+
+        memory.weight =
+            clamp(
+                0.5 +
+                historicalRate,
+                0.5,
+                1.8
             );
     }
 
-    saveJSON(
-        PATTERN_FILE,
-        patternMemory
-    );
+    trimPatternMemory(type);
+
+    saveAI();
 }
 
 // =========================================================
-// UPDATE PATTERN RESULT
+// LIMIT MEMORY
 // =========================================================
 
-function updatePatternLearning(
-    type,
-    prediction,
-    actual
-) {
+function trimPatternMemory(type) {
 
-    if (!prediction) {
-        return;
-    }
-
-    const memory =
-        patternMemory[type];
-
-    for (
-        const item of memory
-    ) {
-
-        if (
-            item.next !==
-            actual &&
-            item.next !==
-            prediction
-        ) {
-            continue;
-        }
-
-        if (
-            item.next ===
-            actual
-        ) {
-
-            item.wins++;
-
-            item.weight =
-                clamp(
-                    (
-                        Number(
-                            item.weight
-                        ) || 1
-                    ) + 0.03,
-                    0.2,
-                    5
-                );
-
-        } else {
-
-            item.losses++;
-
-            item.weight =
-                clamp(
-                    (
-                        Number(
-                            item.weight
-                        ) || 1
-                    ) - 0.015,
-                    0.2,
-                    5
-                );
-        }
-
-        const total =
-            item.wins +
-            item.losses;
-
-        item.winRate =
-            total
-                ? Number(
-                    (
-                        item.wins /
-                        total *
-                        100
-                    ).toFixed(2)
-                )
-                : 50;
-    }
-
-    saveJSON(
-        PATTERN_FILE,
-        patternMemory
-    );
-}
-
-// =========================================================
-// AI LEARNING
-// =========================================================
-
-function updateAILearning(
-    type,
-    pending,
-    actual
-) {
+    const keys =
+        Object.keys(
+            patternMemory[type]
+        );
 
     if (
-        !pending ||
-        !pending.models
+        keys.length <=
+        MAX_PATTERN_MEMORY
     ) {
         return;
     }
 
-    const memory =
-        aiMemory[type];
+    keys.sort(
+        (
+            a,
+            b
+        ) => {
+
+            return (
+                patternMemory[type][a].total -
+                patternMemory[type][b].total
+            );
+        }
+    );
+
+    const removeCount =
+        keys.length -
+        MAX_PATTERN_MEMORY;
 
     for (
-        const name
-        of MODEL_NAMES
+        let i = 0;
+        i < removeCount;
+        i++
     ) {
 
-        const model =
-            pending.models[name];
-
-        if (
-            !model ||
-            !model.prediction
-        ) {
-            continue;
-        }
-
-        const item =
-            memory[name];
-
-        if (!item) {
-            continue;
-        }
-
-        item.total++;
-
-        if (
-            model.prediction ===
-            actual
-        ) {
-
-            item.wins++;
-
-            item.weight =
-                clamp(
-                    item.weight +
-                    0.08,
-                    0.2,
-                    5
-                );
-
-        } else {
-
-            item.losses++;
-
-            item.weight =
-                clamp(
-                    item.weight -
-                    0.04,
-                    0.2,
-                    5
-                );
-        }
+        delete patternMemory[type][
+            keys[i]
+        ];
     }
+}
+
+// =========================================================
+// SAVE AI
+// =========================================================
+
+function saveAI() {
 
     saveJSON(
         AI_FILE,
-        aiMemory
+        patternMemory
     );
 }
 
 // =========================================================
-// EVALUATION OBJECT
+// MATCH SAMPLE
+// =========================================================
+
+function findPatternMatches(
+    type,
+    mainPattern
+) {
+
+    const matches = [];
+
+    // -----------------------------------------
+    // Historical learned patterns
+    // -----------------------------------------
+
+    for (
+        const item
+        of Object.values(
+            patternMemory[type]
+        )
+    ) {
+
+        if (
+            !validPattern(
+                item.pattern
+            )
+        ) {
+            continue;
+        }
+
+        const compare =
+            comparePattern(
+                mainPattern,
+                item.pattern
+            );
+
+        if (
+            compare.same <
+            COMPARE_MIN
+        ) {
+            continue;
+        }
+
+        const baseScore =
+            calculatePatternScore(
+                mainPattern,
+                item.pattern
+            );
+
+        const learnedWeight =
+            Number(
+                item.weight
+            ) || 1;
+
+        const historicalTotal =
+            Number(
+                item.total
+            ) || 0;
+
+        const historicalConfidence =
+            historicalTotal > 0
+
+                ? (
+                    Math.max(
+                        item.tai,
+                        item.xiu
+                    ) /
+                    historicalTotal
+                )
+
+                : 0.5;
+
+        const score =
+            baseScore *
+            learnedWeight *
+            (
+                0.75 +
+                historicalConfidence *
+                0.5
+            );
+
+        let prediction;
+
+        if (
+            item.tai >
+            item.xiu
+        ) {
+
+            prediction =
+                "TAI";
+
+        } else if (
+            item.xiu >
+            item.tai
+        ) {
+
+            prediction =
+                "XIU";
+
+        } else {
+
+            continue;
+        }
+
+        matches.push({
+
+            source:
+                "history",
+
+            pattern:
+                item.pattern,
+
+            prediction,
+
+            same:
+                compare.same,
+
+            similarity:
+                Number(
+                    compare.similarity.toFixed(2)
+                ),
+
+            score:
+                Number(
+                    score.toFixed(4)
+                ),
+
+            weight:
+                learnedWeight,
+
+            occurrences:
+                historicalTotal,
+
+            wins:
+                item.wins,
+
+            losses:
+                item.losses
+        });
+    }
+
+    // -----------------------------------------
+    // Static pattern samples
+    // -----------------------------------------
+
+    for (
+        const item
+        of STATIC_SAMPLE_MEMORY
+    ) {
+
+        const compare =
+            comparePattern(
+                mainPattern,
+                item.pattern
+            );
+
+        if (
+            compare.same <
+            COMPARE_MIN
+        ) {
+            continue;
+        }
+
+        const baseScore =
+            calculatePatternScore(
+                mainPattern,
+                item.pattern
+            );
+
+        const score =
+            baseScore *
+            0.65;
+
+        matches.push({
+
+            source:
+                "sample",
+
+            pattern:
+                item.pattern,
+
+            prediction:
+                item.prediction,
+
+            same:
+                compare.same,
+
+            similarity:
+                Number(
+                    compare.similarity.toFixed(2)
+                ),
+
+            score:
+                Number(
+                    score.toFixed(4)
+                ),
+
+            weight:
+                0.65,
+
+            occurrences:
+                0,
+
+            wins:
+                0,
+
+            losses:
+                0
+        });
+    }
+
+    matches.sort(
+        (
+            a,
+            b
+        ) =>
+            b.score -
+            a.score
+    );
+
+    return matches;
+}
+
+// =========================================================
+// PREDICT FROM MAIN PATTERN
+// =========================================================
+
+function predictFromPattern(
+    type,
+    mainPattern
+) {
+
+    if (
+        !validPattern(mainPattern)
+    ) {
+
+        return {
+
+            prediction:
+                null,
+
+            confidence:
+                0,
+
+            matches: [],
+
+            taiScore: 0,
+
+            xiuScore: 0
+        };
+    }
+
+    const matches =
+        findPatternMatches(
+            type,
+            mainPattern
+        );
+
+    // -----------------------------------------
+    // Không có pattern đủ giống
+    // -----------------------------------------
+
+    if (!matches.length) {
+
+        return {
+
+            prediction:
+                null,
+
+            confidence:
+                0,
+
+            matches: [],
+
+            taiScore: 0,
+
+            xiuScore: 0
+        };
+    }
+
+    // -----------------------------------------
+    // Chỉ lấy các pattern tốt nhất
+    // -----------------------------------------
+
+    const bestMatches =
+        matches.slice(
+            0,
+            100
+        );
+
+    let taiScore = 0;
+    let xiuScore = 0;
+
+    for (
+        const item
+        of bestMatches
+    ) {
+
+        if (
+            item.prediction ===
+            "TAI"
+        ) {
+
+            taiScore +=
+                item.score;
+
+        } else {
+
+            xiuScore +=
+                item.score;
+        }
+    }
+
+    const total =
+        taiScore +
+        xiuScore;
+
+    if (
+        total <= 0
+    ) {
+
+        return {
+
+            prediction:
+                null,
+
+            confidence:
+                0,
+
+            matches:
+                bestMatches,
+
+            taiScore: 0,
+
+            xiuScore: 0
+        };
+    }
+
+    const prediction =
+        taiScore >= xiuScore
+            ? "TAI"
+            : "XIU";
+
+    const winner =
+        Math.max(
+            taiScore,
+            xiuScore
+        );
+
+    const loser =
+        Math.min(
+            taiScore,
+            xiuScore
+        );
+
+    // -----------------------------------------
+    // Độ tin cậy
+    // -----------------------------------------
+
+    const dominance =
+        winner /
+        total;
+
+    const difference =
+        (
+            winner -
+            loser
+        ) /
+        total;
+
+    const bestSimilarity =
+        bestMatches.length
+            ? bestMatches[0].similarity
+            : 0;
+
+    let confidence =
+        50 +
+        difference * 35 +
+        (
+            bestSimilarity /
+            100
+        ) * 12;
+
+    // Có nhiều pattern đồng thuận
+    const samePredictionCount =
+        bestMatches.filter(
+            x =>
+                x.prediction ===
+                prediction
+        ).length;
+
+    if (
+        samePredictionCount >= 5
+    ) {
+
+        confidence += 2;
+    }
+
+    if (
+        samePredictionCount >= 10
+    ) {
+
+        confidence += 2;
+    }
+
+    confidence =
+        clamp(
+            confidence,
+            50,
+            98
+        );
+
+    return {
+
+        prediction,
+
+        confidence:
+            Number(
+                confidence.toFixed(2)
+            ),
+
+        matches:
+            bestMatches,
+
+        taiScore:
+            Number(
+                taiScore.toFixed(4)
+            ),
+
+        xiuScore:
+            Number(
+                xiuScore.toFixed(4)
+            ),
+
+        dominance:
+            Number(
+                dominance.toFixed(4)
+            )
+    };
+}
+
+// =========================================================
+// CREATE EVALUATION
 // =========================================================
 
 function createEvaluation(
@@ -2804,64 +1562,61 @@ function createEvaluation(
 }
 
 // =========================================================
-// SETTLE EVALUATION
+// SETTLE RESULT
 // =========================================================
 
-function settleEvaluation(
+function settlePrediction(
     type,
     session
 ) {
 
-    const list =
-        evaluationHistory[type];
+    const evaluation =
+        evaluationHistory[type]
+            .find(
+                x =>
+                    x.phien ===
+                    session.phien
+            );
 
-    const item =
-        list.find(
-            x =>
-                x.phien ===
-                session.phien
-        );
-
-    if (!item) {
+    if (!evaluation) {
         return false;
     }
 
     if (
-        item.ket_qua !==
+        evaluation.ket_qua !==
         "⌛ Chờ Kết Quả"
     ) {
         return false;
     }
 
-    item.ket_qua =
+    evaluation.ket_qua =
         displayResult(
             session.ket_qua
         );
 
-    item.xuc_xac =
+    evaluation.xuc_xac =
         session.xuc_xac;
 
-    item.tong =
+    evaluation.tong =
         session.tong;
 
-    const predicted =
+    const prediction =
         normalizeResult(
-            item.du_doan
+            evaluation.du_doan
         );
 
-    if (
-        predicted ===
-        session.ket_qua
-    ) {
+    const isWin =
+        prediction ===
+        session.ket_qua;
 
-        item.danh_gia =
-            "✅ Thắng";
+    evaluation.danh_gia =
+        isWin
+            ? "✅ Thắng"
+            : "❌ Thua";
 
-    } else {
-
-        item.danh_gia =
-            "❌ Thua";
-    }
+    // -----------------------------------------
+    // AI tự học pattern đã sử dụng
+    // -----------------------------------------
 
     const pending =
         pendingPredictions[type]
@@ -2871,21 +1626,167 @@ function settleEvaluation(
 
     if (pending) {
 
-        updateAILearning(
+        learnPredictionResult(
             type,
             pending,
-            session.ket_qua
-        );
-
-        updatePatternLearning(
-            type,
-            pending.prediction,
             session.ket_qua
         );
 
         pendingPredictions[type]
             .delete(
                 session.phien
+            );
+    }
+
+    saveJSON(
+        HISTORY_FILE,
+        evaluationHistory
+    );
+
+    return true;
+}
+
+// =========================================================
+// AI LEARNING AFTER RESULT
+// =========================================================
+
+function learnPredictionResult(
+    type,
+    pending,
+    actual
+) {
+
+    if (
+        !pending ||
+        !Array.isArray(
+            pending.matches
+        )
+    ) {
+        return;
+    }
+
+    for (
+        const match
+        of pending.matches
+    ) {
+
+        if (
+            match.source !==
+            "history"
+        ) {
+            continue;
+        }
+
+        const item =
+            patternMemory[type][
+                match.pattern
+            ];
+
+        if (!item) {
+            continue;
+        }
+
+        item.total++;
+
+        if (
+            match.prediction ===
+            actual
+        ) {
+
+            item.wins++;
+
+            item.weight =
+                clamp(
+                    item.weight +
+                    0.08,
+                    0.2,
+                    3
+                );
+
+        } else {
+
+            item.losses++;
+
+            item.weight =
+                clamp(
+                    item.weight -
+                    0.05,
+                    0.2,
+                    3
+                );
+        }
+
+        // -------------------------------------
+        // Tính lại xác suất lịch sử
+        // -------------------------------------
+
+        const total =
+            item.tai +
+            item.xiu;
+
+        if (total > 0) {
+
+            const rate =
+                Math.max(
+                    item.tai,
+                    item.xiu
+                ) /
+                total;
+
+            item.weight =
+                clamp(
+                    (
+                        item.weight +
+                        rate
+                    ) / 2,
+                    0.2,
+                    3
+                );
+        }
+    }
+
+    saveAI();
+}
+
+// =========================================================
+// UPDATE HISTORY
+// =========================================================
+
+function addEvaluation(
+    type,
+    phien,
+    prediction
+) {
+
+    const exists =
+        evaluationHistory[type]
+            .some(
+                x =>
+                    x.phien ===
+                    phien
+            );
+
+    if (exists) {
+        return false;
+    }
+
+    evaluationHistory[type]
+        .unshift(
+            createEvaluation(
+                phien,
+                prediction
+            )
+        );
+
+    if (
+        evaluationHistory[type]
+            .length >
+        MAX_EVALUATION_HISTORY
+    ) {
+
+        evaluationHistory[type]
+            .splice(
+                MAX_EVALUATION_HISTORY
             );
     }
 
@@ -2907,38 +1808,31 @@ function sendSSE(
     data
 ) {
 
-    const clients =
-        sseClients[type];
-
     const payload =
         JSON.stringify(data);
 
     for (
-        const client of clients
+        const res
+        of clients[type]
     ) {
 
         try {
 
-            client.write(
+            res.write(
                 `event: ${event}\n`
             );
 
-            client.write(
+            res.write(
                 `data: ${payload}\n\n`
             );
 
         } catch {
 
-            clients.delete(
-                client
-            );
+            clients[type]
+                .delete(res);
         }
     }
 }
-
-// =========================================================
-// SSE STREAM
-// =========================================================
 
 function setupSSE(
     req,
@@ -2953,7 +1847,7 @@ function setupSSE(
 
     res.setHeader(
         "Cache-Control",
-        "no-cache"
+        "no-cache, no-transform"
     );
 
     res.setHeader(
@@ -2967,12 +1861,14 @@ function setupSSE(
     );
 
     if (
-        res.flushHeaders
+        typeof res.flushHeaders ===
+        "function"
     ) {
+
         res.flushHeaders();
     }
 
-    sseClients[type].add(res);
+    clients[type].add(res);
 
     res.write(
         "retry: 3000\n\n"
@@ -2995,7 +1891,7 @@ function setupSSE(
                 try {
 
                     res.write(
-                        ": heartbeat\n\n"
+                        ": ping\n\n"
                     );
 
                 } catch {
@@ -3017,23 +1913,23 @@ function setupSSE(
                 heartbeat
             );
 
-            sseClients[type]
+            clients[type]
                 .delete(res);
         }
     );
 }
 
 // =========================================================
-// PROCESS API
+// PROCESS
 // =========================================================
 
-async function processAPI(
+async function processType(
     type
 ) {
 
     const json =
         await fetchSource(
-            SOURCE_API[type]
+            type
         );
 
     const sessions =
@@ -3044,287 +1940,113 @@ async function processAPI(
     if (!sessions.length) {
 
         throw new Error(
-            "API không trả dữ liệu hợp lệ"
+            "API không có dữ liệu"
         );
     }
 
-    const oldHistory =
+    const previous =
         sourceHistory[type];
+
+    const previousLatest =
+        previous.length
+            ? previous[
+                previous.length - 1
+            ]
+            : null;
 
     const latest =
         sessions[
             sessions.length - 1
         ];
 
-    const oldLatest =
-        oldHistory.length
-            ? oldHistory[
-                oldHistory.length - 1
-            ]
-            : null;
-
     sourceHistory[type] =
         sessions.slice(
             -MAX_SOURCE_HISTORY
         );
 
-    let historyChanged = false;
+    // =====================================================
+    // SETTLE CÁC PHIÊN CŨ
+    // =====================================================
 
-    // =====================================================
-    // SETTLE
-    // =====================================================
+    let changed = false;
 
     for (
         const session
         of sourceHistory[type]
     ) {
 
-        const changed =
-            settleEvaluation(
+        if (
+            settlePrediction(
                 type,
                 session
-            );
+            )
+        ) {
 
-        if (changed) {
-            historyChanged = true;
+            changed = true;
         }
     }
 
     // =====================================================
-    // NEW SESSION
+    // HỌC PATTERN TỪ DỮ LIỆU THẬT
     // =====================================================
 
-    const newSession =
-        !oldLatest ||
-        oldLatest.phien !==
-        latest.phien;
+    learnHistoricalPatterns(
+        type,
+        sourceHistory[type]
+    );
 
     // =====================================================
-    // ENOUGH HISTORY
+    // CHỈ PHÂN TÍCH KHI ĐỦ 15 PHIÊN
     // =====================================================
-
-    let result = null;
 
     if (
-        sourceHistory[type].length >=
-        MIN_ANALYSIS_HISTORY
+        sourceHistory[type].length <
+        PATTERN_LENGTH
     ) {
 
-        const history =
-            sourceHistory[type];
+        return null;
+    }
 
-        // Lưu pattern 15
-        updatePatternMemory(
-            type,
-            history
+    const mainPattern =
+        buildPattern(
+            sourceHistory[type]
         );
 
-        const pattern =
-            buildPattern(
-                history
-            );
+    if (
+        !validPattern(mainPattern)
+    ) {
 
-        const models =
-            runAllAlgorithms(
-                history,
-                type
-            );
+        return null;
+    }
 
-        // =================================================
-        // FINAL WEIGHTED VOTE
-        // =================================================
+    // =====================================================
+    // SO SÁNH PATTERN CHÍNH
+    // =====================================================
 
-        let tai = 0;
-        let xiu = 0;
+    const prediction =
+        predictFromPattern(
+            type,
+            mainPattern
+        );
 
-        const memory =
-            aiMemory[type];
+    const currentPhien =
+        latest.phien;
 
-        for (
-            const name
-            of MODEL_NAMES
-        ) {
+    const nextPhien =
+        currentPhien + 1;
 
-            const model =
-                models[name];
+    // =====================================================
+    // KHÔNG CÓ PATTERN ĐỦ ĐIỂM
+    // =====================================================
 
-            if (
-                !model ||
-                !model.prediction
-            ) {
-                continue;
-            }
+    if (
+        !prediction.prediction
+    ) {
 
-            const aiWeight =
-                memory[name]
-                    ? memory[name].weight
-                    : 1;
-
-            let confidence =
-                Number(
-                    model.confidence
-                ) || 50;
-
-            // ensemble/calibration/consensus
-            // được dùng nhưng giảm trọng số
-            if (
-                name === "ensemble"
-            ) {
-
-                confidence *= 0.75;
-
-            } else if (
-                name === "calibration"
-            ) {
-
-                confidence *= 0.80;
-
-            } else if (
-                name === "consensus"
-            ) {
-
-                confidence *= 0.85;
-            }
-
-            const vote =
-                confidence *
-                aiWeight;
-
-            if (
-                model.prediction ===
-                "TAI"
-            ) {
-
-                tai += vote;
-
-            } else {
-
-                xiu += vote;
-            }
-        }
-
-        const total =
-            tai + xiu;
-
-        let prediction =
-            tai >= xiu
-                ? "TAI"
-                : "XIU";
-
-        let confidence =
-            total
-                ? 50 +
-                (
-                    Math.abs(
-                        tai - xiu
-                    ) /
-                    total
-                ) * 47
-                : 50;
-
-        // =================================================
-        // CONSENSUS BONUS
-        // =================================================
-
-        let modelCount = 0;
-        let predictionCount = 0;
-
-        for (
-            const name
-            of MODEL_NAMES
-        ) {
-
-            const model =
-                models[name];
-
-            if (
-                !model ||
-                !model.prediction
-            ) {
-                continue;
-            }
-
-            modelCount++;
-
-            if (
-                model.prediction ===
-                prediction
-            ) {
-
-                predictionCount++;
-            }
-        }
-
-        if (
-            modelCount > 0
-        ) {
-
-            const consensus =
-                predictionCount /
-                modelCount;
-
-            confidence +=
-                consensus * 8;
-        }
-
-        // =================================================
-        // SAMPLE PATTERN 5
-        // =================================================
-
-        const current5 =
-            pattern.slice(
-                -COMPARE_LENGTH
-            );
-
-        let bestSample = 0;
-
-        for (
-            const sample
-            of SAMPLE_PATTERNS
-        ) {
-
-            const score =
-                similarity(
-                    current5,
-                    sample.slice(
-                        -COMPARE_LENGTH
-                    )
-                );
-
-            if (
-                score >
-                bestSample
-            ) {
-
-                bestSample =
-                    score;
-            }
-        }
-
-        if (
-            bestSample >= 90
-        ) {
-
-            confidence += 4;
-
-        } else if (
-            bestSample >= 80
-        ) {
-
-            confidence += 2;
-        }
-
-        confidence =
-            clamp(
-                confidence,
-                50,
-                97
-            );
-
-        result = {
+        return {
 
             phien:
-                latest.phien,
+                currentPhien,
 
             xuc_xac:
                 latest.xuc_xac,
@@ -3338,88 +2060,70 @@ async function processAPI(
                 ),
 
             phien_hien_tai:
-                latest.phien + 1,
+                nextPhien,
 
-            pattern,
+            pattern:
+                mainPattern,
 
             du_doan:
-                displayResult(
-                    prediction
-                ),
+                "Không rõ",
 
             do_tin_cay:
-                `${confidence.toFixed(2)}%`
+                "50.00%"
         };
-
-        // =================================================
-        // SAVE PREDICTION
-        // =================================================
-
-        const nextPhien =
-            latest.phien + 1;
-
-        if (
-            !pendingPredictions[type]
-                .has(nextPhien)
-        ) {
-
-            pendingPredictions[type]
-                .set(
-                    nextPhien,
-                    {
-                        prediction,
-
-                        models,
-
-                        pattern,
-
-                        confidence
-                    }
-                );
-
-            const exists =
-                evaluationHistory[type]
-                    .some(
-                        x =>
-                            x.phien ===
-                            nextPhien
-                    );
-
-            if (!exists) {
-
-                evaluationHistory[type]
-                    .unshift(
-                        createEvaluation(
-                            nextPhien,
-                            prediction
-                        )
-                    );
-
-                if (
-                    evaluationHistory[type]
-                        .length >
-                    MAX_EVALUATION_HISTORY
-                ) {
-
-                    evaluationHistory[type]
-                        .splice(
-                            MAX_EVALUATION_HISTORY
-                        );
-                }
-
-                saveJSON(
-                    HISTORY_FILE,
-                    evaluationHistory
-                );
-
-                historyChanged = true;
-            }
-        }
     }
 
     // =====================================================
-    // PUSH REALTIME
+    // LƯU PREDICTION CHO PHIÊN KẾ
     // =====================================================
+
+    if (
+        !pendingPredictions[type]
+            .has(nextPhien)
+    ) {
+
+        pendingPredictions[type]
+            .set(
+                nextPhien,
+                {
+
+                    prediction:
+                        prediction.prediction,
+
+                    mainPattern,
+
+                    matches:
+                        prediction.matches,
+
+                    confidence:
+                        prediction.confidence
+                }
+            );
+    }
+
+    // =====================================================
+    // HISTORY PENDING
+    // =====================================================
+
+    if (
+        addEvaluation(
+            type,
+            nextPhien,
+            prediction.prediction
+        )
+    ) {
+
+        changed = true;
+    }
+
+    // =====================================================
+    // REALTIME
+    // =====================================================
+
+    const newSession =
+        !previousLatest ||
+        previousLatest.phien !==
+        latest.phien;
 
     if (newSession) {
 
@@ -3427,8 +2131,9 @@ async function processAPI(
             type,
             "result",
             {
+
                 phien:
-                    latest.phien,
+                    currentPhien,
 
                 xuc_xac:
                     latest.xuc_xac,
@@ -3446,7 +2151,7 @@ async function processAPI(
 
     if (
         newSession ||
-        historyChanged
+        changed
     ) {
 
         sendSSE(
@@ -3456,11 +2161,44 @@ async function processAPI(
         );
     }
 
-    return result;
+    // =====================================================
+    // OUTPUT CHỈ 8 FIELD
+    // =====================================================
+
+    return {
+
+        phien:
+            currentPhien,
+
+        xuc_xac:
+            latest.xuc_xac,
+
+        tong:
+            latest.tong,
+
+        ket_qua:
+            displayResult(
+                latest.ket_qua
+            ),
+
+        phien_hien_tai:
+            nextPhien,
+
+        pattern:
+            mainPattern,
+
+        du_doan:
+            displayResult(
+                prediction.prediction
+            ),
+
+        do_tin_cay:
+            `${prediction.confidence.toFixed(2)}%`
+    };
 }
 
 // =========================================================
-// /lc79/tx/hu
+// API HU
 // =========================================================
 
 app.get(
@@ -3470,40 +2208,22 @@ app.get(
         try {
 
             const data =
-                await processAPI(
+                await processType(
                     "tx"
                 );
 
-            if (!data) {
-
-                return res.json({
-                    phien:
-                        null,
-
-                    xuc_xac:
-                        [],
-
-                    tong:
-                        null,
-
-                    ket_qua:
-                        "⌛ Chờ",
-
-                    phien_hien_tai:
-                        null,
-
-                    pattern:
-                        "",
-
-                    du_doan:
-                        "Không rõ",
-
-                    do_tin_cay:
-                        "50%"
-                });
-            }
-
-            res.json(data);
+            res.json(
+                data || {
+                    phien: null,
+                    xuc_xac: [],
+                    tong: null,
+                    ket_qua: "⌛ Chờ",
+                    phien_hien_tai: null,
+                    pattern: "",
+                    du_doan: "Không rõ",
+                    do_tin_cay: "50.00%"
+                }
+            );
 
         } catch (error) {
 
@@ -3524,7 +2244,7 @@ app.get(
 );
 
 // =========================================================
-// /lc79/tx/md5
+// API MD5
 // =========================================================
 
 app.get(
@@ -3534,40 +2254,22 @@ app.get(
         try {
 
             const data =
-                await processAPI(
+                await processType(
                     "md5"
                 );
 
-            if (!data) {
-
-                return res.json({
-                    phien:
-                        null,
-
-                    xuc_xac:
-                        [],
-
-                    tong:
-                        null,
-
-                    ket_qua:
-                        "⌛ Chờ",
-
-                    phien_hien_tai:
-                        null,
-
-                    pattern:
-                        "",
-
-                    du_doan:
-                        "Không rõ",
-
-                    do_tin_cay:
-                        "50%"
-                });
-            }
-
-            res.json(data);
+            res.json(
+                data || {
+                    phien: null,
+                    xuc_xac: [],
+                    tong: null,
+                    ket_qua: "⌛ Chờ",
+                    phien_hien_tai: null,
+                    pattern: "",
+                    du_doan: "Không rõ",
+                    do_tin_cay: "50.00%"
+                }
+            );
 
         } catch (error) {
 
@@ -3616,7 +2318,7 @@ app.get(
 );
 
 // =========================================================
-// HU SSE
+// HU REALTIME HISTORY
 // =========================================================
 
 app.get(
@@ -3632,7 +2334,7 @@ app.get(
 );
 
 // =========================================================
-// MD5 SSE
+// MD5 REALTIME HISTORY
 // =========================================================
 
 app.get(
@@ -3648,7 +2350,7 @@ app.get(
 );
 
 // =========================================================
-// PATTERN INFO
+// PATTERN SAMPLE API
 // =========================================================
 
 app.get(
@@ -3658,103 +2360,139 @@ app.get(
         res.json({
 
             total:
-                SAMPLE_PATTERNS.length,
+                PATTERN_SAMPLES.length,
 
             length:
-                15,
+                PATTERN_LENGTH,
 
             patterns:
-                SAMPLE_PATTERNS
+                PATTERN_SAMPLES
         });
     }
 );
 
 // =========================================================
-// AI INFO
+// PATTERN MEMORY API
 // =========================================================
 
 app.get(
-    "/api/lc79/ai",
+    "/api/lc79/pattern-memory",
     (req, res) => {
 
         res.json({
 
             tx:
-                aiMemory.tx,
+                Object.values(
+                    patternMemory.tx
+                ),
 
             md5:
-                aiMemory.md5,
-
-            models:
-                MODEL_NAMES.length,
-
-            pattern_samples:
-                SAMPLE_PATTERNS.length
+                Object.values(
+                    patternMemory.md5
+                )
         });
     }
 );
 
 // =========================================================
-// REALTIME POLLING
+// ANALYZE PATTERN
 // =========================================================
 
-let polling = false;
+app.get(
+    "/api/lc79/pattern/analyze",
+    async (req, res) => {
 
-async function realtimePoll() {
+        const type =
+            req.query.type === "md5"
+                ? "md5"
+                : "tx";
 
-    if (polling) {
-        return;
-    }
-
-    polling = true;
-
-    try {
-
-        await Promise.allSettled([
-
-            processAPI(
-                "tx"
-            ),
-
-            processAPI(
-                "md5"
+        const pattern =
+            String(
+                req.query.pattern || ""
             )
+                .toUpperCase()
+                .trim();
 
-        ]);
+        if (
+            !validPattern(pattern)
+        ) {
 
-    } catch (error) {
+            return res.status(400).json({
 
-        console.error(
-            "[POLL]",
-            error.message
-        );
+                error: true,
 
-    } finally {
+                message:
+                    `pattern phải đúng ${PATTERN_LENGTH} ký tự T/X`,
 
-        polling = false;
+                example:
+                    "TTXTTXXTXTTXXTX"
+            });
+        }
+
+        const prediction =
+            predictFromPattern(
+                type,
+                pattern
+            );
+
+        res.json({
+
+            pattern,
+
+            du_doan:
+                prediction.prediction
+                    ? displayResult(
+                        prediction.prediction
+                    )
+                    : "Không rõ",
+
+            do_tin_cay:
+                `${(
+                    prediction.confidence || 0
+                ).toFixed(2)}%`,
+
+            tai_score:
+                prediction.taiScore,
+
+            xiu_score:
+                prediction.xiuScore,
+
+            matches:
+                prediction.matches
+                    .slice(
+                        0,
+                        30
+                    )
+        });
     }
-}
-
-// =========================================================
-// START POLLING
-// =========================================================
-
-setTimeout(
-    () => {
-
-        realtimePoll();
-
-        setInterval(
-            realtimePoll,
-            POLL_INTERVAL
-        );
-
-    },
-    500
 );
 
 // =========================================================
-// ROOT
+// RESET AI
+// =========================================================
+
+app.post(
+    "/api/lc79/pattern-memory/reset",
+    (req, res) => {
+
+        patternMemory.tx = {};
+        patternMemory.md5 = {};
+
+        saveAI();
+
+        res.json({
+
+            success: true,
+
+            message:
+                "Đã reset Pattern AI"
+        });
+    }
+);
+
+// =========================================================
+// HEALTH
 // =========================================================
 
 app.get(
@@ -3767,31 +2505,31 @@ app.get(
                 "online",
 
             version:
-                "LC79 AI 4.0",
+                "LC79 Pattern AI 5.0",
+
+            algorithm:
+                "MAIN_PATTERN_15",
+
+            old_algorithms:
+                false,
+
+            pattern_length:
+                PATTERN_LENGTH,
+
+            compare_min:
+                COMPARE_MIN,
+
+            sample_patterns:
+                PATTERN_SAMPLES.length,
+
+            ai_learning:
+                true,
 
             realtime:
                 true,
 
             poll:
                 "3s",
-
-            pattern:
-                "15",
-
-            compare:
-                "5",
-
-            algorithms:
-                MODEL_NAMES.length,
-
-            pattern_samples:
-                SAMPLE_PATTERNS.length,
-
-            ai_learning:
-                true,
-
-            sse:
-                true,
 
             endpoints: {
 
@@ -3816,8 +2554,14 @@ app.get(
                 patterns:
                     "/api/lc79/patterns",
 
-                ai:
-                    "/api/lc79/ai"
+                pattern_memory:
+                    "/api/lc79/pattern-memory",
+
+                analyze:
+                    "/api/lc79/pattern/analyze",
+
+                reset:
+                    "/api/lc79/pattern-memory/reset"
             }
         });
     }
@@ -3844,35 +2588,6 @@ app.use(
 );
 
 // =========================================================
-// ERROR HANDLER
-// =========================================================
-
-app.use(
-    (err, req, res, next) => {
-
-        console.error(
-            "[SERVER ERROR]",
-            err
-        );
-
-        if (
-            res.headersSent
-        ) {
-
-            return next(err);
-        }
-
-        res.status(500).json({
-
-            error: true,
-
-            message:
-                "Internal Server Error"
-        });
-    }
-);
-
-// =========================================================
 // SERVER
 // =========================================================
 
@@ -3882,28 +2597,28 @@ app.listen(
     () => {
 
         console.log(`
-╔══════════════════════════════════════════════════════╗
-║                 LC79 AI 4.0                         ║
-╠══════════════════════════════════════════════════════╣
-║ PORT          : ${PORT}
-║ POLL          : 3 giây
-║ PATTERN       : 15 phiên
-║ SO SÁNH       : 5 phiên
-║ ALGORITHMS    : ${MODEL_NAMES.length}
-║ PATTERNS      : ${SAMPLE_PATTERNS.length}+
-║ AI LEARNING   : ON
-║ SSE REALTIME  : ON
-║ JSON MEMORY   : ON
-╠══════════════════════════════════════════════════════╣
-║ /lc79/tx/hu
-║ /lc79/tx/md5
-║ /api/lc79/hu/history
-║ /api/lc79/md5/history
-║ /api/lc79/hu/history/stream
-║ /api/lc79/md5/history/stream
-║ /api/lc79/patterns
-║ /api/lc79/ai
-╚══════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════╗
+║             LC79 PATTERN AI 5.0                   ║
+╠════════════════════════════════════════════════════╣
+║ Core Algorithm : MAIN PATTERN 15                  ║
+║ Old Algorithms : OFF                              ║
+║ Pattern Length : 15                               ║
+║ Compare Min    : ${COMPARE_MIN}                              ║
+║ Samples        : ${PATTERN_SAMPLES.length}                              ║
+║ AI Learning    : ON                               ║
+║ Realtime SSE   : ON                               ║
+║ Poll           : 3 seconds                        ║
+╠════════════════════════════════════════════════════╣
+║ /lc79/tx/hu                                      ║
+║ /lc79/tx/md5                                     ║
+║ /api/lc79/hu/history                             ║
+║ /api/lc79/md5/history                            ║
+║ /api/lc79/hu/history/stream                     ║
+║ /api/lc79/md5/history/stream                    ║
+║ /api/lc79/patterns                               ║
+║ /api/lc79/pattern-memory                        ║
+║ /api/lc79/pattern/analyze                       ║
+╚════════════════════════════════════════════════════╝
 `);
     }
 );
