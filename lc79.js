@@ -135,8 +135,8 @@ const PATTERN_TEMPLATES = {
         { name: "Cầu AABB X", pattern: "XXTTXXTT", action: "follow" },
         { name: "Cầu ABCABC", pattern: "TTXTTX", action: "follow" },
         { name: "Cầu ABCABC X", pattern: "XXTXXT", action: "follow" },
-        { name: "Cầu đảo chiều Tài", pattern: "TTTTX", action: "break" },
-        { name: "Cầu đảo chiều Xỉu", pattern: "XXXXT", action: "break" },
+        { name: "Cầu đảo chiều Tài", pattern: "TTTTX", action: "follow" },
+        { name: "Cầu đảo chiều Xỉu", pattern: "XXXXT", action: "follow" },
         { name: "Cầu 2-1-2", pattern: "TTXTT", action: "follow" },
         { name: "Cầu 2-1-2 X", pattern: "XXTXX", action: "follow" },
         { name: "Cầu 2-3-2", pattern: "TTXXXTT", action: "follow" },
@@ -147,8 +147,8 @@ const PATTERN_TEMPLATES = {
         { name: "Cầu gấp khúc X", pattern: "XTTXXT", action: "follow" },
         { name: "Cầu đồng pha Tài", pattern: "TXXTXX", action: "follow" },
         { name: "Cầu đồng pha Xỉu", pattern: "XTTXTT", action: "follow" },
-        { name: "Cầu đảo chiều sau 4 Tài", pattern: "TTTTT", action: "break" },
-        { name: "Cầu đảo chiều sau 4 Xỉu", pattern: "XXXXX", action: "break" },
+        { name: "Cầu đảo chiều sau 4 Tài", pattern: "TTTTT", action: "follow" },
+        { name: "Cầu đảo chiều sau 4 Xỉu", pattern: "XXXXX", action: "follow" },
     ],
     md5: [
         { name: "Cầu bệt Tài", pattern: "TTTTT", action: "follow" },
@@ -173,8 +173,8 @@ const PATTERN_TEMPLATES = {
         { name: "Cầu AABB X", pattern: "XXTTXXTT", action: "follow" },
         { name: "Cầu ABCABC", pattern: "TTXTTX", action: "follow" },
         { name: "Cầu ABCABC X", pattern: "XXTXXT", action: "follow" },
-        { name: "Cầu đảo chiều Tài", pattern: "TTTTX", action: "break" },
-        { name: "Cầu đảo chiều Xỉu", pattern: "XXXXT", action: "break" },
+        { name: "Cầu đảo chiều Tài", pattern: "TTTTX", action: "follow" },
+        { name: "Cầu đảo chiều Xỉu", pattern: "XXXXT", action: "follow" },
         { name: "Cầu 2-1-2", pattern: "TTXTT", action: "follow" },
         { name: "Cầu 2-1-2 X", pattern: "XXTXX", action: "follow" },
         { name: "Cầu 2-3-2", pattern: "TTXXXTT", action: "follow" },
@@ -185,8 +185,8 @@ const PATTERN_TEMPLATES = {
         { name: "Cầu gấp khúc X", pattern: "XTTXXT", action: "follow" },
         { name: "Cầu đồng pha Tài", pattern: "TXXTXX", action: "follow" },
         { name: "Cầu đồng pha Xỉu", pattern: "XTTXTT", action: "follow" },
-        { name: "Cầu đảo chiều sau 4 Tài", pattern: "TTTTT", action: "break" },
-        { name: "Cầu đảo chiều sau 4 Xỉu", pattern: "XXXXX", action: "break" },
+        { name: "Cầu đảo chiều sau 4 Tài", pattern: "TTTTT", action: "follow" },
+        { name: "Cầu đảo chiều sau 4 Xỉu", pattern: "XXXXX", action: "follow" },
     ]
 };
 
