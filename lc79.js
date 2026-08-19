@@ -121,11 +121,20 @@ const PATTERN_TEMPLATES = {
         { name: "Cầu 2-2 X", pattern: "XXTTXX", action: "follow" },
         { name: "Cầu 3-3", pattern: "TTTXXXTTT", action: "follow" },
         { name: "Cầu 3-3 X", pattern: "XXXTTTXXX", action: "follow" },
+        { name: "Cầu 4-4", pattern: "TTTTXXXXTTTT", action: "follow" },
+        { name: "Cầu 4-4 X", pattern: "XXXXTTTTXXXX", action: "follow" },
+        { name: "Cầu 5-5", pattern: "TTTTTXXXXX", action: "follow" },
+        { name: "Cầu 5-5 X", pattern: "XXXXXTTTTT", action: "follow" },
+        { name: "Cầu tam giác Tài", pattern: "TTXTTXTTX", action: "follow" },
+        { name: "Cầu tam giác Xỉu", pattern: "XXTXXTXXT", action: "follow" },
+        { name: "Cầu zigzag Tài", pattern: "TXXTTXTTX", action: "follow" },
+        { name: "Cầu zigzag Xỉu", pattern: "XTTXXTXXT", action: "follow" },
         { name: "Cầu ABAB", pattern: "TXTXTX", action: "follow" },
         { name: "Cầu ABAB X", pattern: "XTXTXT", action: "follow" },
         { name: "Cầu AABB", pattern: "TTXXTTXX", action: "follow" },
         { name: "Cầu AABB X", pattern: "XXTTXXTT", action: "follow" },
         { name: "Cầu ABCABC", pattern: "TTXTTX", action: "follow" },
+        { name: "Cầu ABCABC X", pattern: "XXTXXT", action: "follow" },
         { name: "Cầu đảo chiều Tài", pattern: "TTTTX", action: "break" },
         { name: "Cầu đảo chiều Xỉu", pattern: "XXXXT", action: "break" },
         { name: "Cầu 2-1-2", pattern: "TTXTT", action: "follow" },
@@ -150,11 +159,20 @@ const PATTERN_TEMPLATES = {
         { name: "Cầu 2-2 X", pattern: "XXTTXX", action: "follow" },
         { name: "Cầu 3-3", pattern: "TTTXXXTTT", action: "follow" },
         { name: "Cầu 3-3 X", pattern: "XXXTTTXXX", action: "follow" },
+        { name: "Cầu 4-4", pattern: "TTTTXXXXTTTT", action: "follow" },
+        { name: "Cầu 4-4 X", pattern: "XXXXTTTTXXXX", action: "follow" },
+        { name: "Cầu 5-5", pattern: "TTTTTXXXXX", action: "follow" },
+        { name: "Cầu 5-5 X", pattern: "XXXXXTTTTT", action: "follow" },
+        { name: "Cầu tam giác Tài", pattern: "TTXTTXTTX", action: "follow" },
+        { name: "Cầu tam giác Xỉu", pattern: "XXTXXTXXT", action: "follow" },
+        { name: "Cầu zigzag Tài", pattern: "TXXTTXTTX", action: "follow" },
+        { name: "Cầu zigzag Xỉu", pattern: "XTTXXTXXT", action: "follow" },
         { name: "Cầu ABAB", pattern: "TXTXTX", action: "follow" },
         { name: "Cầu ABAB X", pattern: "XTXTXT", action: "follow" },
         { name: "Cầu AABB", pattern: "TTXXTTXX", action: "follow" },
         { name: "Cầu AABB X", pattern: "XXTTXXTT", action: "follow" },
         { name: "Cầu ABCABC", pattern: "TTXTTX", action: "follow" },
+        { name: "Cầu ABCABC X", pattern: "XXTXXT", action: "follow" },
         { name: "Cầu đảo chiều Tài", pattern: "TTTTX", action: "break" },
         { name: "Cầu đảo chiều Xỉu", pattern: "XXXXT", action: "break" },
         { name: "Cầu 2-1-2", pattern: "TTXTT", action: "follow" },
@@ -190,7 +208,7 @@ function detectPattern(historyString, templates) {
                     name: template.name,
                     prediction: prediction,
                     action: template.action,
-                    confidence: 0.78,
+                    confidence: 0.82,
                     matchedPattern: pattern
                 };
             }
@@ -228,13 +246,13 @@ function tailStreakLength(str) {
 }
 
 // ============================================================
-// CÁC PHÂN TÍCH CON
+// CÁC PHÂN TÍCH CON (MỚI)
 // ============================================================
 
 function analyzeCycles(recentString) {
     const len = recentString.length;
     if (len < 8) return { confidence: 0 };
-    for (let cycle = 2; cycle <= Math.min(5, Math.floor(len / 2)); cycle++) {
+    for (let cycle = 2; cycle <= Math.min(6, Math.floor(len / 2)); cycle++) {
         let matches = 0;
         for (let i = len - 1; i >= cycle; i--) {
             if (recentString[i] === recentString[i - cycle]) matches++;
@@ -246,7 +264,7 @@ function analyzeCycles(recentString) {
                 const prediction = lastChar === "T" ? "Tài" : "Xỉu";
                 return {
                     prediction,
-                    confidence: Math.min(0.85, score + 0.1)
+                    confidence: Math.min(0.88, score + 0.12)
                 };
             }
         }
@@ -257,8 +275,8 @@ function analyzeCycles(recentString) {
 function analyzeComplexPatterns(recentString, fullHistory) {
     const recentLen = recentString.length;
     if (recentLen < 6) return { confidence: 0 };
-    const currentPattern = recentString.slice(-3);
-    const searchSpace = fullHistory.slice(0, -3);
+    const currentPattern = recentString.slice(-4);
+    const searchSpace = fullHistory.slice(0, -4);
     const positions = [];
     let pos = 0;
     while ((pos = searchSpace.indexOf(currentPattern, pos)) !== -1) {
@@ -268,8 +286,8 @@ function analyzeComplexPatterns(recentString, fullHistory) {
     if (positions.length >= 2) {
         const nextChars = [];
         for (const p of positions) {
-            if (p + 3 < fullHistory.length) {
-                nextChars.push(fullHistory[p + 3]);
+            if (p + 4 < fullHistory.length) {
+                nextChars.push(fullHistory[p + 4]);
             }
         }
         if (nextChars.length > 0) {
@@ -281,7 +299,7 @@ function analyzeComplexPatterns(recentString, fullHistory) {
                 if (ratio >= 0.6) {
                     return {
                         prediction: countT > countX ? "Tài" : "Xỉu",
-                        confidence: ratio
+                        confidence: ratio * 1.1
                     };
                 }
             }
@@ -313,16 +331,16 @@ function analyzeStatistics(recentHistory, currentResult) {
         const p_T_given_T = transitions.TT / (transitions.TT + transitions.TX);
         const p_X_given_X = transitions.XX / (transitions.XT + transitions.XX);
         if (p_T_given_T > 0.65 && lastResult === "T") {
-            return { prediction: "Xỉu", confidence: 0.7 };
+            return { prediction: "Xỉu", confidence: 0.72 };
         }
         if (p_X_given_X > 0.65 && lastResult === "X") {
-            return { prediction: "Tài", confidence: 0.7 };
+            return { prediction: "Tài", confidence: 0.72 };
         }
     }
     const taiRatio = countT / totalGames;
     const xiuRatio = countX / totalGames;
-    if (taiRatio > 0.6) return { prediction: "Xỉu", confidence: 0.7 };
-    if (xiuRatio > 0.6) return { prediction: "Tài", confidence: 0.7 };
+    if (taiRatio > 0.6) return { prediction: "Xỉu", confidence: 0.72 };
+    if (xiuRatio > 0.6) return { prediction: "Tài", confidence: 0.72 };
     return { confidence: 0 };
 }
 
@@ -346,7 +364,7 @@ function analyzeMarkov(historyString) {
             if (ratio > 0.6) {
                 return {
                     prediction: tCount > xCount ? "Tài" : "Xỉu",
-                    confidence: ratio
+                    confidence: ratio * 1.05
                 };
             }
         }
@@ -368,7 +386,7 @@ function analyzeBalance(recentHistory) {
         const prediction = countT > countX ? "Xỉu" : "Tài";
         return {
             prediction,
-            confidence: Math.min(0.75, imbalance + 0.1)
+            confidence: Math.min(0.78, imbalance + 0.12)
         };
     }
     return { confidence: 0 };
@@ -389,16 +407,51 @@ function analyzeScorePattern(recentHistory) {
     const last3Total = last3.reduce((sum, g) => sum + g.tong, 0);
     const last3Avg = last3Total / 3;
     if (last3Avg > avgTai && last3Avg > 11) {
-        return { prediction: "Xỉu", confidence: 0.65 };
+        return { prediction: "Xỉu", confidence: 0.67 };
     }
     if (last3Avg < avgXiu && last3Avg < 10) {
-        return { prediction: "Tài", confidence: 0.65 };
+        return { prediction: "Tài", confidence: 0.67 };
+    }
+    return { confidence: 0 };
+}
+
+// ===== THÊM PHÂN TÍCH XU HƯỚNG DÀI HẠN =====
+function analyzeLongTrend(recentHistory) {
+    if (recentHistory.length < 20) return { confidence: 0 };
+    const first10 = recentHistory.slice(0, 10);
+    const last10 = recentHistory.slice(-10);
+    const countT1 = first10.filter(g => g.ket_qua === "TAI").length;
+    const countT2 = last10.filter(g => g.ket_qua === "TAI").length;
+    const diff = countT2 - countT1;
+    if (Math.abs(diff) >= 3) {
+        const prediction = diff > 0 ? "Tài" : "Xỉu";
+        return {
+            prediction,
+            confidence: 0.75
+        };
+    }
+    return { confidence: 0 };
+}
+
+function analyzeVolatility(recentHistory) {
+    if (recentHistory.length < 10) return { confidence: 0 };
+    const scores = recentHistory.map(g => g.tong);
+    const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const variance = scores.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / scores.length;
+    const std = Math.sqrt(variance);
+    if (std > 3) {
+        const last = scores[scores.length - 1];
+        const prediction = last > avg ? "Xỉu" : "Tài";
+        return {
+            prediction,
+            confidence: 0.70
+        };
     }
     return { confidence: 0 };
 }
 
 // ============================================================
-// DỰ ĐOÁN CHÍNH
+// DỰ ĐOÁN CHÍNH (ULTRA VIP 22.5)
 // ============================================================
 
 function predictNextAdvanced(currentResult, history, type = "hu") {
@@ -411,66 +464,78 @@ function predictNextAdvanced(currentResult, history, type = "hu") {
         return {
             du_doan: patternMatch.prediction,
             do_tin_cay: patternMatch.confidence,
-            mau_cau: `Nhận diện mẫu: ${patternMatch.name} (${patternMatch.action === 'follow' ? 'tiếp tục' : 'bẻ cầu'})`
+            mau_cau: `Nhận diện mẫu VIP: ${patternMatch.name} (${patternMatch.action === 'follow' ? 'tiếp tục' : 'bẻ cầu'})`
         };
     }
 
     // 2. Fallback nếu không đủ dữ liệu
     if (history.length < 10) {
         const random = Math.random() * 100;
-        const baseConfidence = 0.65 + Math.random() * 0.20;
+        const baseConfidence = 0.68 + Math.random() * 0.22;
         const pred = random < 65 ?
             (currentResult && currentResult.ket_qua === "TAI" ? "Xỉu" : "Tài") :
             (currentResult ? currentResult.ket_qua : "Tài");
         return {
             du_doan: pred,
             do_tin_cay: baseConfidence,
-            mau_cau: "Không đủ dữ liệu lịch sử"
+            mau_cau: "Không đủ dữ liệu - dự đoán cơ bản"
         };
     }
 
     const fullHistoryString = historyString;
-    const recentHistory = history.slice(-25);
+    const recentHistory = history.slice(-30);
     const recentString = historyToBinary(recentHistory);
 
     const predictions = [];
     const weights = [];
 
-    // Các phân tích con
+    // Các phân tích con nâng cao
     const cycle = analyzeCycles(recentString);
     if (cycle.confidence > 0.55) {
         predictions.push(cycle.prediction);
-        weights.push(cycle.confidence * 1.5);
+        weights.push(cycle.confidence * 1.6);
     }
 
     const complex = analyzeComplexPatterns(recentString, fullHistoryString);
     if (complex.confidence > 0.5) {
         predictions.push(complex.prediction);
-        weights.push(complex.confidence * 1.3);
+        weights.push(complex.confidence * 1.4);
     }
 
     const stat = analyzeStatistics(recentHistory, currentResult);
     if (stat.confidence > 0.5) {
         predictions.push(stat.prediction);
-        weights.push(stat.confidence * 1.2);
+        weights.push(stat.confidence * 1.3);
     }
 
     const markov = analyzeMarkov(fullHistoryString);
     if (markov.confidence > 0.5) {
         predictions.push(markov.prediction);
-        weights.push(markov.confidence * 1.4);
+        weights.push(markov.confidence * 1.5);
     }
 
     const balance = analyzeBalance(recentHistory);
     if (balance.confidence > 0.45) {
         predictions.push(balance.prediction);
-        weights.push(balance.confidence * 1.1);
+        weights.push(balance.confidence * 1.2);
     }
 
     const score = analyzeScorePattern(recentHistory);
     if (score.confidence > 0.5) {
         predictions.push(score.prediction);
         weights.push(score.confidence * 1.2);
+    }
+
+    const longTrend = analyzeLongTrend(recentHistory);
+    if (longTrend.confidence > 0.5) {
+        predictions.push(longTrend.prediction);
+        weights.push(longTrend.confidence * 1.3);
+    }
+
+    const volatility = analyzeVolatility(recentHistory);
+    if (volatility.confidence > 0.5) {
+        predictions.push(volatility.prediction);
+        weights.push(volatility.confidence * 1.1);
     }
 
     // Tổng hợp
@@ -481,23 +546,23 @@ function predictNextAdvanced(currentResult, history, type = "hu") {
         let finalPrediction, confidence, pattern;
         if (countT > countX + 1) {
             finalPrediction = "Xỉu";
-            confidence = 0.70 + Math.random() * 0.15;
+            confidence = 0.72 + Math.random() * 0.15;
             pattern = "Xu hướng đảo chiều từ Tài";
         } else if (countX > countT + 1) {
             finalPrediction = "Tài";
-            confidence = 0.70 + Math.random() * 0.15;
+            confidence = 0.72 + Math.random() * 0.15;
             pattern = "Xu hướng đảo chiều từ Xỉu";
         } else {
             const isReversal = Math.random() < 0.7;
             finalPrediction = isReversal ?
                 (currentResult && currentResult.ket_qua === "TAI" ? "Xỉu" : "Tài") :
                 (currentResult ? currentResult.ket_qua : "Tài");
-            confidence = 0.65 + Math.random() * 0.20;
+            confidence = 0.68 + Math.random() * 0.20;
             pattern = "Dự đoán cân bằng";
         }
         return {
             du_doan: finalPrediction,
-            do_tin_cay: clamp(confidence, 0.65, 0.85),
+            do_tin_cay: clamp(confidence, 0.68, 0.88),
             mau_cau: pattern
         };
     }
@@ -510,17 +575,17 @@ function predictNextAdvanced(currentResult, history, type = "hu") {
     const totalWeight = weights.reduce((a, b) => a + b, 0);
     const winningVotes = Math.max(votes.Tài, votes.Xỉu);
     const rawConfidence = winningVotes / totalWeight;
-    let confidence = 0.65 + rawConfidence * 0.20;
+    let confidence = 0.68 + rawConfidence * 0.22;
     let pattern;
-    if (new Set(predictions).size === 1 && predictions.length >= 3) {
-        confidence = Math.min(0.85, confidence + 0.05);
+    if (new Set(predictions).size === 1 && predictions.length >= 4) {
+        confidence = Math.min(0.92, confidence + 0.06);
         pattern = `Đồng thuận cao (${predictions.length} phương pháp)`;
     } else {
         pattern = `Phân tích đa thuật toán (${predictions.length} phương pháp)`;
     }
-    const historyFactor = Math.min(1, history.length / 25);
-    confidence = 0.65 + (confidence - 0.65) * historyFactor;
-    confidence = clamp(confidence, 0.65, 0.85);
+    const historyFactor = Math.min(1, history.length / 30);
+    confidence = 0.68 + (confidence - 0.68) * historyFactor;
+    confidence = clamp(confidence, 0.68, 0.92);
 
     return {
         du_doan: finalPrediction,
@@ -664,7 +729,7 @@ async function fetchSource(type) {
     const timer = setTimeout(() => controller.abort(), 10000);
     try {
         const response = await fetch(SOURCES[type], {
-            headers: { Accept: "application/json", "User-Agent": "LC79-ULTRA-V23" },
+            headers: { Accept: "application/json", "User-Agent": "LC79-ULTRA-VIP-22.5" },
             signal: controller.signal
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -731,7 +796,7 @@ function loadPatternLibrary(type) {
         return saved.patterns.filter(validPattern);
     }
     const patterns = generatePatternSamples();
-    saveJSON(PATHS[type].pattern, { version: "LC79-V23", length: PATTERN_LENGTH, patterns });
+    saveJSON(PATHS[type].pattern, { version: "Ultra-VIP-22.5", length: PATTERN_LENGTH, patterns });
     return patterns;
 }
 
@@ -1136,7 +1201,7 @@ app.post("/api/lc79/md5/reset", (req, res) => {
 app.get("/", (req, res) => {
     res.json({
         status: "online",
-        engine: "LC79 ULTRA V23",
+        engine: "LC79 ULTRA VIP 22.5",
         pattern: PATTERN_LENGTH,
         compare: TOP_PATTERN_SAMPLES,
         hu: { isolated: true, source: SOURCES.hu },
@@ -1158,7 +1223,7 @@ app.use((req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
     console.log(`
 ╔══════════════════════════════════════════════════╗
-║              LC79 ULTRA V23                     ║
+║         LC79 ULTRA VIP 22.5                     ║
 ╠══════════════════════════════════════════════════╣
 ║ Pattern chính       : 20 phiên                  ║
 ║ Pattern so sánh     : TOP 10                    ║
