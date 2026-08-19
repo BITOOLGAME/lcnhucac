@@ -111,10 +111,7 @@ function validPattern(pattern) {
 // PATTERN MẪU CÓ TÊN & QUYẾT ĐỊNH THEO/BẺ (RIÊNG CHO HU VÀ MD5)
 // ============================================================
 
-// Định nghĩa các mẫu pattern với tên và hành động
-// 'action': 'follow' → dự đoán theo mẫu (tiếp tục), 'break' → dự đoán ngược lại (bẻ cầu)
 const PATTERN_TEMPLATES = {
-    // Mẫu cho HU
     hu: [
         { name: "Cầu bệt Tài", pattern: "TTTTT", action: "follow" },
         { name: "Cầu bệt Xỉu", pattern: "XXXXX", action: "follow" },
@@ -135,8 +132,8 @@ const PATTERN_TEMPLATES = {
         { name: "Cầu 2-1-2 X", pattern: "XXTXX", action: "follow" },
         { name: "Cầu 2-3-2", pattern: "TTXXXTT", action: "follow" },
         { name: "Cầu 3-2-3", pattern: "XXXTTXXX", action: "follow" },
-        { name: "Cầu 3-1-3", pattern: "TTT X TTT".replace(/\s/g, ""), action: "follow" },
-        { name: "Cầu 1-3-1", pattern: "X TTT X".replace(/\s/g, ""), action: "follow" },
+        { name: "Cầu 3-1-3", pattern: "TTTXT TT".replace(/\s/g, ""), action: "follow" },
+        { name: "Cầu 1-3-1", pattern: "XTTTX", action: "follow" },
         { name: "Cầu gấp khúc", pattern: "TXXTTX", action: "follow" },
         { name: "Cầu gấp khúc X", pattern: "XTTXXT", action: "follow" },
         { name: "Cầu đồng pha Tài", pattern: "TXXTXX", action: "follow" },
@@ -144,7 +141,6 @@ const PATTERN_TEMPLATES = {
         { name: "Cầu đảo chiều sau 4 Tài", pattern: "TTTTT", action: "break" },
         { name: "Cầu đảo chiều sau 4 Xỉu", pattern: "XXXXX", action: "break" },
     ],
-    // Mẫu cho MD5 (có thể khác biệt)
     md5: [
         { name: "Cầu bệt Tài", pattern: "TTTTT", action: "follow" },
         { name: "Cầu bệt Xỉu", pattern: "XXXXX", action: "follow" },
@@ -165,8 +161,8 @@ const PATTERN_TEMPLATES = {
         { name: "Cầu 2-1-2 X", pattern: "XXTXX", action: "follow" },
         { name: "Cầu 2-3-2", pattern: "TTXXXTT", action: "follow" },
         { name: "Cầu 3-2-3", pattern: "XXXTTXXX", action: "follow" },
-        { name: "Cầu 3-1-3", pattern: "TTT X TTT".replace(/\s/g, ""), action: "follow" },
-        { name: "Cầu 1-3-1", pattern: "X TTT X".replace(/\s/g, ""), action: "follow" },
+        { name: "Cầu 3-1-3", pattern: "TTTXT TT".replace(/\s/g, ""), action: "follow" },
+        { name: "Cầu 1-3-1", pattern: "XTTTX", action: "follow" },
         { name: "Cầu gấp khúc", pattern: "TXXTTX", action: "follow" },
         { name: "Cầu gấp khúc X", pattern: "XTTXXT", action: "follow" },
         { name: "Cầu đồng pha Tài", pattern: "TXXTXX", action: "follow" },
@@ -176,22 +172,16 @@ const PATTERN_TEMPLATES = {
     ]
 };
 
-// Hàm phát hiện pattern mẫu từ chuỗi lịch sử
 function detectPattern(historyString, templates) {
     if (!historyString || historyString.length < 3) return null;
-    // Duyệt qua từng template, kiểm tra xem pattern có khớp với cuối chuỗi không
     for (const template of templates) {
         const pattern = template.pattern;
         if (historyString.endsWith(pattern)) {
-            // Xác định kết quả dự đoán
             let prediction = null;
             if (template.action === "follow") {
-                // Theo mẫu: dự đoán ký tự tiếp theo dựa trên quy luật của mẫu
-                // Lấy ký tự cuối cùng của pattern, dự đoán tiếp tục
                 const lastChar = pattern[pattern.length - 1];
                 prediction = lastChar === "T" ? "Tài" : "Xỉu";
             } else if (template.action === "break") {
-                // Bẻ cầu: dự đoán ngược lại với ký tự cuối của pattern
                 const lastChar = pattern[pattern.length - 1];
                 prediction = lastChar === "T" ? "Xỉu" : "Tài";
             }
@@ -200,7 +190,7 @@ function detectPattern(historyString, templates) {
                     name: template.name,
                     prediction: prediction,
                     action: template.action,
-                    confidence: 0.78, // Confidence cao cho pattern mẫu
+                    confidence: 0.78,
                     matchedPattern: pattern
                 };
             }
@@ -238,7 +228,7 @@ function tailStreakLength(str) {
 }
 
 // ============================================================
-// CÁC PHÂN TÍCH CON (ĐỘC LẬP VỚI ENGINE)
+// CÁC PHÂN TÍCH CON
 // ============================================================
 
 function analyzeCycles(recentString) {
@@ -408,20 +398,16 @@ function analyzeScorePattern(recentHistory) {
 }
 
 // ============================================================
-// DỰ ĐOÁN CHÍNH (TÍCH HỢP PATTERN MẪU + CÁC PHÂN TÍCH)
+// DỰ ĐOÁN CHÍNH
 // ============================================================
 
 function predictNextAdvanced(currentResult, history, type = "hu") {
-    // Lấy templates tương ứng
     const templates = PATTERN_TEMPLATES[type] || PATTERN_TEMPLATES.hu;
-
-    // Chuyển lịch sử thành chuỗi
     const historyString = history.map(h => toTX(h.ket_qua)).join("");
 
-    // 1. PHÁT HIỆN PATTERN MẪU
+    // 1. Pattern template
     const patternMatch = detectPattern(historyString, templates);
     if (patternMatch) {
-        // Nếu khớp pattern, trả về dự đoán với độ tin cậy cao
         return {
             du_doan: patternMatch.prediction,
             do_tin_cay: patternMatch.confidence,
@@ -429,7 +415,7 @@ function predictNextAdvanced(currentResult, history, type = "hu") {
         };
     }
 
-    // 2. NẾU KHÔNG CÓ PATTERN MẪU, DÙNG CÁC PHÂN TÍCH KHÁC
+    // 2. Fallback nếu không đủ dữ liệu
     if (history.length < 10) {
         const random = Math.random() * 100;
         const baseConfidence = 0.65 + Math.random() * 0.20;
@@ -489,7 +475,6 @@ function predictNextAdvanced(currentResult, history, type = "hu") {
 
     // Tổng hợp
     if (predictions.length === 0) {
-        // Fallback
         const last10 = recentString.slice(-10);
         const countT = (last10.match(/T/g) || []).length;
         const countX = last10.length - countT;
@@ -517,7 +502,6 @@ function predictNextAdvanced(currentResult, history, type = "hu") {
         };
     }
 
-    // Bỏ phiếu có trọng số
     const votes = { Tài: 0, Xỉu: 0 };
     for (let i = 0; i < predictions.length; i++) {
         votes[predictions[i]] += weights[i];
@@ -527,9 +511,10 @@ function predictNextAdvanced(currentResult, history, type = "hu") {
     const winningVotes = Math.max(votes.Tài, votes.Xỉu);
     const rawConfidence = winningVotes / totalWeight;
     let confidence = 0.65 + rawConfidence * 0.20;
+    let pattern;
     if (new Set(predictions).size === 1 && predictions.length >= 3) {
         confidence = Math.min(0.85, confidence + 0.05);
-        var pattern = `Đồng thuận cao (${predictions.length} phương pháp)`;
+        pattern = `Đồng thuận cao (${predictions.length} phương pháp)`;
     } else {
         pattern = `Phân tích đa thuật toán (${predictions.length} phương pháp)`;
     }
@@ -720,7 +705,6 @@ function similarity(a, b) {
 function generatePatternSamples() {
     const set = new Set();
     function add(pattern) { if (validPattern(pattern)) set.add(pattern); }
-    // Thêm các mẫu cơ bản
     add("TX".repeat(10));
     add("XT".repeat(10));
     add("TTXX".repeat(5));
@@ -731,13 +715,11 @@ function generatePatternSamples() {
     add("XXXXTTTTXXXXTTTTXXXX");
     add("TTTTTXXXXXT TTTTTXXXX".replace(/\s/g, "").slice(0, 20));
     add("XXXX XTTTTTXXXXXT TTT".replace(/\s/g, "").slice(0, 20));
-    // ... (thêm các mẫu khác nếu muốn)
     const complex = [
         "TTXTTXXTTTXTTXXTTXTX",
         "XXTXXTTXXXTXTTXXTTXT",
         "TXXTTXXTXXTTTXTTXXTT",
         "XTTXXTTXTTXXXTTXXTXX",
-        // ... có thể thêm nhiều hơn
     ];
     for (const p of complex) add(p);
     return [...set].filter(validPattern);
@@ -1157,6 +1139,8 @@ app.get("/", (req, res) => {
         engine: "LC79 ULTRA V23",
         pattern: PATTERN_LENGTH,
         compare: TOP_PATTERN_SAMPLES,
+        hu: { isolated: true, source: SOURCES.hu },
+        md5: { isolated: true, source: SOURCES.md5 },
         learning: true,
         realtime: "SSE",
         polling: `${POLL_MS}ms`
