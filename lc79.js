@@ -18,13 +18,15 @@ const MD5_API =
 
 const MAX_SOURCE_HISTORY = 100;
 const MAX_PREDICTION_HISTORY = 100;
-const MAX_PATTERN = 20;
+
+const MAX_PATTERN_LENGTH = 20;
+const COMPARE_CURRENT_COUNT = 6;
+const COMPARE_SAMPLE_COUNT = 6;
+
 const FETCH_INTERVAL = 3000;
 
 // ============================================================
-// MODEL WEIGHTS
-// 2 THUẬT TOÁN DÙNG CÙNG HỆ MODEL
-// NHƯNG DATA HỌC TÁCH RIÊNG
+// MODEL
 // ============================================================
 
 const MODELS = {
@@ -41,76 +43,7 @@ const MODELS = {
 };
 
 // ============================================================
-// PATTERN MẪU
-// DỄ -> KHÓ
-// ============================================================
-
-const PATTERN_LIBRARY = {
-    level1: [
-        "1-1",
-        "1-2",
-        "2-1",
-        "2-2",
-        "3-1",
-        "1-3",
-        "3-2",
-        "2-3",
-        "4-1",
-        "1-4"
-    ],
-
-    level2: [
-        "1-1-1",
-        "1-2-1",
-        "2-1-2",
-        "1-3-1",
-        "3-1-3",
-        "2-2-1",
-        "1-2-2",
-        "2-1-1"
-    ],
-
-    level3: [
-        "1-1-1-1",
-        "1-2-1-2",
-        "2-1-2-1",
-        "1-3-1-3",
-        "3-1-3-1",
-        "1-2-2-1",
-        "2-1-1-2"
-    ],
-
-    level4: [
-        "TXTX",
-        "XTXT",
-        "TXXT",
-        "XTTX",
-        "TTXX",
-        "XXTT",
-        "TXTTX",
-        "XTXTX"
-    ],
-
-    level5: [
-        "1-3-1-2-1",
-        "2-1-3-1-2",
-        "1-2-1-3-2",
-        "2-2-1-1-2",
-        "1-3-2-1-3",
-        "3-1-2-2-1"
-    ],
-
-    level6: [
-        "1-2-1-2-1-2",
-        "2-1-2-1-2-1",
-        "1-3-1-3-1",
-        "3-1-3-1-3",
-        "1-2-2-1-2-2"
-    ]
-};
-
-// ============================================================
-// SAFE NUMBER
+// SAFE
 // ============================================================
 
 function finiteNumber(value, fallback = 0) {
@@ -121,32 +54,8 @@ function finiteNumber(value, fallback = 0) {
         : fallback;
 }
 
-function safeRatio(
-    a,
-    b,
-    fallback = 0.5
-) {
-    a = finiteNumber(a, 0);
-    b = finiteNumber(b, 0);
-
-    if (b <= 0) {
-        return fallback;
-    }
-
-    const value = a / b;
-
-    if (!Number.isFinite(value)) {
-        return fallback;
-    }
-
-    return clamp(value, 0, 1);
-}
-
 function clamp(value, min, max) {
-    value = finiteNumber(
-        value,
-        min
-    );
+    value = finiteNumber(value, min);
 
     return Math.max(
         min,
@@ -154,14 +63,33 @@ function clamp(value, min, max) {
     );
 }
 
+function safeRatio(a, b, fallback = 0.5) {
+    a = finiteNumber(a, 0);
+    b = finiteNumber(b, 0);
+
+    if (b <= 0) {
+        return fallback;
+    }
+
+    const result = a / b;
+
+    return Number.isFinite(result)
+        ? clamp(result, 0, 1)
+        : fallback;
+}
+
+function safeArray(value) {
+    return Array.isArray(value)
+        ? value
+        : [];
+}
+
 // ============================================================
-// BASIC
+// RESULT
 // ============================================================
 
 function tx(value) {
-    if (!value) {
-        return null;
-    }
+    if (!value) return null;
 
     const v =
         String(value)
@@ -205,12 +133,6 @@ function opposite(value) {
         : "T";
 }
 
-function safeArray(value) {
-    return Array.isArray(value)
-        ? value
-        : [];
-}
-
 // ============================================================
 // DICE
 // ============================================================
@@ -223,28 +145,22 @@ function normalizeDice(dices) {
     return dices
         .map(Number)
         .filter(
-            n =>
-                Number.isFinite(n)
+            n => Number.isFinite(n)
         );
 }
 
-function diceTotal(
-    dices,
-    point
-) {
+function diceTotal(dices, point) {
     const arr =
         normalizeDice(dices);
 
-    if (arr.length) {
+    if (arr.length > 0) {
         return arr.reduce(
-            (a, b) =>
-                a + b,
+            (a, b) => a + b,
             0
         );
     }
 
-    const p =
-        Number(point);
+    const p = Number(point);
 
     return Number.isFinite(p)
         ? p
@@ -252,63 +168,83 @@ function diceTotal(
 }
 
 // ============================================================
-// SIMILARITY
+// NORMALIZE API
 // ============================================================
 
-function similarity(a, b) {
-    if (!a || !b) {
-        return 0;
+function normalizeSession(item) {
+    const id =
+        Number(item?.id);
+
+    if (!Number.isFinite(id)) {
+        return null;
     }
 
-    const len =
-        Math.min(
-            a.length,
-            b.length
+    const resultSide =
+        tx(
+            item?.resultTruyenThong
         );
 
-    if (!len) {
-        return 0;
+    if (!resultSide) {
+        return null;
     }
 
-    let same = 0;
-
-    for (
-        let i = 0;
-        i < len;
-        i++
-    ) {
-        if (
-            a[i] === b[i]
-        ) {
-            same++;
-        }
-    }
-
-    const positional =
-        same / len;
-
-    const lengthFactor =
-        Math.min(
-            a.length,
-            b.length
-        ) /
-        Math.max(
-            a.length,
-            b.length
+    const dices =
+        normalizeDice(
+            item?.dices
         );
 
-    const value =
-        positional * 0.8 +
-        lengthFactor * 0.2;
+    const total =
+        diceTotal(
+            dices,
+            item?.point
+        );
 
-    return finiteNumber(
-        value,
-        0
-    );
+    return {
+        id,
+
+        _id:
+            item?._id || null,
+
+        phien:
+            id,
+
+        result:
+            resultSide,
+
+        ket_qua:
+            result(resultSide),
+
+        xuc_xac:
+            dices,
+
+        tong:
+            finiteNumber(
+                total,
+                0
+            )
+    };
 }
 
 // ============================================================
-// RUN / CẦU
+// PATTERN
+// ============================================================
+
+function buildPattern(
+    history,
+    length = MAX_PATTERN_LENGTH
+) {
+    return history
+        .slice(-length)
+        .map(
+            item =>
+                item.result
+        )
+        .filter(Boolean)
+        .join("");
+}
+
+// ============================================================
+// CẦU
 // ============================================================
 
 function getRuns(pattern) {
@@ -357,91 +293,69 @@ function getRuns(pattern) {
 function patternTemplate(pattern) {
     return getRuns(pattern)
         .map(
-            item =>
-                item.count
+            x =>
+                x.count
         )
         .join("-");
 }
 
 // ============================================================
-// PATTERN CŨ -> MỚI
+// 6 PATTERN HIỆN TẠI
 // ============================================================
 
-function buildPattern(
-    history,
-    length = MAX_PATTERN
-) {
-    return history
-        .slice(-length)
-        .map(
-            item =>
-                item.result
-        )
-        .filter(Boolean)
-        .join("");
-}
-
-// ============================================================
-// PATTERN LEVEL
-// ============================================================
-
-function getPatternLevel(
-    template
-) {
-    for (
-        const [
-            level,
-            patterns
-        ]
-        of Object.entries(
-            PATTERN_LIBRARY
-        )
+function getLatest6Patterns(pattern) {
+    if (
+        !pattern ||
+        pattern.length < 2
     ) {
-        if (
-            patterns.includes(
-                template
-            )
-        ) {
-            return Number(
-                level.replace(
-                    "level",
-                    ""
-                )
-            );
-        }
+        return [];
     }
 
-    return 0;
+    const result = [];
+
+    const maxLength =
+        Math.min(
+            MAX_PATTERN_LENGTH,
+            pattern.length
+        );
+
+    for (
+        let length = 2;
+        length <= maxLength;
+        length++
+    ) {
+        result.push(
+            pattern.slice(-length)
+        );
+    }
+
+    // Chỉ lấy 6 pattern mới nhất
+    return result.slice(
+        -COMPARE_CURRENT_COUNT
+    );
 }
 
 // ============================================================
-// TRANSFORM PATTERN
+// PATTERN TRANSFORM
 // ============================================================
 
-function oppositePattern(
-    pattern
-) {
+function oppositePattern(pattern) {
     return pattern
         .split("")
         .map(
-            char =>
-                opposite(char)
+            x => opposite(x)
         )
         .join("");
 }
 
-function reversePattern(
-    pattern
-) {
+function reversePattern(pattern) {
     return pattern
         .split("")
         .reverse()
         .join("");
 }
 
-function transformPatterns(
-    pattern
-) {
+function transformPatterns(pattern) {
     if (!pattern) {
         return [];
     }
@@ -452,22 +366,16 @@ function transformPatterns(
     set.add(pattern);
 
     set.add(
-        oppositePattern(
-            pattern
-        )
+        oppositePattern(pattern)
     );
 
     set.add(
-        reversePattern(
-            pattern
-        )
+        reversePattern(pattern)
     );
 
     set.add(
         oppositePattern(
-            reversePattern(
-                pattern
-            )
+            reversePattern(pattern)
         )
     );
 
@@ -475,74 +383,124 @@ function transformPatterns(
 }
 
 // ============================================================
-// PATTERN WEIGHT
+// SIMILARITY
 // ============================================================
 
-function patternWeight(
-    sample,
-    sim
-) {
-    const level =
-        finiteNumber(
-            sample.level,
-            0
-        );
+function similarity(a, b) {
+    if (!a || !b) {
+        return 0;
+    }
 
     const length =
-        finiteNumber(
-            sample.length,
-            2
-        );
-
-    const samples =
-        finiteNumber(
-            sample.samples,
-            1
-        );
-
-    const lengthWeight =
         Math.min(
-            length / 10,
-            1.5
+            a.length,
+            b.length
         );
 
-    const levelWeight =
-        level >= 6
-            ? 1.50
-            : level >= 5
-                ? 1.35
-                : level >= 4
-                    ? 1.20
-                    : level >= 3
-                        ? 1.10
-                        : level >= 2
-                            ? 1.00
-                            : 0.90;
+    if (length <= 0) {
+        return 0;
+    }
 
-    const sampleWeight =
+    let same = 0;
+
+    for (
+        let i = 0;
+        i < length;
+        i++
+    ) {
+        if (
+            a[i] === b[i]
+        ) {
+            same++;
+        }
+    }
+
+    const positional =
+        same / length;
+
+    const lengthFactor =
         Math.min(
-            samples / 5,
-            1.5
+            a.length,
+            b.length
+        ) /
+        Math.max(
+            a.length,
+            b.length
         );
 
     return finiteNumber(
-        sim *
-        lengthWeight *
-        levelWeight *
-        sampleWeight,
+        positional * 0.8 +
+        lengthFactor * 0.2,
         0
     );
 }
 
 // ============================================================
-// MINE PATTERN
+// PATTERN LEVEL
 // ============================================================
 
-function mineAdvancedPatterns(
-    history
-) {
-    const database = [];
+function patternLevel(pattern) {
+    const runs =
+        getRuns(pattern);
 
+    const template =
+        patternTemplate(pattern);
+
+    let level = 1;
+
+    if (
+        runs.length >= 2
+    ) {
+        level = 2;
+    }
+
+    if (
+        runs.length >= 3
+    ) {
+        level = 3;
+    }
+
+    if (
+        runs.length >= 5
+    ) {
+        level = 4;
+    }
+
+    if (
+        runs.length >= 7
+    ) {
+        level = 5;
+    }
+
+    if (
+        runs.length >= 9
+    ) {
+        level = 6;
+    }
+
+    // Pattern càng dài càng khó
+    if (pattern.length >= 12) {
+        level = Math.max(
+            level,
+            5
+        );
+    }
+
+    if (pattern.length >= 16) {
+        level = 6;
+    }
+
+    return {
+        level,
+        template
+    };
+}
+
+// ============================================================
+// MINE PATTERN DATABASE
+// ============================================================
+
+function minePatterns(history) {
     const values =
         history
             .map(
@@ -551,18 +509,24 @@ function mineAdvancedPatterns(
             )
             .filter(Boolean);
 
+    const database = [];
+
     if (
-        values.length < 5
+        values.length < 4
     ) {
         return database;
     }
 
     for (
         let length = 2;
-        length <= 15;
+        length <=
+        Math.min(
+            15,
+            values.length - 1
+        );
         length++
     ) {
-        const grouped = {};
+        const groups = {};
 
         for (
             let i = 0;
@@ -588,32 +552,20 @@ function mineAdvancedPatterns(
             }
 
             if (
-                !grouped[
-                    pattern
-                ]
+                !groups[pattern]
             ) {
-                grouped[
-                    pattern
-                ] = {
+                groups[pattern] = {
                     T: 0,
                     X: 0
                 };
             }
 
-            if (
-                next === "T"
-            ) {
-                grouped[
-                    pattern
-                ].T++;
+            if (next === "T") {
+                groups[pattern].T++;
             }
 
-            if (
-                next === "X"
-            ) {
-                grouped[
-                    pattern
-                ].X++;
+            if (next === "X") {
+                groups[pattern].X++;
             }
         }
 
@@ -623,7 +575,7 @@ function mineAdvancedPatterns(
                 stats
             ]
             of Object.entries(
-                grouped
+                groups
             )
         ) {
             const samples =
@@ -636,15 +588,13 @@ function mineAdvancedPatterns(
                 continue;
             }
 
-            const template =
-                patternTemplate(
+            const info =
+                patternLevel(
                     pattern
                 );
 
             database.push({
                 pattern,
-
-                template,
 
                 next:
                     stats.T >=
@@ -663,9 +613,10 @@ function mineAdvancedPatterns(
                 length,
 
                 level:
-                    getPatternLevel(
-                        template
-                    ),
+                    info.level,
+
+                template:
+                    info.template,
 
                 confidence:
                     safeRatio(
@@ -673,8 +624,7 @@ function mineAdvancedPatterns(
                             stats.T,
                             stats.X
                         ),
-                        samples,
-                        0.5
+                        samples
                     )
             });
         }
@@ -684,60 +634,129 @@ function mineAdvancedPatterns(
 }
 
 // ============================================================
-// ADVANCED PATTERN ANALYSIS
+// PATTERN WEIGHT
+// ============================================================
+
+function patternWeight(
+    sample,
+    similarityValue
+) {
+    const length =
+        finiteNumber(
+            sample.length,
+            2
+        );
+
+    const samples =
+        finiteNumber(
+            sample.samples,
+            1
+        );
+
+    const level =
+        finiteNumber(
+            sample.level,
+            1
+        );
+
+    const lengthWeight =
+        clamp(
+            length / 8,
+            0.5,
+            2
+        );
+
+    const sampleWeight =
+        clamp(
+            samples / 5,
+            0.5,
+            2
+        );
+
+    const levelWeight =
+        clamp(
+            level / 3,
+            0.7,
+            2
+        );
+
+    return finiteNumber(
+        similarityValue *
+        lengthWeight *
+        sampleWeight *
+        levelWeight,
+        0
+    );
+}
+
+// ============================================================
+// PHÂN TÍCH 6 × 6
 // ============================================================
 
 function analyzeAdvancedPattern(
     engine
 ) {
-    const history =
-        engine.history;
-
     const mainPattern =
         buildPattern(
-            history,
-            MAX_PATTERN
+            engine.history
         );
 
-    if (!mainPattern) {
+    if (
+        mainPattern.length < 2
+    ) {
         return {
-            pattern: "",
-            cau: "",
+            pattern:
+                mainPattern,
+
+            cau:
+                patternTemplate(
+                    mainPattern
+                ),
+
             T: 0,
+
             X: 0,
+
             matches: []
         };
     }
 
+    // --------------------------------------------------------
+    // 6 PATTERN HIỆN TẠI
+    // --------------------------------------------------------
+
+    const currentPatterns =
+        getLatest6Patterns(
+            mainPattern
+        );
+
+    // --------------------------------------------------------
+    // DATABASE MẪU
+    // --------------------------------------------------------
+
     const database =
         engine.patternDatabase;
 
-    let scoreT = 0;
-    let scoreX = 0;
+    const candidates = [];
 
-    const matches = [];
+    // --------------------------------------------------------
+    // SO SÁNH
+    // --------------------------------------------------------
 
     for (
-        let length = 2;
-        length <=
-        Math.min(
-            15,
-            mainPattern.length
-        );
-        length++
+        const currentPattern
+        of currentPatterns
     ) {
-        const current =
-            mainPattern.slice(
-                -length
-            );
-
         for (
             const sample
             of database
         ) {
+            // Không lấy pattern quá khác độ dài
             if (
-                sample.length !==
-                length
+                Math.abs(
+                    currentPattern.length -
+                    sample.length
+                ) > 5
             ) {
                 continue;
             }
@@ -747,8 +766,10 @@ function analyzeAdvancedPattern(
                     sample.pattern
                 );
 
-            let bestSim = 0;
-            let matched = "";
+            let bestSimilarity = 0;
+
+            let matchedPattern =
+                sample.pattern;
 
             for (
                 const variant
@@ -756,25 +777,32 @@ function analyzeAdvancedPattern(
             ) {
                 const sim =
                     similarity(
-                        current,
+                        currentPattern,
                         variant
                     );
 
                 if (
                     sim >
-                    bestSim
+                    bestSimilarity
                 ) {
-                    bestSim = sim;
-                    matched =
+                    bestSimilarity =
+                        sim;
+
+                    matchedPattern =
                         variant;
                 }
             }
 
             if (
                 !Number.isFinite(
-                    bestSim
-                ) ||
-                bestSim < 0.55
+                    bestSimilarity
+                )
+            ) {
+                continue;
+            }
+
+            if (
+                bestSimilarity < 0.55
             ) {
                 continue;
             }
@@ -782,68 +810,140 @@ function analyzeAdvancedPattern(
             const weight =
                 patternWeight(
                     sample,
-                    bestSim
+                    bestSimilarity
                 );
 
-            const finalWeight =
-                finiteNumber(
-                    weight *
-                    MODELS.patternMatch,
-                    0
-                );
+            candidates.push({
+                current:
+                    currentPattern,
 
-            if (
-                sample.next === "T"
-            ) {
-                scoreT +=
-                    finalWeight;
-            } else {
-                scoreX +=
-                    finalWeight;
-            }
+                sample,
 
-            matches.push({
-                level:
-                    sample.level,
-
-                cau:
-                    sample.template,
-
-                pattern:
-                    sample.pattern,
-
-                matched,
-
-                next:
-                    result(
-                        sample.next
-                    ),
+                matched:
+                    matchedPattern,
 
                 similarity:
-                    Number(
-                        bestSim.toFixed(
-                            2
-                        )
-                    ),
+                    bestSimilarity,
 
-                samples:
-                    sample.samples,
-
-                weight:
-                    Number(
-                        finalWeight.toFixed(
-                            3
-                        )
-                    )
+                weight
             });
         }
     }
 
-    matches.sort(
-        (a, b) =>
-            b.weight -
-            a.weight
+    // --------------------------------------------------------
+    // SẮP XẾP PATTERN MẪU
+    // --------------------------------------------------------
+
+    candidates.sort(
+        (a, b) => {
+            const simDiff =
+                b.similarity -
+                a.similarity;
+
+            if (
+                Math.abs(simDiff) >
+                0.001
+            ) {
+                return simDiff;
+            }
+
+            return (
+                b.weight -
+                a.weight
+            );
+        }
     );
+
+    // --------------------------------------------------------
+    // CHỈ LẤY 6 PATTERN MẪU
+    // --------------------------------------------------------
+
+    const best6 =
+        candidates.slice(
+            0,
+            COMPARE_SAMPLE_COUNT
+        );
+
+    // --------------------------------------------------------
+    // TỔNG HỢP
+    // --------------------------------------------------------
+
+    let scoreT = 0;
+    let scoreX = 0;
+
+    const matches = [];
+
+    for (
+        const item
+        of best6
+    ) {
+        const sample =
+            item.sample;
+
+        const sim =
+            finiteNumber(
+                item.similarity,
+                0
+            );
+
+        const weight =
+            finiteNumber(
+                item.weight,
+                0
+            );
+
+        const finalWeight =
+            finiteNumber(
+                weight *
+                MODELS.patternMatch,
+                0
+            );
+
+        if (
+            sample.next === "T"
+        ) {
+            scoreT +=
+                finalWeight;
+        }
+
+        if (
+            sample.next === "X"
+        ) {
+            scoreX +=
+                finalWeight;
+        }
+
+        matches.push({
+            pattern_cu:
+                item.current,
+
+            pattern_mau:
+                sample.pattern,
+
+            cau:
+                sample.template,
+
+            du_doan:
+                result(
+                    sample.next
+                ),
+
+            similarity:
+                Number(
+                    sim.toFixed(2)
+                ),
+
+            samples:
+                sample.samples,
+
+            weight:
+                Number(
+                    finalWeight.toFixed(
+                        3
+                    )
+                )
+        });
+    }
 
     return {
         pattern:
@@ -866,11 +966,7 @@ function analyzeAdvancedPattern(
                 0
             ),
 
-        matches:
-            matches.slice(
-                0,
-                50
-            )
+        matches
     };
 }
 
@@ -878,9 +974,7 @@ function analyzeAdvancedPattern(
 // MARKOV
 // ============================================================
 
-function markovScore(
-    history
-) {
+function markovScore(history) {
     const count = {
         TT: 0,
         TX: 0,
@@ -928,29 +1022,29 @@ function markovScore(
         };
     }
 
-    const t =
+    const T =
         last === "T"
             ? count.TT
             : count.XT;
 
-    const x =
+    const X =
         last === "T"
             ? count.TX
             : count.XX;
 
     const total =
-        t + x;
+        T + X;
 
     return {
         T:
             safeRatio(
-                t,
+                T,
                 total
             ),
 
         X:
             safeRatio(
-                x,
+                X,
                 total
             )
     };
@@ -960,16 +1054,7 @@ function markovScore(
 // STREAK
 // ============================================================
 
-function streakAnalysis(
-    pattern
-) {
-    if (!pattern) {
-        return {
-            T: 0.5,
-            X: 0.5
-        };
-    }
-
+function streakScore(pattern) {
     const runs =
         getRuns(pattern);
 
@@ -983,32 +1068,25 @@ function streakAnalysis(
         };
     }
 
+    const strength =
+        clamp(
+            last.count / 6,
+            0,
+            1
+        );
+
     if (
         last.value === "T"
     ) {
         return {
-            T:
-                clamp(
-                    last.count /
-                    5,
-                    0,
-                    1
-                ),
-
-            X: 0
+            T: strength,
+            X: 1 - strength
         };
     }
 
     return {
-        T: 0,
-
-        X:
-            clamp(
-                last.count /
-                5,
-                0,
-                1
-            )
+        T: 1 - strength,
+        X: strength
     };
 }
 
@@ -1016,7 +1094,7 @@ function streakAnalysis(
 // DISTRIBUTION
 // ============================================================
 
-function distribution(
+function distributionScore(
     history
 ) {
     const recent =
@@ -1030,15 +1108,13 @@ function distribution(
         of recent
     ) {
         if (
-            item.result ===
-            "T"
+            item.result === "T"
         ) {
             T++;
         }
 
         if (
-            item.result ===
-            "X"
+            item.result === "X"
         ) {
             X++;
         }
@@ -1104,15 +1180,11 @@ function transitionScore(
             a === b &&
             b === c
         ) {
-            if (
-                c === "T"
-            ) {
+            if (c === "T") {
                 T++;
             }
 
-            if (
-                c === "X"
-            ) {
+            if (c === "X") {
                 X++;
             }
         }
@@ -1140,9 +1212,7 @@ function transitionScore(
 // REPEAT
 // ============================================================
 
-function repeatScore(
-    history
-) {
+function repeatScore(history) {
     if (
         history.length < 2
     ) {
@@ -1152,26 +1222,26 @@ function repeatScore(
         };
     }
 
-    const last =
+    const a =
         history.at(-1)
             ?.result;
 
-    const prev =
+    const b =
         history.at(-2)
             ?.result;
 
     if (
-        last === prev &&
-        last
+        a &&
+        a === b
     ) {
         return {
             T:
-                last === "T"
+                a === "T"
                     ? 1
                     : 0,
 
             X:
-                last === "X"
+                a === "X"
                     ? 1
                     : 0
         };
@@ -1218,9 +1288,7 @@ function oppositeScore(
 // DICE MODEL
 // ============================================================
 
-function analyzeDice(
-    history
-) {
+function diceScore(history) {
     const recent =
         history
             .filter(
@@ -1230,13 +1298,6 @@ function analyzeDice(
                     )
             )
             .slice(-30);
-
-    if (!recent.length) {
-        return {
-            T: 0.5,
-            X: 0.5
-        };
-    }
 
     let T = 0;
     let X = 0;
@@ -1262,35 +1323,16 @@ function analyzeDice(
         if (
             total >= 11
         ) {
-            if (
-                item.result ===
-                "T"
-            ) {
-                T++;
-            } else {
-                X += 0.5;
-            }
+            T++;
         } else {
-            if (
-                item.result ===
-                "X"
-            ) {
-                X++;
-            } else {
-                T += 0.5;
-            }
+            X++;
         }
     }
 
     const total =
         T + X;
 
-    if (
-        !Number.isFinite(
-            total
-        ) ||
-        total <= 0
-    ) {
+    if (total <= 0) {
         return {
             T: 0.5,
             X: 0.5
@@ -1350,20 +1392,20 @@ function createLearning() {
 
 function updateLearning(
     engine,
-    prediction,
+    predicted,
     actual,
     dices
 ) {
     if (
-        !prediction ||
+        !predicted ||
         !actual
     ) {
         return;
     }
 
     if (
-        prediction !== "T" &&
-        prediction !== "X"
+        predicted !== "T" &&
+        predicted !== "X"
     ) {
         return;
     }
@@ -1376,7 +1418,7 @@ function updateLearning(
     }
 
     const win =
-        prediction === actual;
+        predicted === actual;
 
     engine.learning
         .totalPredictions++;
@@ -1386,14 +1428,14 @@ function updateLearning(
             .totalWins++;
 
         engine.learning[
-            prediction
+            predicted
         ].win++;
     } else {
         engine.learning
             .totalLosses++;
 
         engine.learning[
-            prediction
+            predicted
         ].lose++;
     }
 
@@ -1418,167 +1460,86 @@ function updateLearning(
 }
 
 function learningScore(
-    engine,
-    dices
+    engine
 ) {
-    const learning =
+    const data =
         engine.learning;
 
     const tTotal =
-        finiteNumber(
-            learning.T.win,
-            1
-        ) +
-        finiteNumber(
-            learning.T.lose,
-            1
-        );
+        data.T.win +
+        data.T.lose;
 
     const xTotal =
-        finiteNumber(
-            learning.X.win,
-            1
-        ) +
-        finiteNumber(
-            learning.X.lose,
-            1
-        );
-
-    let T =
-        safeRatio(
-            learning.T.win,
-            tTotal
-        );
-
-    let X =
-        safeRatio(
-            learning.X.win,
-            xTotal
-        );
-
-    const total =
-        diceTotal(dices);
-
-    if (
-        Number.isFinite(
-            total
-        )
-    ) {
-        const group =
-            total >= 11
-                ? "high"
-                : "low";
-
-        const dice =
-            learning
-                .dice[group];
-
-        const diceT =
-            finiteNumber(
-                dice.T,
-                1
-            );
-
-        const diceX =
-            finiteNumber(
-                dice.X,
-                1
-            );
-
-        const count =
-            diceT +
-            diceX;
-
-        if (
-            count > 0
-        ) {
-            T =
-                T * 0.65 +
-                safeRatio(
-                    diceT,
-                    count
-                ) * 0.35;
-
-            X =
-                X * 0.65 +
-                safeRatio(
-                    diceX,
-                    count
-                ) * 0.35;
-        }
-    }
+        data.X.win +
+        data.X.lose;
 
     return {
         T:
-            finiteNumber(
-                T,
-                0.5
+            safeRatio(
+                data.T.win,
+                tTotal
             ),
 
         X:
-            finiteNumber(
-                X,
-                0.5
+            safeRatio(
+                data.X.win,
+                xTotal
             )
     };
 }
 
 // ============================================================
-// MODEL SCORE
+// CALCULATE ALL MODELS
 // ============================================================
 
-function calculateModelScores(
+function calculateScores(
     engine
 ) {
-    const history =
-        engine.history;
-
-    const patternData =
+    const pattern =
         analyzeAdvancedPattern(
             engine
         );
 
     const markov =
         markovScore(
-            history
+            engine.history
         );
 
     const streak =
-        streakAnalysis(
+        streakScore(
             buildPattern(
-                history
+                engine.history
             )
         );
 
-    const dist =
-        distribution(
-            history
+    const distribution =
+        distributionScore(
+            engine.history
         );
 
     const dice =
-        analyzeDice(
-            history
+        diceScore(
+            engine.history
         );
 
-    const learned =
+    const learning =
         learningScore(
-            engine,
-            engine.lastDice
+            engine
         );
 
     const transition =
         transitionScore(
-            history
+            engine.history
         );
 
     const repeat =
         repeatScore(
-            history
+            engine.history
         );
 
     const opposite =
         oppositeScore(
-            history
+            engine.history
         );
 
     let T = 0;
@@ -1586,28 +1547,28 @@ function calculateModelScores(
 
     T +=
         finiteNumber(
-            patternData.T,
+            pattern.T,
             0
         ) *
         MODELS.pattern;
 
     X +=
         finiteNumber(
-            patternData.X,
+            pattern.X,
             0
         ) *
         MODELS.pattern;
 
     T +=
         finiteNumber(
-            patternData.T,
+            pattern.T,
             0
         ) *
         MODELS.patternMatch;
 
     X +=
         finiteNumber(
-            patternData.X,
+            pattern.X,
             0
         ) *
         MODELS.patternMatch;
@@ -1642,14 +1603,14 @@ function calculateModelScores(
 
     T +=
         finiteNumber(
-            dist.T,
+            distribution.T,
             0.5
         ) *
         MODELS.distribution;
 
     X +=
         finiteNumber(
-            dist.X,
+            distribution.X,
             0.5
         ) *
         MODELS.distribution;
@@ -1670,14 +1631,14 @@ function calculateModelScores(
 
     T +=
         finiteNumber(
-            learned.T,
+            learning.T,
             0.5
         ) *
         MODELS.learning;
 
     X +=
         finiteNumber(
-            learned.X,
+            learning.X,
             0.5
         ) *
         MODELS.learning;
@@ -1726,24 +1687,18 @@ function calculateModelScores(
 
     return {
         T:
-            finiteNumber(
-                T,
-                0
-            ),
+            finiteNumber(T, 0),
 
         X:
-            finiteNumber(
-                X,
-                0
-            ),
+            finiteNumber(X, 0),
 
-        patternData,
+        pattern,
 
         markov,
         streak,
-        dist,
+        distribution,
         dice,
-        learned,
+        learning,
         transition,
         repeat,
         opposite
@@ -1756,7 +1711,7 @@ function calculateModelScores(
 
 function predict(engine) {
     const scores =
-        calculateModelScores(
+        calculateScores(
             engine
         );
 
@@ -1772,13 +1727,8 @@ function predict(engine) {
             0
         );
 
-    if (T < 0) {
-        T = 0;
-    }
-
-    if (X < 0) {
-        X = 0;
-    }
+    if (T < 0) T = 0;
+    if (X < 0) X = 0;
 
     let total =
         T + X;
@@ -1817,14 +1767,6 @@ function predict(engine) {
             ratioX
         ) * 100;
 
-    if (
-        !Number.isFinite(
-            confidence
-        )
-    ) {
-        confidence = 50;
-    }
-
     confidence =
         clamp(
             confidence,
@@ -1832,31 +1774,8 @@ function predict(engine) {
             97
         );
 
-    const tiLeTai =
-        Math.round(
-            ratioT * 100
-        );
-
-    const tiLeXiu =
-        Math.round(
-            ratioX * 100
-        );
-
     const patternData =
-        scores.patternData ||
-        {};
-
-    const pattern =
-        typeof patternData.pattern ===
-        "string"
-            ? patternData.pattern
-            : "";
-
-    const cau =
-        typeof patternData.cau ===
-        "string"
-            ? patternData.cau
-            : "";
+        scores.pattern;
 
     return {
         side,
@@ -1869,20 +1788,29 @@ function predict(engine) {
                 confidence
             )}%`,
 
-        pattern,
+        pattern:
+            patternData.pattern,
 
         chi_tiet: {
-            cau,
+            cau:
+                patternData.cau,
 
             ti_le_tai:
-                `${tiLeTai}%`,
+                `${Math.round(
+                    ratioT * 100
+                )}%`,
 
             ti_le_xiu:
-                `${tiLeXiu}%`,
+                `${Math.round(
+                    ratioX * 100
+                )}%`,
 
             xu_huong:
                 result(side)
-        }
+        },
+
+        pattern_matches:
+            patternData.matches
     };
 }
 
@@ -1892,12 +1820,12 @@ function predict(engine) {
 
 function createEngine(
     name,
-    apiUrl
+    api
 ) {
     return {
         name,
 
-        apiUrl,
+        api,
 
         history: [],
 
@@ -1908,23 +1836,13 @@ function createEngine(
         learning:
             createLearning(),
 
-        models: {
-            ...MODELS
-        },
-
-        lastSessionId:
+        currentPrediction:
             null,
 
-        lastDice: [],
-
-        currentPrediction:
+        lastSessionId:
             null
     };
 }
-
-// ============================================================
-// 2 THUẬT TOÁN TÁCH RIÊNG
-// ============================================================
 
 const ttoan_hu =
     createEngine(
@@ -1939,15 +1857,15 @@ const ttoan_md5 =
     );
 
 // ============================================================
-// FETCH API
+// FETCH
 // ============================================================
 
-async function fetchSource(
+async function fetchAPI(
     engine
 ) {
     const response =
         await fetch(
-            engine.apiUrl,
+            engine.api,
             {
                 method: "GET",
 
@@ -1956,7 +1874,7 @@ async function fetchSource(
                         "application/json",
 
                     "User-Agent":
-                        "LC79-Analyzer/3.0"
+                        "LC79/6x6"
                 },
 
                 signal:
@@ -1981,74 +1899,12 @@ async function fetchSource(
 }
 
 // ============================================================
-// NORMALIZE API
-// ============================================================
-
-function normalizeSession(
-    item
-) {
-    const dices =
-        normalizeDice(
-            item.dices
-        );
-
-    const total =
-        diceTotal(
-            dices,
-            item.point
-        );
-
-    const side =
-        tx(
-            item.resultTruyenThong
-        );
-
-    const id =
-        Number(item.id);
-
-    if (
-        !Number.isFinite(id)
-    ) {
-        return null;
-    }
-
-    if (!side) {
-        return null;
-    }
-
-    return {
-        id,
-
-        _id:
-            item._id,
-
-        result:
-            side,
-
-        phien:
-            id,
-
-        xuc_xac:
-            dices,
-
-        tong:
-            finiteNumber(
-                total,
-                0
-            ),
-
-        ket_qua:
-            result(side)
-    };
-}
-
-// ============================================================
-// FINALIZE PREDICTION
+// FINALIZE
 // ============================================================
 
 function finalizePrediction(
     engine,
-    actual
+    session
 ) {
     const prediction =
         engine
@@ -2059,9 +1915,9 @@ function finalizePrediction(
                         item.phien_hien_tai
                     ) ===
                     String(
-                        actual.phien
+                        session.phien
                     ) &&
-                    item.ket_qua ===
+                    item.danh_gia ===
                     "⌛ Chờ Kết Quả"
             );
 
@@ -2070,17 +1926,17 @@ function finalizePrediction(
     }
 
     prediction.ket_qua =
-        actual.ket_qua;
+        session.ket_qua;
 
     prediction.xuc_xac =
-        actual.xuc_xac;
+        session.xuc_xac;
 
     prediction.tong =
-        actual.tong;
+        session.tong;
 
     const win =
         prediction.predictionSide ===
-        actual.result;
+        session.result;
 
     prediction.danh_gia =
         win
@@ -2092,37 +1948,26 @@ function finalizePrediction(
 
         prediction.predictionSide,
 
-        actual.result,
+        session.result,
 
-        actual.xuc_xac
+        session.xuc_xac
     );
 }
 
 // ============================================================
-// PROCESS API
+// PROCESS
 // ============================================================
 
-function processSource(
+function processData(
     engine,
-    rawList
+    list
 ) {
-    const normalized =
-        rawList
+    const sessions =
+        list
             .map(
                 normalizeSession
             )
-            .filter(Boolean);
-
-    if (
-        !normalized.length
-    ) {
-        return;
-    }
-
-    // API trả mới -> cũ
-    // Chuyển thành cũ -> mới
-    const ascending =
-        [...normalized]
+            .filter(Boolean)
             .sort(
                 (a, b) =>
                     a.phien -
@@ -2131,13 +1976,13 @@ function processSource(
 
     for (
         const session
-        of ascending
+        of sessions
     ) {
         const exists =
             engine.history.some(
-                item =>
+                x =>
                     String(
-                        item.phien
+                        x.phien
                     ) ===
                     String(
                         session.phien
@@ -2148,7 +1993,7 @@ function processSource(
             continue;
         }
 
-        // Chốt phiên dự đoán
+        // So sánh dự đoán cũ
         finalizePrediction(
             engine,
             session
@@ -2157,36 +2002,21 @@ function processSource(
         engine.history.push(
             session
         );
-
-        if (
-            engine.history.length >
-            MAX_SOURCE_HISTORY
-        ) {
-            engine.history =
-                engine.history.slice(
-                    -MAX_SOURCE_HISTORY
-                );
-        }
     }
 
-    const latest =
-        engine.history.at(-1);
+    engine.history =
+        engine.history.slice(
+            -MAX_SOURCE_HISTORY
+        );
 
-    if (!latest) {
-        return;
-    }
-
-    engine.lastSessionId =
-        latest.phien;
-
-    engine.lastDice =
-        latest.xuc_xac;
-
-    // Build pattern database
     engine.patternDatabase =
-        mineAdvancedPatterns(
+        minePatterns(
             engine.history
         );
+
+    engine.lastSessionId =
+        engine.history.at(-1)
+            ?.phien || null;
 }
 
 // ============================================================
@@ -2196,51 +2026,49 @@ function processSource(
 function createPrediction(
     engine
 ) {
-    if (
-        !engine.history.length
-    ) {
+    const previous =
+        engine.history.at(-1);
+
+    if (!previous) {
         return null;
     }
 
-    const phienTruoc =
-        engine.history.at(-1);
-
-    const phienHienTai =
+    const currentId =
         Number(
-            phienTruoc.phien
+            previous.phien
         ) + 1;
 
-    const existed =
+    const exists =
         engine
             .predictionHistory
             .find(
-                item =>
+                x =>
                     String(
-                        item.phien_hien_tai
+                        x.phien_hien_tai
                     ) ===
                     String(
-                        phienHienTai
+                        currentId
                     )
             );
 
-    if (existed) {
+    if (exists) {
         engine.currentPrediction =
-            existed;
+            exists;
 
-        return existed;
+        return exists;
     }
 
     const prediction =
         predict(engine);
 
     const item = {
-        // Phiên trước
+        // phiên trước
         phien:
-            phienTruoc.phien,
+            previous.phien,
 
-        // Phiên đang dự đoán
+        // phiên hiện tại
         phien_hien_tai:
-            phienHienTai,
+            currentId,
 
         du_doan:
             prediction.du_doan,
@@ -2248,51 +2076,45 @@ function createPrediction(
         predictionSide:
             prediction.side,
 
-        // Kết quả phiên trước
         ket_qua:
-            phienTruoc.ket_qua,
-
-        xuc_xac:
-            phienTruoc.xuc_xac,
-
-        tong:
-            phienTruoc.tong,
-
-        danh_gia:
             "⌛ Chờ Kết Quả",
 
-        do_tin_cay:
-            prediction.do_tin_cay,
+        danh_gia:
+            "⌛ Chờ",
+
+        xuc_xac:
+            "⌛ Chờ",
+
+        tong:
+            "⌛ Chờ",
 
         pattern:
             prediction.pattern,
 
+        do_tin_cay:
+            prediction.do_tin_cay,
+
         chi_tiet:
             prediction.chi_tiet,
 
-        thoi_gian:
-            new Date()
-                .toISOString()
+        // Internal
+        pattern_matches:
+            prediction.pattern_matches,
+
+        createdAt:
+            Date.now()
     };
 
     engine
         .predictionHistory
         .push(item);
 
-    if (
+    engine.predictionHistory =
         engine
             .predictionHistory
-            .length >
-        MAX_PREDICTION_HISTORY
-    ) {
-        engine
-            .predictionHistory =
-            engine
-                .predictionHistory
-                .slice(
-                    -MAX_PREDICTION_HISTORY
-                );
-    }
+            .slice(
+                -MAX_PREDICTION_HISTORY
+            );
 
     engine.currentPrediction =
         item;
@@ -2304,62 +2126,57 @@ function createPrediction(
 // SYNC
 // ============================================================
 
-async function syncEngine(
+async function sync(
     engine
 ) {
     try {
         const list =
-            await fetchSource(
+            await fetchAPI(
                 engine
             );
 
-        processSource(
+        processData(
             engine,
             list
         );
 
-        createPrediction(
-            engine
-        );
+        const prediction =
+            createPrediction(
+                engine
+            );
 
-        const current =
-            engine.currentPrediction;
-
-        console.log(
-            `[${engine.name}] ` +
-            `PHIEN=${current?.phien} | ` +
-            `HIEN_TAI=${current?.phien_hien_tai} | ` +
-            `DU_DOAN=${current?.du_doan} | ` +
-            `CONF=${current?.do_tin_cay} | ` +
-            `PATTERN=${current?.pattern}`
-        );
-
+        if (prediction) {
+            console.log(
+                `[${engine.name}] ` +
+                `Phiên: ${prediction.phien} | ` +
+                `Hiện tại: ${prediction.phien_hien_tai} | ` +
+                `Dự đoán: ${prediction.du_doan} | ` +
+                `Tin cậy: ${prediction.do_tin_cay} | ` +
+                `Pattern: ${prediction.pattern}`
+            );
+        }
     } catch (error) {
         console.error(
-            `[${engine.name}] ${error.message}`
+            `[${engine.name}]`,
+            error.message
         );
     }
 }
 
 // ============================================================
-// CURRENT RESPONSE
+// CURRENT
 // ============================================================
 
-function getCurrentResponse(
+function currentResponse(
     engine
 ) {
-    const phienTruoc =
-        engine.history.at(-1);
-
-    const current =
+    const prediction =
         engine.currentPrediction;
 
-    if (
-        !phienTruoc ||
-        !current
-    ) {
+    if (!prediction) {
         return {
-            phien: null,
+            phien:
+                null,
 
             xuc_xac:
                 "⌛ Chờ",
@@ -2400,40 +2217,40 @@ function getCurrentResponse(
 
     return {
         phien:
-            phienTruoc.phien,
+            prediction.phien,
 
         xuc_xac:
-            phienTruoc.xuc_xac,
+            prediction.xuc_xac,
 
         tong:
-            phienTruoc.tong,
+            prediction.tong,
 
         ket_qua:
-            phienTruoc.ket_qua,
+            prediction.ket_qua,
 
         phien_hien_tai:
-            current.phien_hien_tai,
+            prediction.phien_hien_tai,
 
         pattern:
-            current.pattern,
+            prediction.pattern,
 
         du_doan:
-            current.du_doan,
+            prediction.du_doan,
 
         do_tin_cay:
-            current.do_tin_cay,
+            prediction.do_tin_cay,
 
         chi_tiet:
-            current.chi_tiet
+            prediction.chi_tiet
     };
 }
 
 // ============================================================
 // HISTORY
-// CHỈ TRẢ 6 FIELD
+// CHỈ 6 FIELD
 // ============================================================
 
-function getHistoryResponse(
+function historyResponse(
     engine
 ) {
     return engine
@@ -2464,14 +2281,14 @@ function getHistoryResponse(
 }
 
 // ============================================================
-// HU API
+// HU
 // ============================================================
 
 app.get(
     "/tx/lc79/hu",
     (req, res) => {
         res.json(
-            getCurrentResponse(
+            currentResponse(
                 ttoan_hu
             )
         );
@@ -2482,7 +2299,7 @@ app.get(
     "/tx/lc79/hu/history",
     (req, res) => {
         res.json(
-            getHistoryResponse(
+            historyResponse(
                 ttoan_hu
             )
         );
@@ -2490,14 +2307,14 @@ app.get(
 );
 
 // ============================================================
-// MD5 API
+// MD5
 // ============================================================
 
 app.get(
     "/tx/lc79/md5",
     (req, res) => {
         res.json(
-            getCurrentResponse(
+            currentResponse(
                 ttoan_md5
             )
         );
@@ -2508,7 +2325,7 @@ app.get(
     "/tx/lc79/md5/history",
     (req, res) => {
         res.json(
-            getHistoryResponse(
+            historyResponse(
                 ttoan_md5
             )
         );
@@ -2516,46 +2333,66 @@ app.get(
 );
 
 // ============================================================
-// MODEL INFO
+// MODEL DEBUG
 // ============================================================
+
+function modelResponse(
+    engine
+) {
+    return {
+        engine:
+            engine.name,
+
+        pattern:
+            buildPattern(
+                engine.history
+            ),
+
+        six_current_patterns:
+            getLatest6Patterns(
+                buildPattern(
+                    engine.history
+                )
+            ),
+
+        six_sample_patterns:
+            engine
+                .currentPrediction
+                ?.pattern_matches ||
+            [],
+
+        pattern_database:
+            engine
+                .patternDatabase
+                .length,
+
+        learning:
+            engine.learning,
+
+        models:
+            engine.models
+    };
+}
 
 app.get(
     "/tx/lc79/hu/models",
     (req, res) => {
-        res.json({
-            engine: "HU",
-
-            models:
-                ttoan_hu.models,
-
-            pattern_count:
+        res.json(
+            modelResponse(
                 ttoan_hu
-                    .patternDatabase
-                    .length,
-
-            learning:
-                ttoan_hu.learning
-        });
+            )
+        );
     }
 );
 
 app.get(
     "/tx/lc79/md5/models",
     (req, res) => {
-        res.json({
-            engine: "MD5",
-
-            models:
-                ttoan_md5.models,
-
-            pattern_count:
+        res.json(
+            modelResponse(
                 ttoan_md5
-                    .patternDatabase
-                    .length,
-
-            learning:
-                ttoan_md5.learning
-        });
+            )
+        );
     }
 );
 
@@ -2571,45 +2408,33 @@ app.get(
                 "online",
 
             service:
-                "LC79 Analyzer",
+                "LC79",
 
             version:
-                "3.0.0",
+                "6x6",
 
-            engines: {
-                hu: {
-                    history:
-                        ttoan_hu
-                            .history
-                            .length,
+            hu: {
+                history:
+                    ttoan_hu
+                        .history
+                        .length,
 
-                    predictions:
-                        ttoan_hu
-                            .predictionHistory
-                            .length,
+                predictions:
+                    ttoan_hu
+                        .predictionHistory
+                        .length
+            },
 
-                    patterns:
-                        ttoan_hu
-                            .patternDatabase
-                            .length
-                },
+            md5: {
+                history:
+                    ttoan_md5
+                        .history
+                        .length,
 
-                md5: {
-                    history:
-                        ttoan_md5
-                            .history
-                            .length,
-
-                    predictions:
-                        ttoan_md5
-                            .predictionHistory
-                            .length,
-
-                    patterns:
-                        ttoan_md5
-                            .patternDatabase
-                            .length
-                }
+                predictions:
+                    ttoan_md5
+                        .predictionHistory
+                        .length
             }
         });
     }
@@ -2628,7 +2453,7 @@ app.listen(
         );
 
         console.log(
-            "🚀 LC79 ANALYZER 3.0"
+            "🚀 LC79 6×6 ANALYZER"
         );
 
         console.log(
@@ -2640,34 +2465,32 @@ app.listen(
         );
 
         console.log(
-            "🟢 HU MODEL READY"
+            "🟢 HU: ttoan_hu"
         );
 
         console.log(
-            "🟣 MD5 MODEL READY"
+            "🟣 MD5: ttoan_md5"
+        );
+
+        console.log(
+            "🔹 Current patterns: 6"
+        );
+
+        console.log(
+            "🔹 Sample patterns: 6"
         );
 
         console.log(
             "============================================================"
         );
 
-        syncEngine(
-            ttoan_hu
-        );
-
-        syncEngine(
-            ttoan_md5
-        );
+        sync(ttoan_hu);
+        sync(ttoan_md5);
 
         setInterval(
             () => {
-                syncEngine(
-                    ttoan_hu
-                );
-
-                syncEngine(
-                    ttoan_md5
-                );
+                sync(ttoan_hu);
+                sync(ttoan_md5);
             },
             FETCH_INTERVAL
         );
