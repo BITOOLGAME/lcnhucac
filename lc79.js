@@ -22,9 +22,9 @@ const MAX_PATTERN = 20;
 const FETCH_INTERVAL = 3000;
 
 // ============================================================
-// MODEL CONFIG
-// HU + MD5 DÙNG CÙNG HỆ MODEL
-// NHƯNG DATA LEARNING TÁCH RIÊNG
+// MODEL WEIGHTS
+// 2 THUẬT TOÁN DÙNG CÙNG HỆ MODEL
+// NHƯNG DATA HỌC TÁCH RIÊNG
 // ============================================================
 
 const MODELS = {
@@ -41,7 +41,7 @@ const MODELS = {
 };
 
 // ============================================================
-// PATTERN LIBRARY
+// PATTERN MẪU
 // DỄ -> KHÓ
 // ============================================================
 
@@ -110,11 +110,58 @@ const PATTERN_LIBRARY = {
 };
 
 // ============================================================
+// SAFE NUMBER
+// ============================================================
+
+function finiteNumber(value, fallback = 0) {
+    const n = Number(value);
+
+    return Number.isFinite(n)
+        ? n
+        : fallback;
+}
+
+function safeRatio(
+    a,
+    b,
+    fallback = 0.5
+) {
+    a = finiteNumber(a, 0);
+    b = finiteNumber(b, 0);
+
+    if (b <= 0) {
+        return fallback;
+    }
+
+    const value = a / b;
+
+    if (!Number.isFinite(value)) {
+        return fallback;
+    }
+
+    return clamp(value, 0, 1);
+}
+
+function clamp(value, min, max) {
+    value = finiteNumber(
+        value,
+        min
+    );
+
+    return Math.max(
+        min,
+        Math.min(max, value)
+    );
+}
+
+// ============================================================
 // BASIC
 // ============================================================
 
 function tx(value) {
-    if (!value) return null;
+    if (!value) {
+        return null;
+    }
 
     const v =
         String(value)
@@ -141,20 +188,21 @@ function tx(value) {
 }
 
 function result(value) {
-    if (value === "T") return "Tài";
-    if (value === "X") return "Xỉu";
+    if (value === "T") {
+        return "Tài";
+    }
+
+    if (value === "X") {
+        return "Xỉu";
+    }
+
     return null;
 }
 
 function opposite(value) {
-    return value === "T" ? "X" : "T";
-}
-
-function clamp(value, min, max) {
-    return Math.max(
-        min,
-        Math.min(max, value)
-    );
+    return value === "T"
+        ? "X"
+        : "T";
 }
 
 function safeArray(value) {
@@ -180,18 +228,23 @@ function normalizeDice(dices) {
         );
 }
 
-function diceTotal(dices, point) {
+function diceTotal(
+    dices,
+    point
+) {
     const arr =
         normalizeDice(dices);
 
     if (arr.length) {
         return arr.reduce(
-            (a, b) => a + b,
+            (a, b) =>
+                a + b,
             0
         );
     }
 
-    const p = Number(point);
+    const p =
+        Number(point);
 
     return Number.isFinite(p)
         ? p
@@ -203,7 +256,9 @@ function diceTotal(dices, point) {
 // ============================================================
 
 function similarity(a, b) {
-    if (!a || !b) return 0;
+    if (!a || !b) {
+        return 0;
+    }
 
     const len =
         Math.min(
@@ -211,7 +266,9 @@ function similarity(a, b) {
             b.length
         );
 
-    if (!len) return 0;
+    if (!len) {
+        return 0;
+    }
 
     let same = 0;
 
@@ -220,7 +277,9 @@ function similarity(a, b) {
         i < len;
         i++
     ) {
-        if (a[i] === b[i]) {
+        if (
+            a[i] === b[i]
+        ) {
             same++;
         }
     }
@@ -238,18 +297,24 @@ function similarity(a, b) {
             b.length
         );
 
-    return (
+    const value =
         positional * 0.8 +
-        lengthFactor * 0.2
+        lengthFactor * 0.2;
+
+    return finiteNumber(
+        value,
+        0
     );
 }
 
 // ============================================================
-// RUN
+// RUN / CẦU
 // ============================================================
 
 function getRuns(pattern) {
-    if (!pattern) return [];
+    if (!pattern) {
+        return [];
+    }
 
     const runs = [];
 
@@ -289,10 +354,6 @@ function getRuns(pattern) {
     return runs;
 }
 
-// ============================================================
-// CẦU: 1-3-1
-// ============================================================
-
 function patternTemplate(pattern) {
     return getRuns(pattern)
         .map(
@@ -303,8 +364,7 @@ function patternTemplate(pattern) {
 }
 
 // ============================================================
-// PATTERN CHÍNH
-// CŨ -> MỚI
+// PATTERN CŨ -> MỚI
 // ============================================================
 
 function buildPattern(
@@ -325,9 +385,14 @@ function buildPattern(
 // PATTERN LEVEL
 // ============================================================
 
-function getPatternLevel(template) {
+function getPatternLevel(
+    template
+) {
     for (
-        const [level, patterns]
+        const [
+            level,
+            patterns
+        ]
         of Object.entries(
             PATTERN_LIBRARY
         )
@@ -350,10 +415,12 @@ function getPatternLevel(template) {
 }
 
 // ============================================================
-// TRANSFORM
+// TRANSFORM PATTERN
 // ============================================================
 
-function oppositePattern(pattern) {
+function oppositePattern(
+    pattern
+) {
     return pattern
         .split("")
         .map(
@@ -363,15 +430,21 @@ function oppositePattern(pattern) {
         .join("");
 }
 
-function reversePattern(pattern) {
+function reversePattern(
+    pattern
+) {
     return pattern
         .split("")
         .reverse()
         .join("");
 }
 
-function transformPatterns(pattern) {
-    if (!pattern) return [];
+function transformPatterns(
+    pattern
+) {
+    if (!pattern) {
+        return [];
+    }
 
     const set =
         new Set();
@@ -379,16 +452,22 @@ function transformPatterns(pattern) {
     set.add(pattern);
 
     set.add(
-        oppositePattern(pattern)
+        oppositePattern(
+            pattern
+        )
     );
 
     set.add(
-        reversePattern(pattern)
+        reversePattern(
+            pattern
+        )
     );
 
     set.add(
         oppositePattern(
-            reversePattern(pattern)
+            reversePattern(
+                pattern
+            )
         )
     );
 
@@ -404,11 +483,26 @@ function patternWeight(
     sim
 ) {
     const level =
-        sample.level || 0;
+        finiteNumber(
+            sample.level,
+            0
+        );
+
+    const length =
+        finiteNumber(
+            sample.length,
+            2
+        );
+
+    const samples =
+        finiteNumber(
+            sample.samples,
+            1
+        );
 
     const lengthWeight =
         Math.min(
-            sample.length / 10,
+            length / 10,
             1.5
         );
 
@@ -427,33 +521,39 @@ function patternWeight(
 
     const sampleWeight =
         Math.min(
-            sample.samples / 5,
+            samples / 5,
             1.5
         );
 
-    return (
+    return finiteNumber(
         sim *
         lengthWeight *
         levelWeight *
-        sampleWeight
+        sampleWeight,
+        0
     );
 }
 
 // ============================================================
-// MINE PATTERNS
+// MINE PATTERN
 // ============================================================
 
-function mineAdvancedPatterns(history) {
+function mineAdvancedPatterns(
+    history
+) {
     const database = [];
 
     const values =
         history
             .map(
-                x => x.result
+                x =>
+                    x.result
             )
             .filter(Boolean);
 
-    if (values.length < 5) {
+    if (
+        values.length < 5
+    ) {
         return database;
     }
 
@@ -483,25 +583,38 @@ function mineAdvancedPatterns(history) {
                     i + length
                 ];
 
-            if (!next) continue;
-
-            const template =
-                patternTemplate(
-                    pattern
-                );
+            if (!next) {
+                continue;
+            }
 
             if (
-                !grouped[pattern]
+                !grouped[
+                    pattern
+                ]
             ) {
-                grouped[pattern] = {
+                grouped[
+                    pattern
+                ] = {
                     T: 0,
                     X: 0
                 };
             }
 
-            grouped[
-                pattern
-            ][next]++;
+            if (
+                next === "T"
+            ) {
+                grouped[
+                    pattern
+                ].T++;
+            }
+
+            if (
+                next === "X"
+            ) {
+                grouped[
+                    pattern
+                ].X++;
+            }
         }
 
         for (
@@ -517,7 +630,9 @@ function mineAdvancedPatterns(history) {
                 stats.T +
                 stats.X;
 
-            if (!samples) {
+            if (
+                samples <= 0
+            ) {
                 continue;
             }
 
@@ -553,11 +668,14 @@ function mineAdvancedPatterns(history) {
                     ),
 
                 confidence:
-                    Math.max(
-                        stats.T,
-                        stats.X
-                    ) /
-                    samples
+                    safeRatio(
+                        Math.max(
+                            stats.T,
+                            stats.X
+                        ),
+                        samples,
+                        0.5
+                    )
             });
         }
     }
@@ -598,10 +716,6 @@ function analyzeAdvancedPattern(
     let scoreX = 0;
 
     const matches = [];
-
-    // ==========================================
-    // NHIỀU ĐỘ DÀI
-    // ==========================================
 
     for (
         let length = 2;
@@ -647,7 +761,8 @@ function analyzeAdvancedPattern(
                     );
 
                 if (
-                    sim > bestSim
+                    sim >
+                    bestSim
                 ) {
                     bestSim = sim;
                     matched =
@@ -656,6 +771,9 @@ function analyzeAdvancedPattern(
             }
 
             if (
+                !Number.isFinite(
+                    bestSim
+                ) ||
                 bestSim < 0.55
             ) {
                 continue;
@@ -668,10 +786,11 @@ function analyzeAdvancedPattern(
                 );
 
             const finalWeight =
-                weight *
-                engine.models
-                    .patternMatch
-                    .weight;
+                finiteNumber(
+                    weight *
+                    MODELS.patternMatch,
+                    0
+                );
 
             if (
                 sample.next === "T"
@@ -726,26 +845,26 @@ function analyzeAdvancedPattern(
             a.weight
     );
 
-    // ==========================================
-    // CẦU CHÍNH
-    // ==========================================
-
-    const cau =
-        patternTemplate(
-            mainPattern
-        );
-
     return {
         pattern:
             mainPattern,
 
-        cau,
+        cau:
+            patternTemplate(
+                mainPattern
+            ),
 
         T:
-            scoreT,
+            finiteNumber(
+                scoreT,
+                0
+            ),
 
         X:
-            scoreX,
+            finiteNumber(
+                scoreX,
+                0
+            ),
 
         matches:
             matches.slice(
@@ -759,7 +878,9 @@ function analyzeAdvancedPattern(
 // MARKOV
 // ============================================================
 
-function markovScore(history) {
+function markovScore(
+    history
+) {
     const count = {
         TT: 0,
         TX: 0,
@@ -773,12 +894,13 @@ function markovScore(history) {
         i++
     ) {
         const a =
-            history[i - 1]
-                .result;
+            history[
+                i - 1
+            ]?.result;
 
         const b =
             history[i]
-                .result;
+                ?.result;
 
         if (!a || !b) {
             continue;
@@ -819,16 +941,18 @@ function markovScore(history) {
     const total =
         t + x;
 
-    if (!total) {
-        return {
-            T: 0.5,
-            X: 0.5
-        };
-    }
-
     return {
-        T: t / total,
-        X: x / total
+        T:
+            safeRatio(
+                t,
+                total
+            ),
+
+        X:
+            safeRatio(
+                x,
+                total
+            )
     };
 }
 
@@ -836,7 +960,9 @@ function markovScore(history) {
 // STREAK
 // ============================================================
 
-function streakAnalysis(pattern) {
+function streakAnalysis(
+    pattern
+) {
     if (!pattern) {
         return {
             T: 0.5,
@@ -862,8 +988,10 @@ function streakAnalysis(pattern) {
     ) {
         return {
             T:
-                Math.min(
-                    last.count / 5,
+                clamp(
+                    last.count /
+                    5,
+                    0,
                     1
                 ),
 
@@ -875,8 +1003,10 @@ function streakAnalysis(pattern) {
         T: 0,
 
         X:
-            Math.min(
-                last.count / 5,
+            clamp(
+                last.count /
+                5,
+                0,
                 1
             )
     };
@@ -886,7 +1016,9 @@ function streakAnalysis(pattern) {
 // DISTRIBUTION
 // ============================================================
 
-function distribution(history) {
+function distribution(
+    history
+) {
     const recent =
         history.slice(-30);
 
@@ -894,30 +1026,39 @@ function distribution(history) {
     let X = 0;
 
     for (
-        const item of recent
+        const item
+        of recent
     ) {
         if (
-            item.result === "T"
-        ) T++;
+            item.result ===
+            "T"
+        ) {
+            T++;
+        }
 
         if (
-            item.result === "X"
-        ) X++;
+            item.result ===
+            "X"
+        ) {
+            X++;
+        }
     }
 
     const total =
         T + X;
 
-    if (!total) {
-        return {
-            T: 0.5,
-            X: 0.5
-        };
-    }
-
     return {
-        T: T / total,
-        X: X / total
+        T:
+            safeRatio(
+                T,
+                total
+            ),
+
+        X:
+            safeRatio(
+                X,
+                total
+            )
     };
 }
 
@@ -925,7 +1066,9 @@ function distribution(history) {
 // TRANSITION
 // ============================================================
 
-function transitionScore(history) {
+function transitionScore(
+    history
+) {
     if (
         history.length < 3
     ) {
@@ -944,39 +1087,52 @@ function transitionScore(history) {
         i++
     ) {
         const a =
-            history[i - 2]
-                .result;
+            history[
+                i - 2
+            ]?.result;
 
         const b =
-            history[i - 1]
-                .result;
+            history[
+                i - 1
+            ]?.result;
 
         const c =
             history[i]
-                .result;
+                ?.result;
 
         if (
             a === b &&
             b === c
         ) {
-            if (c === "T") T++;
-            if (c === "X") X++;
+            if (
+                c === "T"
+            ) {
+                T++;
+            }
+
+            if (
+                c === "X"
+            ) {
+                X++;
+            }
         }
     }
 
     const total =
         T + X;
 
-    if (!total) {
-        return {
-            T: 0.5,
-            X: 0.5
-        };
-    }
-
     return {
-        T: T / total,
-        X: X / total
+        T:
+            safeRatio(
+                T,
+                total
+            ),
+
+        X:
+            safeRatio(
+                X,
+                total
+            )
     };
 }
 
@@ -984,7 +1140,9 @@ function transitionScore(history) {
 // REPEAT
 // ============================================================
 
-function repeatScore(history) {
+function repeatScore(
+    history
+) {
     if (
         history.length < 2
     ) {
@@ -996,14 +1154,15 @@ function repeatScore(history) {
 
     const last =
         history.at(-1)
-            .result;
+            ?.result;
 
     const prev =
         history.at(-2)
-            .result;
+            ?.result;
 
     if (
-        last === prev
+        last === prev &&
+        last
     ) {
         return {
             T:
@@ -1028,19 +1187,19 @@ function repeatScore(history) {
 // OPPOSITE
 // ============================================================
 
-function oppositeScore(history) {
-    if (
-        history.length < 2
-    ) {
+function oppositeScore(
+    history
+) {
+    const last =
+        history.at(-1)
+            ?.result;
+
+    if (!last) {
         return {
             T: 0.5,
             X: 0.5
         };
     }
-
-    const last =
-        history.at(-1)
-            .result;
 
     return {
         T:
@@ -1059,13 +1218,15 @@ function oppositeScore(history) {
 // DICE MODEL
 // ============================================================
 
-function analyzeDice(history) {
+function analyzeDice(
+    history
+) {
     const recent =
         history
             .filter(
-                x =>
+                item =>
                     Array.isArray(
-                        x.xuc_xac
+                        item.xuc_xac
                     )
             )
             .slice(-30);
@@ -1081,7 +1242,8 @@ function analyzeDice(history) {
     let X = 0;
 
     for (
-        const item of recent
+        const item
+        of recent
     ) {
         const total =
             diceTotal(
@@ -1101,7 +1263,8 @@ function analyzeDice(history) {
             total >= 11
         ) {
             if (
-                item.result === "T"
+                item.result ===
+                "T"
             ) {
                 T++;
             } else {
@@ -1109,7 +1272,8 @@ function analyzeDice(history) {
             }
         } else {
             if (
-                item.result === "X"
+                item.result ===
+                "X"
             ) {
                 X++;
             } else {
@@ -1121,7 +1285,12 @@ function analyzeDice(history) {
     const total =
         T + X;
 
-    if (!total) {
+    if (
+        !Number.isFinite(
+            total
+        ) ||
+        total <= 0
+    ) {
         return {
             T: 0.5,
             X: 0.5
@@ -1129,8 +1298,17 @@ function analyzeDice(history) {
     }
 
     return {
-        T: T / total,
-        X: X / total
+        T:
+            safeRatio(
+                T,
+                total
+            ),
+
+        X:
+            safeRatio(
+                X,
+                total
+            )
     };
 }
 
@@ -1163,7 +1341,9 @@ function createLearning() {
         },
 
         totalPredictions: 0,
+
         totalWins: 0,
+
         totalLosses: 0
     };
 }
@@ -1177,6 +1357,20 @@ function updateLearning(
     if (
         !prediction ||
         !actual
+    ) {
+        return;
+    }
+
+    if (
+        prediction !== "T" &&
+        prediction !== "X"
+    ) {
+        return;
+    }
+
+    if (
+        actual !== "T" &&
+        actual !== "X"
     ) {
         return;
     }
@@ -1207,7 +1401,9 @@ function updateLearning(
         diceTotal(dices);
 
     if (
-        Number.isFinite(total)
+        Number.isFinite(
+            total
+        )
     ) {
         const group =
             total >= 11
@@ -1215,7 +1411,9 @@ function updateLearning(
                 : "low";
 
         engine.learning
-            .dice[group][actual]++;
+            .dice[group][
+                actual
+            ]++;
     }
 }
 
@@ -1227,26 +1425,44 @@ function learningScore(
         engine.learning;
 
     const tTotal =
-        learning.T.win +
-        learning.T.lose;
+        finiteNumber(
+            learning.T.win,
+            1
+        ) +
+        finiteNumber(
+            learning.T.lose,
+            1
+        );
 
     const xTotal =
-        learning.X.win +
-        learning.X.lose;
+        finiteNumber(
+            learning.X.win,
+            1
+        ) +
+        finiteNumber(
+            learning.X.lose,
+            1
+        );
 
     let T =
-        learning.T.win /
-        tTotal;
+        safeRatio(
+            learning.T.win,
+            tTotal
+        );
 
     let X =
-        learning.X.win /
-        xTotal;
+        safeRatio(
+            learning.X.win,
+            xTotal
+        );
 
     const total =
         diceTotal(dices);
 
     if (
-        Number.isFinite(total)
+        Number.isFinite(
+            total
+        )
     ) {
         const group =
             total >= 11
@@ -1254,31 +1470,56 @@ function learningScore(
                 : "low";
 
         const dice =
-            learning.dice[group];
+            learning
+                .dice[group];
+
+        const diceT =
+            finiteNumber(
+                dice.T,
+                1
+            );
+
+        const diceX =
+            finiteNumber(
+                dice.X,
+                1
+            );
 
         const count =
-            dice.T + dice.X;
+            diceT +
+            diceX;
 
-        if (count > 0) {
+        if (
+            count > 0
+        ) {
             T =
                 T * 0.65 +
-                (
-                    dice.T /
+                safeRatio(
+                    diceT,
                     count
                 ) * 0.35;
 
             X =
                 X * 0.65 +
-                (
-                    dice.X /
+                safeRatio(
+                    diceX,
                     count
                 ) * 0.35;
         }
     }
 
     return {
-        T,
-        X
+        T:
+            finiteNumber(
+                T,
+                0.5
+            ),
+
+        X:
+            finiteNumber(
+                X,
+                0.5
+            )
     };
 }
 
@@ -1343,101 +1584,161 @@ function calculateModelScores(
     let T = 0;
     let X = 0;
 
-    // Pattern
     T +=
-        patternData.T *
+        finiteNumber(
+            patternData.T,
+            0
+        ) *
         MODELS.pattern;
 
     X +=
-        patternData.X *
+        finiteNumber(
+            patternData.X,
+            0
+        ) *
         MODELS.pattern;
 
-    // Pattern match
     T +=
-        patternData.T *
+        finiteNumber(
+            patternData.T,
+            0
+        ) *
         MODELS.patternMatch;
 
     X +=
-        patternData.X *
+        finiteNumber(
+            patternData.X,
+            0
+        ) *
         MODELS.patternMatch;
 
-    // Markov
     T +=
-        markov.T *
+        finiteNumber(
+            markov.T,
+            0.5
+        ) *
         MODELS.markov;
 
     X +=
-        markov.X *
+        finiteNumber(
+            markov.X,
+            0.5
+        ) *
         MODELS.markov;
 
-    // Streak
     T +=
-        streak.T *
+        finiteNumber(
+            streak.T,
+            0.5
+        ) *
         MODELS.streak;
 
     X +=
-        streak.X *
+        finiteNumber(
+            streak.X,
+            0.5
+        ) *
         MODELS.streak;
 
-    // Distribution
     T +=
-        dist.T *
+        finiteNumber(
+            dist.T,
+            0.5
+        ) *
         MODELS.distribution;
 
     X +=
-        dist.X *
+        finiteNumber(
+            dist.X,
+            0.5
+        ) *
         MODELS.distribution;
 
-    // Dice
     T +=
-        dice.T *
+        finiteNumber(
+            dice.T,
+            0.5
+        ) *
         MODELS.dice;
 
     X +=
-        dice.X *
+        finiteNumber(
+            dice.X,
+            0.5
+        ) *
         MODELS.dice;
 
-    // Learning
     T +=
-        learned.T *
+        finiteNumber(
+            learned.T,
+            0.5
+        ) *
         MODELS.learning;
 
     X +=
-        learned.X *
+        finiteNumber(
+            learned.X,
+            0.5
+        ) *
         MODELS.learning;
 
-    // Transition
     T +=
-        transition.T *
+        finiteNumber(
+            transition.T,
+            0.5
+        ) *
         MODELS.transition;
 
     X +=
-        transition.X *
+        finiteNumber(
+            transition.X,
+            0.5
+        ) *
         MODELS.transition;
 
-    // Repeat
     T +=
-        repeat.T *
+        finiteNumber(
+            repeat.T,
+            0.5
+        ) *
         MODELS.repeat;
 
     X +=
-        repeat.X *
+        finiteNumber(
+            repeat.X,
+            0.5
+        ) *
         MODELS.repeat;
 
-    // Opposite
     T +=
-        opposite.T *
+        finiteNumber(
+            opposite.T,
+            0.5
+        ) *
         MODELS.opposite;
 
     X +=
-        opposite.X *
+        finiteNumber(
+            opposite.X,
+            0.5
+        ) *
         MODELS.opposite;
 
     return {
-        T,
-        X,
+        T:
+            finiteNumber(
+                T,
+                0
+            ),
+
+        X:
+            finiteNumber(
+                X,
+                0
+            ),
 
         patternData,
+
         markov,
         streak,
         dist,
@@ -1459,38 +1760,103 @@ function predict(engine) {
             engine
         );
 
-    const T =
-        scores.T;
+    let T =
+        finiteNumber(
+            scores.T,
+            0
+        );
 
-    const X =
-        scores.X;
+    let X =
+        finiteNumber(
+            scores.X,
+            0
+        );
 
-    const total =
-        T + X || 1;
+    if (T < 0) {
+        T = 0;
+    }
+
+    if (X < 0) {
+        X = 0;
+    }
+
+    let total =
+        T + X;
+
+    if (
+        !Number.isFinite(
+            total
+        ) ||
+        total <= 0
+    ) {
+        T = 0.5;
+        X = 0.5;
+        total = 1;
+    }
+
+    const ratioT =
+        safeRatio(
+            T,
+            total
+        );
+
+    const ratioX =
+        safeRatio(
+            X,
+            total
+        );
 
     const side =
-        T >= X
+        ratioT >= ratioX
             ? "T"
             : "X";
 
-    const confidence =
+    let confidence =
+        Math.max(
+            ratioT,
+            ratioX
+        ) * 100;
+
+    if (
+        !Number.isFinite(
+            confidence
+        )
+    ) {
+        confidence = 50;
+    }
+
+    confidence =
         clamp(
-            Math.max(T, X) /
-            total *
-            100,
+            confidence,
             50,
             97
         );
 
     const tiLeTai =
         Math.round(
-            T / total * 100
+            ratioT * 100
         );
 
     const tiLeXiu =
         Math.round(
-            X / total * 100
+            ratioX * 100
         );
+
+    const patternData =
+        scores.patternData ||
+        {};
+
+    const pattern =
+        typeof patternData.pattern ===
+        "string"
+            ? patternData.pattern
+            : "";
+
+    const cau =
+        typeof patternData.cau ===
+        "string"
+            ? patternData.cau
+            : "";
 
     return {
         side,
@@ -1503,16 +1869,10 @@ function predict(engine) {
                 confidence
             )}%`,
 
-        pattern:
-            scores
-                .patternData
-                .pattern,
+        pattern,
 
         chi_tiet: {
-            cau:
-                scores
-                    .patternData
-                    .cau,
+            cau,
 
             ti_le_tai:
                 `${tiLeTai}%`,
@@ -1536,6 +1896,7 @@ function createEngine(
 ) {
     return {
         name,
+
         apiUrl,
 
         history: [],
@@ -1562,7 +1923,7 @@ function createEngine(
 }
 
 // ============================================================
-// TÁCH RIÊNG HU / MD5
+// 2 THUẬT TOÁN TÁCH RIÊNG
 // ============================================================
 
 const ttoan_hu =
@@ -1578,7 +1939,7 @@ const ttoan_md5 =
     );
 
 // ============================================================
-// FETCH
+// FETCH API
 // ============================================================
 
 async function fetchSource(
@@ -1595,7 +1956,7 @@ async function fetchSource(
                         "application/json",
 
                     "User-Agent":
-                        "LC79-Analyzer/1.0"
+                        "LC79-Analyzer/3.0"
                 },
 
                 signal:
@@ -1620,10 +1981,12 @@ async function fetchSource(
 }
 
 // ============================================================
-// NORMALIZE
+// NORMALIZE API
 // ============================================================
 
-function normalizeSession(item) {
+function normalizeSession(
+    item
+) {
     const dices =
         normalizeDice(
             item.dices
@@ -1640,9 +2003,21 @@ function normalizeSession(item) {
             item.resultTruyenThong
         );
 
+    const id =
+        Number(item.id);
+
+    if (
+        !Number.isFinite(id)
+    ) {
+        return null;
+    }
+
+    if (!side) {
+        return null;
+    }
+
     return {
-        id:
-            item.id,
+        id,
 
         _id:
             item._id,
@@ -1651,13 +2026,16 @@ function normalizeSession(item) {
             side,
 
         phien:
-            Number(item.id),
+            id,
 
         xuc_xac:
             dices,
 
         tong:
-            total,
+            finiteNumber(
+                total,
+                0
+            ),
 
         ket_qua:
             result(side)
@@ -1665,7 +2043,7 @@ function normalizeSession(item) {
 }
 
 // ============================================================
-// FINALIZE
+// FINALIZE PREDICTION
 // ============================================================
 
 function finalizePrediction(
@@ -1721,7 +2099,7 @@ function finalizePrediction(
 }
 
 // ============================================================
-// PROCESS
+// PROCESS API
 // ============================================================
 
 function processSource(
@@ -1733,18 +2111,16 @@ function processSource(
             .map(
                 normalizeSession
             )
-            .filter(
-                item =>
-                    item.result
-            );
+            .filter(Boolean);
 
-    if (!normalized.length) {
+    if (
+        !normalized.length
+    ) {
         return;
     }
 
-    // API MỚI -> CŨ
-    // Chuyển thành CŨ -> MỚI
-
+    // API trả mới -> cũ
+    // Chuyển thành cũ -> mới
     const ascending =
         [...normalized]
             .sort(
@@ -1772,7 +2148,7 @@ function processSource(
             continue;
         }
 
-        // Chốt prediction cũ
+        // Chốt phiên dự đoán
         finalizePrediction(
             engine,
             session
@@ -1796,7 +2172,9 @@ function processSource(
     const latest =
         engine.history.at(-1);
 
-    if (!latest) return;
+    if (!latest) {
+        return;
+    }
 
     engine.lastSessionId =
         latest.phien;
@@ -1804,7 +2182,7 @@ function processSource(
     engine.lastDice =
         latest.xuc_xac;
 
-    // Rebuild database
+    // Build pattern database
     engine.patternDatabase =
         mineAdvancedPatterns(
             engine.history
@@ -1856,7 +2234,7 @@ function createPrediction(
         predict(engine);
 
     const item = {
-        // Phiên đã kết thúc
+        // Phiên trước
         phien:
             phienTruoc.phien,
 
@@ -1870,7 +2248,7 @@ function createPrediction(
         predictionSide:
             prediction.side,
 
-        // Thông tin phiên trước
+        // Kết quả phiên trước
         ket_qua:
             phienTruoc.ket_qua,
 
@@ -1944,13 +2322,16 @@ async function syncEngine(
             engine
         );
 
+        const current =
+            engine.currentPrediction;
+
         console.log(
             `[${engine.name}] ` +
-            `PHIEN=${engine.currentPrediction?.phien} | ` +
-            `HIEN_TAI=${engine.currentPrediction?.phien_hien_tai} | ` +
-            `DU_DOAN=${engine.currentPrediction?.du_doan} | ` +
-            `CONF=${engine.currentPrediction?.do_tin_cay} | ` +
-            `PATTERN=${engine.currentPrediction?.pattern}`
+            `PHIEN=${current?.phien} | ` +
+            `HIEN_TAI=${current?.phien_hien_tai} | ` +
+            `DU_DOAN=${current?.du_doan} | ` +
+            `CONF=${current?.do_tin_cay} | ` +
+            `PATTERN=${current?.pattern}`
         );
 
     } catch (error) {
@@ -1999,17 +2380,17 @@ function getCurrentResponse(
                 "⌛ Đang Phân Tích",
 
             do_tin_cay:
-                "0%",
+                "50%",
 
             chi_tiet: {
                 cau:
                     "",
 
                 ti_le_tai:
-                    "0%",
+                    "50%",
 
                 ti_le_xiu:
-                    "0%",
+                    "50%",
 
                 xu_huong:
                     "Chưa xác định"
@@ -2018,7 +2399,6 @@ function getCurrentResponse(
     }
 
     return {
-        // PHIÊN TRƯỚC
         phien:
             phienTruoc.phien,
 
@@ -2031,7 +2411,6 @@ function getCurrentResponse(
         ket_qua:
             phienTruoc.ket_qua,
 
-        // PHIÊN HIỆN TẠI
         phien_hien_tai:
             current.phien_hien_tai,
 
@@ -2051,7 +2430,7 @@ function getCurrentResponse(
 
 // ============================================================
 // HISTORY
-// CHỈ 6 FIELD
+// CHỈ TRẢ 6 FIELD
 // ============================================================
 
 function getHistoryResponse(
@@ -2085,7 +2464,7 @@ function getHistoryResponse(
 }
 
 // ============================================================
-// HU
+// HU API
 // ============================================================
 
 app.get(
@@ -2111,7 +2490,7 @@ app.get(
 );
 
 // ============================================================
-// MD5
+// MD5 API
 // ============================================================
 
 app.get(
@@ -2137,7 +2516,7 @@ app.get(
 );
 
 // ============================================================
-// DEBUG MODEL
+// MODEL INFO
 // ============================================================
 
 app.get(
@@ -2195,7 +2574,7 @@ app.get(
                 "LC79 Analyzer",
 
             version:
-                "2.0.0",
+                "3.0.0",
 
             engines: {
                 hu: {
@@ -2231,16 +2610,7 @@ app.get(
                             .patternDatabase
                             .length
                 }
-            },
-
-            endpoints: [
-                "/tx/lc79/hu",
-                "/tx/lc79/hu/history",
-                "/tx/lc79/hu/models",
-                "/tx/lc79/md5",
-                "/tx/lc79/md5/history",
-                "/tx/lc79/md5/models"
-            ]
+            }
         });
     }
 );
@@ -2258,7 +2628,7 @@ app.listen(
         );
 
         console.log(
-            "🚀 LC79 ANALYZER 2.0"
+            "🚀 LC79 ANALYZER 3.0"
         );
 
         console.log(
@@ -2266,15 +2636,15 @@ app.listen(
         );
 
         console.log(
-            `🌐 HTTP: http://${HOST}:${PORT}`
+            `🌐 http://${HOST}:${PORT}`
         );
 
         console.log(
-            `🟢 HU : ${HU_API}`
+            "🟢 HU MODEL READY"
         );
 
         console.log(
-            `🟣 MD5: ${MD5_API}`
+            "🟣 MD5 MODEL READY"
         );
 
         console.log(
