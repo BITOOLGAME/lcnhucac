@@ -5,85 +5,93 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-const API_TX =
-    "https://wtx.tele68.com/v1/tx/sessions";
-
-const API_TXMD5 =
-    "https://wtxmd52.tele68.com/v1/txmd5/sessions";
+const SOURCES = {
+    tx: "https://wtx.tele68.com/v1/tx/sessions",
+    txmd5: "https://wtxmd52.tele68.com/v1/txmd5/sessions"
+};
 
 const INTERVAL = 3000;
-const MAX_HISTORY = 50;
+const HISTORY_SIZE = 50;
+const LEARNING_SIZE = 300;
 
 // ======================================================
 // STATE
 // ======================================================
 
 const state = {
-    tx: {
-        history: [],
-        predictions: [],
-        lastId: null,
-        current: null,
-        wins: 0,
-        losses: 0
-    },
-
-    txmd5: {
-        history: [],
-        predictions: [],
-        lastId: null,
-        current: null,
-        wins: 0,
-        losses: 0
-    }
+    tx: createState(),
+    txmd5: createState()
 };
+
+function createState() {
+    return {
+        history: [],
+        learning: [],
+        predictions: [],
+        lastId: null,
+        current: null,
+        wins: 0,
+        losses: 0
+    };
+}
 
 // ======================================================
 // UTILS
 // ======================================================
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 function normalizeResult(value) {
-
     if (!value) return null;
 
-    const v =
-        String(value)
-            .toUpperCase()
-            .trim();
+    const v = String(value)
+        .toUpperCase()
+        .trim();
 
     if (
         v === "TAI" ||
         v === "TÀI" ||
         v === "T"
     ) {
-        return "TAI";
+        return "Tài";
     }
 
     if (
         v === "XIU" ||
         v === "XỈU" ||
-        v === "X" ||
-        v === "XỈU"
+        v === "X"
     ) {
-        return "XIU";
+        return "Xỉu";
     }
 
     return null;
 }
 
+function internal(result) {
+    return result === "Tài" ? "T" : "X";
+}
+
+function opposite(result) {
+    return result === "Tài"
+        ? "Xỉu"
+        : "Tài";
+}
+
+function clamp(n, min, max) {
+    return Math.max(min, Math.min(max, n));
+}
+
+function round(n) {
+    return Math.round(n * 100) / 100;
+}
+
 // ======================================================
-// PARSER
+// PARSE API
 // ======================================================
 
-function parseAPI(data) {
+function parseAPI(json) {
 
     const list =
-        Array.isArray(data?.list)
-            ? data.list
+        Array.isArray(json?.list)
+            ? json.list
             : [];
 
     return list
@@ -91,22 +99,34 @@ function parseAPI(data) {
 
             const dices =
                 Array.isArray(item.dices)
-                    ? item.dices
+                    ? item.dices.map(Number)
                     : [];
 
-            const point =
-                Number(
-                    item.point
-                );
+            let point =
+                Number(item.point);
+
+            if (
+                !Number.isFinite(point) &&
+                dices.length
+            ) {
+                point =
+                    dices.reduce(
+                        (a, b) => a + b,
+                        0
+                    );
+            }
 
             return {
                 id: item.id,
 
-                _id: item._id,
+                _id:
+                    item._id ?? null,
 
                 result:
                     normalizeResult(
-                        item.resultTruyenThong
+                        item.resultTruyenThong ??
+                        item.result ??
+                        item.ket_qua
                     ),
 
                 dices,
@@ -114,85 +134,311 @@ function parseAPI(data) {
                 point:
                     Number.isFinite(point)
                         ? point
-                        : dices.reduce(
-                            (a, b) =>
-                                a + Number(b),
-                            0
-                        )
+                        : null
             };
         })
-        .filter(
-            item => item.result
-        );
+        .filter(x => x.result);
 }
 
 // ======================================================
-// SAME ALGORITHM FOR BOTH API
+// BAYESIAN
 // ======================================================
 
-function algorithm(history) {
+function probability(
+    wins,
+    losses,
+    alpha = 2,
+    beta = 2
+) {
+    return (
+        (wins + alpha) /
+        (
+            wins +
+            losses +
+            alpha +
+            beta
+        )
+    );
+}
 
-    if (
-        !Array.isArray(history) ||
-        history.length < 5
-    ) {
+// ======================================================
+// RECENT SIGNAL
+// ======================================================
 
-        return {
-            prediction: null,
-            confidence: 0,
-            scoreT: 0,
-            scoreX: 0,
-            pattern: "",
-            reason: "Chưa đủ dữ liệu"
-        };
+function recentSignal(results) {
+
+    if (results.length < 5) {
+        return null;
     }
 
-    const data =
-        history
-            .slice(0, MAX_HISTORY);
+    const sizes = [
+        5,
+        10,
+        20,
+        50
+    ];
 
-    const results =
-        data.map(
-            x => x.result
-        );
+    let total = 0;
+    let weightTotal = 0;
 
-    let T = 0;
-    let X = 0;
+    for (const size of sizes) {
 
-    // ==================================================
-    // 1. WEIGHTED RECENT
-    // ==================================================
+        if (results.length < size) {
+            continue;
+        }
+
+        const arr =
+            results.slice(0, size);
+
+        let tai = 0;
+        let xiu = 0;
+
+        for (const r of arr) {
+            if (r === "Tài") tai++;
+            else xiu++;
+        }
+
+        const p =
+            probability(
+                tai,
+                xiu
+            );
+
+        const weight =
+            size === 5
+                ? 1.5
+                : size === 10
+                    ? 1.2
+                    : size === 20
+                        ? 0.8
+                        : 0.5;
+
+        total += p * weight;
+        weightTotal += weight;
+    }
+
+    if (!weightTotal) {
+        return null;
+    }
+
+    return {
+        probability:
+            total / weightTotal,
+
+        samples:
+            Math.min(
+                results.length,
+                50
+            )
+    };
+}
+
+// ======================================================
+// MARKOV
+// ======================================================
+
+function markovSignal(results) {
+
+    if (results.length < 8) {
+        return null;
+    }
+
+    const current =
+        results[0];
+
+    let same = 0;
+    let change = 0;
 
     for (
         let i = 0;
-        i < results.length;
+        i < results.length - 1;
         i++
     ) {
 
-        const weight =
-            Math.max(
-                1,
-                20 - i
-            );
-
         if (
-            results[i] ===
-            "TAI"
+            results[i] !==
+            current
         ) {
-            T += weight;
+            continue;
         }
 
         if (
-            results[i] ===
-            "XIU"
+            results[i + 1] ===
+            current
         ) {
-            X += weight;
+            same++;
+        } else {
+            change++;
         }
     }
 
-    // ==================================================
-    // 2. RUN ANALYSIS
-    // ==================================================
+    const samples =
+        same + change;
+
+    if (samples < 3) {
+        return null;
+    }
+
+    const pSame =
+        probability(
+            same,
+            change
+        );
+
+    return {
+        probability:
+            current === "Tài"
+                ? pSame
+                : 1 - pSame,
+
+        samples
+    };
+}
+
+// ======================================================
+// PATTERN MINING
+// ======================================================
+
+function patternSignal(results) {
+
+    if (results.length < 8) {
+        return null;
+    }
+
+    const source =
+        results.map(internal);
+
+    let predictions = [];
+
+    for (
+        let length = 2;
+        length <= 8;
+        length++
+    ) {
+
+        if (
+            source.length <=
+            length + 2
+        ) {
+            continue;
+        }
+
+        const target =
+            source
+                .slice(0, length)
+                .join("");
+
+        let tai = 0;
+        let xiu = 0;
+
+        for (
+            let i = length;
+            i < source.length;
+            i++
+        ) {
+
+            const pattern =
+                source
+                    .slice(
+                        i - length,
+                        i
+                    )
+                    .join("");
+
+            if (
+                pattern !==
+                target
+            ) {
+                continue;
+            }
+
+            if (
+                source[i] === "T"
+            ) {
+                tai++;
+            } else {
+                xiu++;
+            }
+        }
+
+        const samples =
+            tai + xiu;
+
+        if (samples < 3) {
+            continue;
+        }
+
+        const p =
+            probability(
+                tai,
+                xiu
+            );
+
+        predictions.push({
+            length,
+            probability: p,
+            samples
+        });
+    }
+
+    if (!predictions.length) {
+        return null;
+    }
+
+    let total = 0;
+    let weightTotal = 0;
+
+    for (const p of predictions) {
+
+        const weight =
+            Math.min(
+                2,
+                0.5 +
+                p.length * 0.15
+            ) *
+            Math.min(
+                1.5,
+                Math.log2(
+                    p.samples + 1
+                ) / 2
+            );
+
+        total +=
+            p.probability *
+            weight;
+
+        weightTotal +=
+            weight;
+    }
+
+    return {
+        probability:
+            total / weightTotal,
+
+        samples:
+            predictions.reduce(
+                (a, b) =>
+                    a + b.samples,
+                0
+            ),
+
+        patterns:
+            predictions
+    };
+}
+
+// ======================================================
+// STREAK
+// ======================================================
+
+function streakSignal(results) {
+
+    if (results.length < 6) {
+        return null;
+    }
+
+    const first =
+        results[0];
 
     let run = 1;
 
@@ -204,44 +450,119 @@ function algorithm(history) {
 
         if (
             results[i] ===
-            results[0]
+            first
         ) {
-
             run++;
-
         } else {
-
             break;
         }
     }
 
-    if (run >= 2) {
+    if (run < 2) {
+        return null;
+    }
 
-        if (
-            results[0] ===
-            "TAI"
+    let same = 0;
+    let change = 0;
+
+    for (
+        let i = 0;
+        i < results.length - run;
+        i++
+    ) {
+
+        let match = true;
+
+        for (
+            let j = 0;
+            j < run;
+            j++
         ) {
 
-            X +=
-                run * 5;
+            if (
+                results[i + j] !==
+                first
+            ) {
+                match = false;
+                break;
+            }
+        }
 
+        if (!match) {
+            continue;
+        }
+
+        if (
+            results[i + run] ===
+            first
+        ) {
+            same++;
         } else {
-
-            T +=
-                run * 5;
+            change++;
         }
     }
 
-    // ==================================================
-    // 3. PAIR FREQUENCY
-    // ==================================================
+    const samples =
+        same + change;
 
-    const pairs = {
-        TT: 0,
-        TX: 0,
-        XT: 0,
-        XX: 0
+    if (samples < 3) {
+        return null;
+    }
+
+    const p =
+        probability(
+            same,
+            change
+        );
+
+    return {
+        probability:
+            first === "Tài"
+                ? p
+                : 1 - p,
+
+        samples,
+        run
     };
+}
+
+// ======================================================
+// ALTERNATING
+// ======================================================
+
+function alternatingSignal(results) {
+
+    if (results.length < 8) {
+        return null;
+    }
+
+    let changes = 0;
+
+    for (
+        let i = 0;
+        i < 6;
+        i++
+    ) {
+
+        if (
+            results[i] !==
+            results[i + 1]
+        ) {
+            changes++;
+        }
+    }
+
+    if (changes < 5) {
+        return null;
+    }
+
+    const expected =
+        opposite(
+            results[0]
+        );
+
+    let correct = 0;
+    let wrong = 0;
 
     for (
         let i = 0;
@@ -249,261 +570,375 @@ function algorithm(history) {
         i++
     ) {
 
-        const a =
-            results[i] === "TAI"
-                ? "T"
-                : "X";
-
-        const b =
-            results[i + 1] === "TAI"
-                ? "T"
-                : "X";
-
-        pairs[a + b]++;
-    }
-
-    const first =
-        results[0] === "TAI"
-            ? "T"
-            : "X";
-
-    if (first === "T") {
-
         if (
-            pairs.TT >
-            pairs.TX
+            results[i + 1] ===
+            opposite(results[i])
         ) {
-
-            T += 12;
-
+            correct++;
         } else {
-
-            X += 12;
-        }
-
-    } else {
-
-        if (
-            pairs.XX >
-            pairs.XT
-        ) {
-
-            X += 12;
-
-        } else {
-
-            T += 12;
+            wrong++;
         }
     }
 
-    // ==================================================
-    // 4. PATTERN 3
-    // ==================================================
-
-    const pattern =
-        results
-            .map(
-                x =>
-                    x === "TAI"
-                        ? "T"
-                        : "X"
-            )
-            .join("");
-
-    for (
-        let i = 0;
-        i <= pattern.length - 4;
-        i++
-    ) {
-
-        const p =
-            pattern.slice(
-                i,
-                i + 3
-            );
-
-        const next =
-            pattern[i + 3];
-
-        // TTT -> next
-        if (p === "TTT") {
-
-            if (next === "T") {
-
-                T += 4;
-
-            } else {
-
-                X += 4;
-            }
-        }
-
-        // XXX -> next
-        if (p === "XXX") {
-
-            if (next === "X") {
-
-                X += 4;
-
-            } else {
-
-                T += 4;
-            }
-        }
-
-        // TXT
-        if (p === "TXT") {
-            T += 4;
-        }
-
-        // XTX
-        if (p === "XTX") {
-            X += 4;
-        }
-    }
-
-    // ==================================================
-    // 5. POINT
-    // ==================================================
-
-    const latest =
-        data[0];
-
-    if (latest) {
-
-        const point =
-            Number(
-                latest.point
-            );
-
-        if (
-            Number.isFinite(point)
-        ) {
-
-            if (point >= 11) {
-
-                T += 7;
-
-            } else {
-
-                X += 7;
-            }
-        }
-    }
-
-    // ==================================================
-    // 6. DICE
-    // ==================================================
-
-    if (
-        latest &&
-        Array.isArray(
-            latest.dices
-        ) &&
-        latest.dices.length === 3
-    ) {
-
-        const sum =
-            latest.dices.reduce(
-                (a, b) =>
-                    a + Number(b),
-                0
-            );
-
-        if (sum >= 11) {
-
-            T += 5;
-
-        } else {
-
-            X += 5;
-        }
-    }
-
-    // ==================================================
-    // 7. FINAL
-    // ==================================================
-
-    const total =
-        T + X;
-
-    if (total <= 0) {
-
-        return {
-            prediction: null,
-            confidence: 0,
-            scoreT: T,
-            scoreX: X,
-            pattern:
-                pattern.slice(
-                    0,
-                    20
-                ),
-            reason:
-                "Không có tín hiệu"
-        };
-    }
-
-    const prediction =
-        T >= X
-            ? "TAI"
-            : "XIU";
-
-    const confidence =
-        Math.round(
-            (
-                Math.max(T, X) /
-                total
-            ) * 100
+    const p =
+        probability(
+            correct,
+            wrong
         );
 
     return {
-        prediction,
+        probability:
+            expected === "Tài"
+                ? p
+                : 1 - p,
 
-        confidence,
-
-        scoreT: T,
-
-        scoreX: X,
-
-        pattern:
-            pattern.slice(
-                0,
-                20
-            ),
-
-        run,
-
-        pairs,
-
-        reason:
-            prediction === "TAI"
-                ? `T=${T} > X=${X}`
-                : `X=${X} > T=${T}`
+        samples:
+            correct + wrong
     };
 }
 
 // ======================================================
-// PROCESS OLD PREDICTION
+// POINT SIGNAL
 // ======================================================
 
-function processResult(
+function pointSignal(history) {
+
+    const valid =
+        history.filter(
+            x =>
+                Number.isFinite(
+                    x.point
+                )
+        );
+
+    if (valid.length < 5) {
+        return null;
+    }
+
+    let tai = 0;
+    let xiu = 0;
+
+    for (
+        const item of valid.slice(
+            0,
+            20
+        )
+    ) {
+
+        if (
+            item.point >= 11
+        ) {
+            tai++;
+        } else {
+            xiu++;
+        }
+    }
+
+    return {
+        probability:
+            probability(
+                tai,
+                xiu
+            ),
+
+        samples:
+            tai + xiu
+    };
+}
+
+// ======================================================
+// WEIGHTED COMBINATION
+// ======================================================
+
+function combineSignals(signals) {
+
+    if (!signals.length) {
+        return 0.5;
+    }
+
+    let weighted = 0;
+    let weights = 0;
+
+    for (const signal of signals) {
+
+        let p =
+            clamp(
+                signal.probability,
+                0.05,
+                0.95
+            );
+
+        const sampleFactor =
+            clamp(
+                Math.log2(
+                    signal.samples + 1
+                ) / 4,
+                0.5,
+                1.5
+            );
+
+        const weight =
+            signal.weight *
+            sampleFactor;
+
+        weighted +=
+            p * weight;
+
+        weights += weight;
+    }
+
+    return weights
+        ? weighted / weights
+        : 0.5;
+}
+
+// ======================================================
+// SELF LEARNING CALIBRATION
+// ======================================================
+
+function calibrate(
+    raw,
+    learning
+) {
+
+    if (
+        learning.length < 15
+    ) {
+        return raw;
+    }
+
+    const nearby =
+        learning.filter(item =>
+            Math.abs(
+                item.rawProbability -
+                raw
+            ) <= 0.08
+        );
+
+    if (
+        nearby.length < 8
+    ) {
+        return raw;
+    }
+
+    let wins = 0;
+
+    for (const item of nearby) {
+        if (item.win) {
+            wins++;
+        }
+    }
+
+    const learned =
+        probability(
+            wins,
+            nearby.length - wins
+        );
+
+    return (
+        raw * 0.65 +
+        learned * 0.35
+    );
+}
+
+// ======================================================
+// MAIN ALGORITHM
+// ======================================================
+
+function predict(
+    history,
+    learning
+) {
+
+    if (history.length < 8) {
+
+        return {
+            prediction: null,
+            confidence: 0,
+            reason: "Chưa đủ dữ liệu"
+        };
+    }
+
+    /*
+     * RẤT QUAN TRỌNG:
+     *
+     * history[0] là phiên mới nhất đã có kết quả.
+     *
+     * Khi tạo dự đoán cho phiên tiếp theo,
+     * phải bỏ history[0] ra để tránh
+     * dùng chính kết quả vừa xảy ra.
+     */
+
+    const training =
+        history.slice(1);
+
+    const results =
+        training.map(
+            x => x.result
+        );
+
+    const signals = [];
+
+    function add(
+        name,
+        result,
+        weight
+    ) {
+
+        if (!result) {
+            return;
+        }
+
+        signals.push({
+            name,
+
+            probability:
+                result.probability,
+
+            samples:
+                result.samples,
+
+            weight
+        });
+    }
+
+    add(
+        "Recent",
+        recentSignal(results),
+        1.0
+    );
+
+    add(
+        "Markov",
+        markovSignal(results),
+        1.15
+    );
+
+    add(
+        "Pattern",
+        patternSignal(results),
+        1.30
+    );
+
+    add(
+        "Streak",
+        streakSignal(results),
+        0.85
+    );
+
+    add(
+        "Alternating",
+        alternatingSignal(results),
+        0.75
+    );
+
+    add(
+        "Point",
+        pointSignal(training),
+        0.35
+    );
+
+    if (!signals.length) {
+
+        return {
+            prediction: null,
+            confidence: 0,
+            reason: "Không đủ tín hiệu"
+        };
+    }
+
+    const raw =
+        combineSignals(
+            signals
+        );
+
+    const calibrated =
+        calibrate(
+            raw,
+            learning
+        );
+
+    const prediction =
+        calibrated >= 0.5
+            ? "Tài"
+            : "Xỉu";
+
+    const confidence =
+        round(
+            Math.max(
+                calibrated,
+                1 - calibrated
+            ) * 100
+        );
+
+    return {
+
+        prediction,
+
+        confidence,
+
+        probability: {
+            "Tài":
+                round(
+                    calibrated * 100
+                ),
+
+            "Xỉu":
+                round(
+                    (1 - calibrated) *
+                    100
+                )
+        },
+
+        rawProbability:
+            round(
+                raw * 100
+            ),
+
+        signals:
+            signals.map(s => ({
+                name: s.name,
+
+                probability:
+                    round(
+                        s.probability *
+                        100
+                    ),
+
+                samples:
+                    s.samples
+            })),
+
+        pattern:
+            results
+                .map(internal)
+                .join("")
+                .slice(
+                    0,
+                    20
+                )
+    };
+}
+
+// ======================================================
+// LEARNING
+// ======================================================
+
+function learn(
     type,
-    latest
+    actual
 ) {
 
     const s =
         state[type];
 
-    if (
-        !s.current
-    ) {
+    if (!s.current) {
         return;
     }
 
     if (
         s.current.id ===
-        latest.id
+        actual.id
     ) {
         return;
     }
@@ -515,20 +950,44 @@ function processResult(
         return;
     }
 
-    const actual =
-        latest.result;
-
     const win =
-        prediction === actual;
+        prediction ===
+        actual.result;
 
     if (win) {
-
         s.wins++;
-
     } else {
-
         s.losses++;
     }
+
+    s.learning.unshift({
+
+        id:
+            s.current.id,
+
+        prediction,
+
+        actual:
+            actual.result,
+
+        win,
+
+        rawProbability:
+            s.current.rawProbability /
+            100,
+
+        confidence:
+            s.current.confidence,
+
+        time:
+            Date.now()
+    });
+
+    s.learning =
+        s.learning.slice(
+            0,
+            LEARNING_SIZE
+        );
 
     s.predictions.unshift({
 
@@ -540,21 +999,13 @@ function processResult(
         confidence:
             s.current.confidence,
 
-        actual,
+        actual:
+            actual.result,
 
         status:
             win
                 ? "WIN"
                 : "LOSS",
-
-        scoreT:
-            s.current.scoreT,
-
-        scoreX:
-            s.current.scoreX,
-
-        pattern:
-            s.current.pattern,
 
         time:
             s.current.time
@@ -563,23 +1014,27 @@ function processResult(
     s.predictions =
         s.predictions.slice(
             0,
-            MAX_HISTORY
+            HISTORY_SIZE
         );
 }
 
 // ======================================================
-// UPDATE API
+// UPDATE ONE SOURCE
 // ======================================================
 
-async function updateAPI(
-    type,
-    url
+async function update(
+    type
 ) {
+
+    const s =
+        state[type];
 
     try {
 
         const response =
-            await fetch(url);
+            await fetch(
+                SOURCES[type]
+            );
 
         if (!response.ok) {
 
@@ -591,22 +1046,16 @@ async function updateAPI(
         const json =
             await response.json();
 
-        const list =
+        const history =
             parseAPI(json);
 
-        if (
-            !list.length
-        ) {
+        if (!history.length) {
             return;
         }
 
         const latest =
-            list[0];
+            history[0];
 
-        const s =
-            state[type];
-
-        // Không có phiên mới
         if (
             s.lastId ===
             latest.id
@@ -614,26 +1063,33 @@ async function updateAPI(
             return;
         }
 
-        // Chấm phiên dự đoán trước
-        processResult(
+        /*
+         * Chấm dự đoán phiên trước
+         */
+        learn(
             type,
             latest
         );
 
-        // Update history
+        /*
+         * Update history
+         */
         s.lastId =
             latest.id;
 
         s.history =
-            list.slice(
+            history.slice(
                 0,
-                MAX_HISTORY
+                HISTORY_SIZE
             );
 
-        // Cùng 1 thuật toán
+        /*
+         * Tạo dự đoán mới
+         */
         const result =
-            algorithm(
-                s.history
+            predict(
+                s.history,
+                s.learning
             );
 
         s.current = {
@@ -647,23 +1103,17 @@ async function updateAPI(
             confidence:
                 result.confidence,
 
-            scoreT:
-                result.scoreT,
+            probability:
+                result.probability,
 
-            scoreX:
-                result.scoreX,
+            rawProbability:
+                result.rawProbability,
+
+            signals:
+                result.signals,
 
             pattern:
                 result.pattern,
-
-            run:
-                result.run,
-
-            pairs:
-                result.pairs,
-
-            reason:
-                result.reason,
 
             time:
                 new Date()
@@ -671,13 +1121,11 @@ async function updateAPI(
         };
 
         console.log(
-            `[${type.toUpperCase()}]`,
+            `[${type}]`,
             `#${latest.id}`,
             "→",
             result.prediction,
             `${result.confidence}%`,
-            `T=${result.scoreT}`,
-            `X=${result.scoreX}`,
             `WIN=${s.wins}`,
             `LOSS=${s.losses}`
         );
@@ -685,55 +1133,37 @@ async function updateAPI(
     } catch (error) {
 
         console.error(
-            `[${type.toUpperCase()} ERROR]`,
+            `[${type}]`,
             error.message
         );
     }
 }
 
 // ======================================================
-// LOOP TX
+// LOOP
 // ======================================================
 
-async function loopTX() {
+async function worker(type) {
 
     while (true) {
 
-        await updateAPI(
-            "tx",
-            API_TX
-        );
+        await update(type);
 
-        await sleep(
-            INTERVAL
+        await new Promise(
+            resolve =>
+                setTimeout(
+                    resolve,
+                    INTERVAL
+                )
         );
     }
 }
 
 // ======================================================
-// LOOP TXMD5
+// STATS
 // ======================================================
 
-async function loopTXMD5() {
-
-    while (true) {
-
-        await updateAPI(
-            "txmd5",
-            API_TXMD5
-        );
-
-        await sleep(
-            INTERVAL
-        );
-    }
-}
-
-// ======================================================
-// WINRATE
-// ======================================================
-
-function getStats(type) {
+function stats(type) {
 
     const s =
         state[type];
@@ -741,17 +1171,6 @@ function getStats(type) {
     const total =
         s.wins +
         s.losses;
-
-    const winrate =
-        total > 0
-            ? Number(
-                (
-                    s.wins /
-                    total *
-                    100
-                ).toFixed(2)
-            )
-            : 0;
 
     return {
 
@@ -763,46 +1182,22 @@ function getStats(type) {
 
         total,
 
-        winrate
+        winrate:
+            total
+                ? round(
+                    s.wins /
+                    total *
+                    100
+                )
+                : 0,
+
+        learning:
+            s.learning.length
     };
 }
 
 // ======================================================
-// HOME
-// ======================================================
-
-app.get(
-    "/",
-    (req, res) => {
-
-        res.json({
-
-            status:
-                "online",
-
-            message:
-                "2 API - SAME ALGORITHM",
-
-            interval:
-                INTERVAL,
-
-            history:
-                MAX_HISTORY,
-
-            algorithms: {
-
-                tx:
-                    "SAME",
-
-                txmd5:
-                    "SAME"
-            }
-        });
-    }
-);
-
-// ======================================================
-// STATUS
+// API STATUS
 // ======================================================
 
 app.get(
@@ -813,78 +1208,32 @@ app.get(
 
             tx: {
 
-                api:
-                    API_TX,
+                source:
+                    SOURCES.tx,
 
                 lastId:
                     state.tx.lastId,
 
-                prediction:
-                    state.tx.current
-                        ?.prediction ??
-                    null,
+                current:
+                    state.tx.current,
 
-                confidence:
-                    state.tx.current
-                        ?.confidence ??
-                    0,
-
-                scoreT:
-                    state.tx.current
-                        ?.scoreT ??
-                    0,
-
-                scoreX:
-                    state.tx.current
-                        ?.scoreX ??
-                    0,
-
-                pattern:
-                    state.tx.current
-                        ?.pattern ??
-                    "",
-
-                ...getStats(
-                    "tx"
-                )
+                stats:
+                    stats("tx")
             },
 
             txmd5: {
 
-                api:
-                    API_TXMD5,
+                source:
+                    SOURCES.txmd5,
 
                 lastId:
                     state.txmd5.lastId,
 
-                prediction:
-                    state.txmd5.current
-                        ?.prediction ??
-                    null,
+                current:
+                    state.txmd5.current,
 
-                confidence:
-                    state.txmd5.current
-                        ?.confidence ??
-                    0,
-
-                scoreT:
-                    state.txmd5.current
-                        ?.scoreT ??
-                    0,
-
-                scoreX:
-                    state.txmd5.current
-                        ?.scoreX ??
-                    0,
-
-                pattern:
-                    state.txmd5.current
-                        ?.pattern ??
-                    "",
-
-                ...getStats(
-                    "txmd5"
-                )
+                stats:
+                    stats("txmd5")
             }
         });
     }
@@ -900,16 +1249,14 @@ app.get(
 
         res.json({
 
-            api:
-                API_TX,
+            source:
+                SOURCES.tx,
 
             current:
                 state.tx.current,
 
             stats:
-                getStats(
-                    "tx"
-                ),
+                stats("tx"),
 
             history:
                 state.tx.history,
@@ -930,16 +1277,14 @@ app.get(
 
         res.json({
 
-            api:
-                API_TXMD5,
+            source:
+                SOURCES.txmd5,
 
             current:
                 state.txmd5.current,
 
             stats:
-                getStats(
-                    "txmd5"
-                ),
+                stats("txmd5"),
 
             history:
                 state.txmd5.history,
@@ -951,7 +1296,7 @@ app.get(
 );
 
 // ======================================================
-// HISTORY
+// PREDICTION HISTORY
 // ======================================================
 
 app.get(
@@ -975,7 +1320,7 @@ app.get(
 );
 
 // ======================================================
-// START SERVER
+// START
 // ======================================================
 
 app.listen(
@@ -987,41 +1332,45 @@ app.listen(
         );
 
         console.log(
-            "  2 API SAME ALGORITHM"
+            " AI TX / TXMD5 ENGINE"
         );
 
         console.log(
             "===================================="
-        );
-
-        console.log(
-            `PORT: ${PORT}`
-        );
-
-        console.log(
-            `INTERVAL: ${INTERVAL}ms`
-        );
-
-        console.log(
-            `HISTORY: ${MAX_HISTORY}`
         );
 
         console.log(
             "TX:",
-            API_TX
+            SOURCES.tx
         );
 
         console.log(
             "TXMD5:",
-            API_TXMD5
+            SOURCES.txmd5
+        );
+
+        console.log(
+            "Interval:",
+            INTERVAL,
+            "ms"
+        );
+
+        console.log(
+            "History:",
+            HISTORY_SIZE
+        );
+
+        console.log(
+            "Algorithm:",
+            "Probability + Pattern + Markov + Learning"
         );
 
         console.log(
             "===================================="
         );
 
-        loopTX();
+        worker("tx");
 
-        loopTXMD5();
+        worker("txmd5");
     }
 );
