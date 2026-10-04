@@ -60,7 +60,7 @@ function loadState() {
       ...data
     };
   } catch (error) {
-    console.error("Lỗi đọc stats.json:", error.message);
+    console.error("Lỗi đọc stats:", error.message);
     return defaultState();
   }
 }
@@ -71,22 +71,22 @@ function saveState() {
   try {
     state.updated_at = new Date().toISOString();
 
-    const tempFile = DATA_FILE + ".tmp";
+    const temp = DATA_FILE + ".tmp";
 
     fs.writeFileSync(
-      tempFile,
+      temp,
       JSON.stringify(state, null, 2),
       "utf8"
     );
 
-    fs.renameSync(tempFile, DATA_FILE);
+    fs.renameSync(temp, DATA_FILE);
   } catch (error) {
-    console.error("Lỗi lưu thống kê:", error.message);
+    console.error("Lỗi lưu stats:", error.message);
   }
 }
 
 // =====================================================
-// NORMALIZE DATA
+// NORMALIZE
 // =====================================================
 
 function normalizeResult(value) {
@@ -94,21 +94,15 @@ function normalizeResult(value) {
     return null;
   }
 
-  const text = String(value).trim().toUpperCase();
+  const text = String(value)
+    .trim()
+    .toUpperCase();
 
-  if (
-    text === "TAI" ||
-    text === "TÀI" ||
-    text === "T"
-  ) {
+  if (["TAI", "TÀI", "T"].includes(text)) {
     return "T";
   }
 
-  if (
-    text === "XIU" ||
-    text === "XỈU" ||
-    text === "X"
-  ) {
+  if (["XIU", "XỈU", "X"].includes(text)) {
     return "X";
   }
 
@@ -128,7 +122,7 @@ function normalizeSessions(payload) {
     list = payload.data.list;
   }
 
-  const sessions = [];
+  const map = new Map();
 
   for (const item of list) {
     if (!item || typeof item !== "object") {
@@ -162,16 +156,18 @@ function normalizeSessions(payload) {
     const point = Number(
       item.point ??
       item.total ??
-      (validDices
-        ? dices.reduce((a, b) => a + b, 0)
-        : NaN)
+      (
+        validDices
+          ? dices.reduce((a, b) => a + b, 0)
+          : NaN
+      )
     );
 
     if (!Number.isFinite(id) || !result) {
       continue;
     }
 
-    sessions.push({
+    map.set(id, {
       id,
       result,
       dices: validDices ? dices : [],
@@ -179,36 +175,28 @@ function normalizeSessions(payload) {
     });
   }
 
-  const unique = new Map();
-
-  for (const item of sessions) {
-    unique.set(item.id, item);
-  }
-
-  // API thường trả phiên mới nhất trước.
-  // Đưa về thứ tự cũ -> mới để phân tích.
-  return Array.from(unique.values())
+  return Array.from(map.values())
     .sort((a, b) => a.id - b.id)
     .slice(-MAX_HISTORY);
 }
 
 // =====================================================
-// FETCH API
+// FETCH
 // =====================================================
 
 async function fetchSessions() {
   const response = await fetch(API_URL, {
     method: "GET",
     headers: {
-      "Accept": "application/json",
-      "User-Agent": "Vertex-TX-API/2.0"
+      Accept: "application/json",
+      "User-Agent": "Vertex-TX-API/3.0"
     },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT)
   });
 
   if (!response.ok) {
     throw new Error(
-      `API nguồn trả HTTP ${response.status}`
+      `Nguồn dữ liệu HTTP ${response.status}`
     );
   }
 
@@ -216,76 +204,75 @@ async function fetchSessions() {
   const sessions = normalizeSessions(payload);
 
   if (!sessions.length) {
-    throw new Error("API nguồn không có dữ liệu hợp lệ");
+    throw new Error("Không có dữ liệu phiên hợp lệ");
   }
 
   return sessions;
 }
 
 // =====================================================
-// BASIC HELPERS
+// HELPERS
 // =====================================================
 
 function opposite(value) {
   return value === "T" ? "X" : "T";
 }
 
-function countSide(history, side) {
-  return history.filter(x => x === side).length;
-}
-
-function ratio(history, side) {
-  if (!history.length) return 0;
-
-  return countSide(history, side) / history.length;
-}
-
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function majority(scoreT, scoreX) {
-  if (scoreT > scoreX) return "T";
-  if (scoreX > scoreT) return "X";
-  return null;
-}
-
 function patternString(history) {
-  return history
-    .slice(-MAX_PATTERN)
-    .join("");
+  return history.slice(-MAX_PATTERN).join("");
+}
+
+function getStreak(history) {
+  if (!history.length) {
+    return {
+      side: null,
+      length: 0
+    };
+  }
+
+  const side = history[history.length - 1];
+
+  let length = 0;
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i] !== side) break;
+    length++;
+  }
+
+  return { side, length };
+}
+
+function getTransitions(history) {
+  const result = [];
+
+  for (let i = 0; i < history.length - 1; i++) {
+    result.push(history[i] + history[i + 1]);
+  }
+
+  return result;
 }
 
 // =====================================================
-// CORE 1: FREQUENCY 10
+// PATTERN MATCHING
+// Chỉ so khớp mẫu cục bộ, không dùng tổng Tài/Xỉu toàn bộ.
 // =====================================================
 
-function coreFrequency(history, windowSize) {
-  const sample = history.slice(-windowSize);
-
-  if (sample.length < 3) return null;
-
-  const t = countSide(sample, "T");
-  const x = countSide(sample, "X");
-
-  if (t === x) return null;
-
-  return t > x ? "T" : "X";
-}
-
-// =====================================================
-// CORE 2: PATTERN MATCHING
-// =====================================================
-
-function corePattern(history, length) {
+function matchPattern(history, length) {
   if (history.length < length + 2) {
     return null;
   }
 
-  const target = history.slice(-length).join("");
+  const target = history
+    .slice(-length)
+    .join("");
 
   let tai = 0;
   let xiu = 0;
+  let matches = 0;
 
   for (
     let i = 0;
@@ -304,261 +291,328 @@ function corePattern(history, length) {
 
     if (next === "T") tai++;
     if (next === "X") xiu++;
+
+    matches++;
   }
 
-  if (tai === xiu) return null;
+  if (matches < 1 || tai === xiu) {
+    return null;
+  }
 
-  return tai > xiu ? "T" : "X";
+  return {
+    prediction: tai > xiu ? "T" : "X",
+    support: Math.max(tai, xiu) / matches,
+    matches
+  };
 }
 
 // =====================================================
-// CORE 3: TRANSITION
+// CORE 1: PATTERN 2
 // =====================================================
 
-function coreTransition(history) {
-  if (history.length < 4) return null;
+function core1(h) {
+  return matchPattern(h, 2);
+}
 
-  const last = history[history.length - 1];
+// =====================================================
+// CORE 2: PATTERN 3
+// =====================================================
+
+function core2(h) {
+  return matchPattern(h, 3);
+}
+
+// =====================================================
+// CORE 3: PATTERN 4
+// =====================================================
+
+function core3(h) {
+  return matchPattern(h, 4);
+}
+
+// =====================================================
+// CORE 4: PATTERN 5
+// =====================================================
+
+function core4(h) {
+  return matchPattern(h, 5);
+}
+
+// =====================================================
+// CORE 5: PATTERN 6
+// =====================================================
+
+function core5(h) {
+  return matchPattern(h, 6);
+}
+
+// =====================================================
+// CORE 6: TRANSITION
+// =====================================================
+
+function core6(h) {
+  if (h.length < 4) return null;
+
+  const last = h[h.length - 1];
 
   let tai = 0;
   let xiu = 0;
+  let matches = 0;
 
-  for (let i = 0; i < history.length - 1; i++) {
-    if (history[i] !== last) continue;
+  for (let i = 0; i < h.length - 1; i++) {
+    if (h[i] !== last) continue;
 
-    if (history[i + 1] === "T") tai++;
-    if (history[i + 1] === "X") xiu++;
+    matches++;
+
+    if (h[i + 1] === "T") tai++;
+    if (h[i + 1] === "X") xiu++;
   }
 
-  if (tai === xiu) return null;
+  if (matches < 2 || tai === xiu) {
+    return null;
+  }
 
-  return tai > xiu ? "T" : "X";
+  return {
+    prediction: tai > xiu ? "T" : "X",
+    support: Math.max(tai, xiu) / matches,
+    matches
+  };
 }
 
 // =====================================================
-// CORE 4: STREAK
+// CORE 7: STREAK STRUCTURE
 // =====================================================
 
-function coreStreak(history) {
-  if (history.length < 3) return null;
+function core7(h) {
+  const streak = getStreak(h);
 
-  const last = history[history.length - 1];
-
-  let streak = 0;
-
-  for (let i = history.length - 1; i >= 0; i--) {
-    if (history[i] !== last) break;
-    streak++;
+  if (streak.length >= 3) {
+    return {
+      prediction: streak.side,
+      support: 0.55 + Math.min(streak.length, 5) * 0.05,
+      matches: streak.length
+    };
   }
 
-  if (streak >= 3) {
-    return last;
-  }
-
-  if (streak === 1) {
-    return opposite(last);
+  if (streak.length === 1 && h.length >= 4) {
+    return {
+      prediction: opposite(streak.side),
+      support: 0.55,
+      matches: 1
+    };
   }
 
   return null;
 }
 
 // =====================================================
-// CORE 5: ALTERNATION
+// CORE 8: ALTERNATION
 // =====================================================
 
-function coreAlternation(history) {
-  if (history.length < 4) return null;
+function core8(h) {
+  if (h.length < 4) return null;
 
-  const last4 = history.slice(-4);
+  const last = h.slice(-4);
 
   const alternating =
-    last4[0] !== last4[1] &&
-    last4[1] !== last4[2] &&
-    last4[2] !== last4[3];
+    last[0] !== last[1] &&
+    last[1] !== last[2] &&
+    last[2] !== last[3];
 
   if (!alternating) return null;
 
-  return opposite(last4[3]);
+  return {
+    prediction: opposite(last[3]),
+    support: 0.62,
+    matches: 1
+  };
 }
 
 // =====================================================
-// CORE 6: RECENT 5
+// CORE 9: PAIR TRANSITION
 // =====================================================
 
-function coreRecent5(history) {
-  return coreFrequency(history, 5);
-}
+function core9(h) {
+  if (h.length < 5) return null;
 
-// =====================================================
-// CORE 7: RECENT 15
-// =====================================================
-
-function coreRecent15(history) {
-  return coreFrequency(history, 15);
-}
-
-// =====================================================
-// CORE 8: GLOBAL BALANCE
-// =====================================================
-
-function coreBalance(history) {
-  if (history.length < 6) return null;
-
-  const t = countSide(history, "T");
-  const x = countSide(history, "X");
-
-  const difference = Math.abs(t - x);
-
-  if (difference < 2) return null;
-
-  return t > x ? "X" : "T";
-}
-
-// =====================================================
-// CORE 9: PAIR PATTERN
-// =====================================================
-
-function corePair(history) {
-  if (history.length < 5) return null;
-
-  const lastPair = history.slice(-2).join("");
+  const pair = h.slice(-2).join("");
 
   let tai = 0;
   let xiu = 0;
+  let matches = 0;
 
-  for (let i = 0; i < history.length - 2; i++) {
-    const pair = history.slice(i, i + 2).join("");
+  for (let i = 0; i < h.length - 2; i++) {
+    if (h[i] + h[i + 1] !== pair) {
+      continue;
+    }
 
-    if (pair !== lastPair) continue;
+    matches++;
 
-    if (history[i + 2] === "T") tai++;
-    if (history[i + 2] === "X") xiu++;
+    if (h[i + 2] === "T") tai++;
+    if (h[i + 2] === "X") xiu++;
   }
 
-  if (tai === xiu) return null;
+  if (matches < 2 || tai === xiu) {
+    return null;
+  }
 
-  return tai > xiu ? "T" : "X";
+  return {
+    prediction: tai > xiu ? "T" : "X",
+    support: Math.max(tai, xiu) / matches,
+    matches
+  };
 }
 
 // =====================================================
-// CORE 10: TRIPLE PATTERN
+// CORE 10: TRIPLE TRANSITION
 // =====================================================
 
-function coreTriple(history) {
-  return corePattern(history, 3);
+function core10(h) {
+  if (h.length < 6) return null;
+
+  const triple = h.slice(-3).join("");
+
+  let tai = 0;
+  let xiu = 0;
+  let matches = 0;
+
+  for (let i = 0; i < h.length - 3; i++) {
+    if (h.slice(i, i + 3).join("") !== triple) {
+      continue;
+    }
+
+    matches++;
+
+    if (h[i + 3] === "T") tai++;
+    if (h[i + 3] === "X") xiu++;
+  }
+
+  if (matches < 2 || tai === xiu) {
+    return null;
+  }
+
+  return {
+    prediction: tai > xiu ? "T" : "X",
+    support: Math.max(tai, xiu) / matches,
+    matches
+  };
 }
 
 // =====================================================
-// CORE 11: MOMENTUM
+// CORE 11: RHYTHM STRUCTURE
 // =====================================================
 
-function coreMomentum(history) {
-  if (history.length < 6) return null;
+function core11(h) {
+  if (h.length < 6) return null;
 
-  const recent = history.slice(-6);
+  const last6 = h.slice(-6);
 
-  const first = recent.slice(0, 3);
-  const last = recent.slice(3, 6);
+  const runs = [];
 
-  const firstT = countSide(first, "T");
-  const lastT = countSide(last, "T");
+  let current = last6[0];
+  let length = 1;
 
-  if (lastT > firstT) return "T";
-  if (lastT < firstT) return "X";
+  for (let i = 1; i < last6.length; i++) {
+    if (last6[i] === current) {
+      length++;
+    } else {
+      runs.push({
+        side: current,
+        length
+      });
 
-  return null;
-}
+      current = last6[i];
+      length = 1;
+    }
+  }
 
-// =====================================================
-// CORE 12: RECENT WEIGHTED
-// =====================================================
-
-function coreWeighted(history) {
-  const sample = history.slice(-10);
-
-  if (sample.length < 5) return null;
-
-  let scoreT = 0;
-  let scoreX = 0;
-
-  sample.forEach((side, index) => {
-    const weight = index + 1;
-
-    if (side === "T") scoreT += weight;
-    if (side === "X") scoreX += weight;
+  runs.push({
+    side: current,
+    length
   });
 
-  if (scoreT === scoreX) return null;
+  if (runs.length < 2) return null;
 
-  return scoreT > scoreX ? "T" : "X";
+  const lastRun = runs[runs.length - 1];
+
+  if (lastRun.length >= 2) {
+    return {
+      prediction: lastRun.side,
+      support: 0.58,
+      matches: lastRun.length
+    };
+  }
+
+  return {
+    prediction: opposite(lastRun.side),
+    support: 0.55,
+    matches: 1
+  };
 }
 
 // =====================================================
-// CORE ENGINE
+// CORE 12: TRANSITION SEQUENCE
 // =====================================================
 
-const CORE_LIST = [
-  {
-    name: "frequency_10",
-    weight: 1.0,
-    run: h => coreFrequency(h, 10)
-  },
-  {
-    name: "frequency_30",
-    weight: 0.9,
-    run: h => coreFrequency(h, 30)
-  },
-  {
-    name: "frequency_50",
-    weight: 0.7,
-    run: h => coreFrequency(h, 50)
-  },
-  {
-    name: "pattern_2",
-    weight: 0.9,
-    run: h => corePattern(h, 2)
-  },
-  {
-    name: "pattern_3",
-    weight: 1.1,
-    run: h => corePattern(h, 3)
-  },
-  {
-    name: "pattern_4",
-    weight: 1.1,
-    run: h => corePattern(h, 4)
-  },
-  {
-    name: "transition",
-    weight: 1.0,
-    run: coreTransition
-  },
-  {
-    name: "streak",
-    weight: 0.8,
-    run: coreStreak
-  },
-  {
-    name: "alternation",
-    weight: 0.8,
-    run: coreAlternation
-  },
-  {
-    name: "recent_5",
-    weight: 1.0,
-    run: coreRecent5
-  },
-  {
-    name: "recent_15",
-    weight: 0.9,
-    run: coreRecent15
-  },
-  {
-    name: "balance",
-    weight: 0.7,
-    run: coreBalance
+function core12(h) {
+  if (h.length < 6) return null;
+
+  const transitions = getTransitions(h);
+
+  const lastTransition =
+    transitions[transitions.length - 1];
+
+  let same = 0;
+  let reverse = 0;
+
+  for (let i = 0; i < transitions.length - 1; i++) {
+    if (transitions[i] === lastTransition) {
+      same++;
+    } else if (
+      transitions[i] ===
+      lastTransition.split("").reverse().join("")
+    ) {
+      reverse++;
+    }
   }
+
+  if (same === reverse) return null;
+
+  const last = h[h.length - 1];
+
+  return {
+    prediction: same > reverse
+      ? last
+      : opposite(last),
+    support:
+      Math.max(same, reverse) /
+      Math.max(1, same + reverse),
+    matches: same + reverse
+  };
+}
+
+// =====================================================
+// 12 CORE ENGINE
+// =====================================================
+
+const CORES = [
+  { name: "pattern_2", weight: 1.0, run: core1 },
+  { name: "pattern_3", weight: 1.1, run: core2 },
+  { name: "pattern_4", weight: 1.2, run: core3 },
+  { name: "pattern_5", weight: 1.1, run: core4 },
+  { name: "pattern_6", weight: 0.9, run: core5 },
+  { name: "transition", weight: 1.0, run: core6 },
+  { name: "streak", weight: 0.8, run: core7 },
+  { name: "alternation", weight: 0.8, run: core8 },
+  { name: "pair_transition", weight: 1.0, run: core9 },
+  { name: "triple_transition", weight: 1.1, run: core10 },
+  { name: "rhythm", weight: 0.9, run: core11 },
+  { name: "transition_sequence", weight: 0.9, run: core12 }
 ];
+
+// =====================================================
+// ANALYZE CORES
+// =====================================================
 
 function analyzeCores(history) {
   let scoreT = 0;
@@ -566,25 +620,51 @@ function analyzeCores(history) {
 
   const details = [];
 
-  for (const core of CORE_LIST) {
-    let prediction = null;
+  for (const core of CORES) {
+    let result = null;
 
     try {
-      prediction = core.run(history);
-    } catch {
-      prediction = null;
+      result = core.run(history);
+    } catch (error) {
+      result = null;
     }
 
-    if (prediction === "T") {
-      scoreT += core.weight;
-    } else if (prediction === "X") {
-      scoreX += core.weight;
+    if (
+      !result ||
+      !["T", "X"].includes(result.prediction)
+    ) {
+      details.push({
+        ten: core.name,
+        du_doan: null,
+        trong_so: core.weight,
+        ho_tro: 0,
+        so_mau: 0
+      });
+
+      continue;
+    }
+
+    const support = clamp(
+      Number(result.support) || 0.5,
+      0.5,
+      1
+    );
+
+    const effectiveWeight =
+      core.weight * (0.75 + support * 0.5);
+
+    if (result.prediction === "T") {
+      scoreT += effectiveWeight;
+    } else {
+      scoreX += effectiveWeight;
     }
 
     details.push({
       ten: core.name,
-      du_doan: prediction ? LABEL[prediction] : null,
-      trong_so: core.weight
+      du_doan: LABEL[result.prediction],
+      trong_so: core.weight,
+      ho_tro: Number((support * 100).toFixed(2)),
+      so_mau: result.matches || 0
     });
   }
 
@@ -594,32 +674,52 @@ function analyzeCores(history) {
 
   const total = scoreT + scoreX;
 
-  const prediction = majority(scoreT, scoreX);
+  const prediction =
+    scoreT > scoreX
+      ? "T"
+      : scoreX > scoreT
+        ? "X"
+        : null;
 
-  const agreement = total > 0
+  const agreement = total
     ? Math.max(scoreT, scoreX) / total
     : 0;
 
-  const margin = total > 0
+  const margin = total
     ? Math.abs(scoreT - scoreX) / total
     : 0;
 
-  // Confidence is a heuristic score, not a calibrated probability.
-  let confidence = 50 + agreement * 12 + margin * 6;
+  let confidence =
+    50 +
+    agreement * 10 +
+    margin * 8;
 
   confidence = clamp(confidence, 50, 68);
 
-  if (!prediction || active < 3) {
+  // Không ép dự đoán nếu tín hiệu quá yếu.
+  if (
+    !prediction ||
+    active < 4 ||
+    agreement < 0.53
+  ) {
     confidence = 0;
   }
 
   return {
-    prediction,
+    prediction:
+      confidence > 0 ? prediction : null,
+
     scoreT: Number(scoreT.toFixed(3)),
     scoreX: Number(scoreX.toFixed(3)),
+
     active,
-    agreement: Number((agreement * 100).toFixed(2)),
+
+    agreement: Number(
+      (agreement * 100).toFixed(2)
+    ),
+
     confidence: Number(confidence.toFixed(2)),
+
     details
   };
 }
@@ -629,7 +729,10 @@ function analyzeCores(history) {
 // =====================================================
 
 function walkForward(history) {
-  const start = Math.max(MIN_HISTORY, history.length - MAX_BACKTEST);
+  const start = Math.max(
+    MIN_HISTORY,
+    history.length - MAX_BACKTEST
+  );
 
   let correct = 0;
   let wrong = 0;
@@ -657,15 +760,13 @@ function walkForward(history) {
     }
   }
 
-  const accuracy = tested
-    ? (correct / tested) * 100
-    : 0;
-
   return {
     tested,
     correct,
     wrong,
-    accuracy: Number(accuracy.toFixed(2))
+    accuracy: tested
+      ? Number(((correct / tested) * 100).toFixed(2))
+      : 0
   };
 }
 
@@ -689,8 +790,6 @@ function analyze(history) {
       pattern,
       cores_active: 0,
       thong_ke: {
-        tai: countSide(clean, "T"),
-        xiu: countSide(clean, "X"),
         backtest: null
       }
     };
@@ -702,24 +801,29 @@ function analyze(history) {
   return {
     ready: Boolean(result.prediction),
     remaining: 0,
+
     prediction: result.prediction,
     confidence: result.confidence,
+
     pattern,
+
     cores_active: result.active,
+
     score_tai: result.scoreT,
     score_xiu: result.scoreX,
+
     agreement: result.agreement,
+
     cores: result.details,
+
     thong_ke: {
-      tai: countSide(clean, "T"),
-      xiu: countSide(clean, "X"),
       backtest
     }
   };
 }
 
 // =====================================================
-// SETTLE PREVIOUS PREDICTION
+// SETTLE PREDICTION
 // =====================================================
 
 function settlePrediction(latest) {
@@ -730,15 +834,13 @@ function settlePrediction(latest) {
   }
 
   if (latest.id > state.pending.target_id) {
-    // Missed target session. Do not falsely count it.
+    // Không tự tính thắng/thua khi bỏ lỡ phiên mục tiêu.
     state.pending = null;
     saveState();
     return;
   }
 
-  if (
-    state.last_settled_id === latest.id
-  ) {
+  if (state.last_settled_id === latest.id) {
     return;
   }
 
@@ -757,7 +859,7 @@ function settlePrediction(latest) {
 }
 
 // =====================================================
-// RESPONSE BUILDER
+// RESPONSE
 // =====================================================
 
 function buildResponse(sessions) {
@@ -765,7 +867,10 @@ function buildResponse(sessions) {
 
   settlePrediction(latest);
 
-  const history = sessions.map(x => x.result);
+  const history = sessions.map(
+    item => item.result
+  );
+
   const result = analyze(history);
 
   const nextId = latest.id + 1;
@@ -774,13 +879,16 @@ function buildResponse(sessions) {
   let status = "Đang thu thập";
 
   if (result.ready && result.prediction) {
-    prediction = result.prediction;
     status = "Đã phân tích";
 
     if (
-      !state.pending ||
-      state.pending.target_id !== nextId
+      state.pending &&
+      state.pending.target_id === nextId
     ) {
+      prediction = state.pending.prediction;
+    } else {
+      prediction = result.prediction;
+
       state.pending = {
         target_id: nextId,
         prediction,
@@ -788,9 +896,9 @@ function buildResponse(sessions) {
       };
 
       saveState();
-    } else {
-      prediction = state.pending.prediction;
     }
+  } else if (history.length >= MIN_HISTORY) {
+    status = "Tín hiệu chưa đủ mạnh";
   }
 
   const total = state.thang + state.thua;
@@ -799,17 +907,24 @@ function buildResponse(sessions) {
     ? (state.thang / total) * 100
     : 0;
 
-  const previous = sessions.length > 1
-    ? sessions[sessions.length - 2]
-    : null;
+  const previous =
+    sessions.length > 1
+      ? sessions[sessions.length - 2]
+      : null;
 
   return {
     success: true,
-    source: "Vertex TX Engine",
+
+    source: "Vertex TX Engine V3",
+
     phien_truoc: latest.id,
+
     xuc_xac: latest.dices,
+
     tong: latest.point,
+
     ket_qua: LABEL[latest.result],
+
     phien_hien_tai: nextId,
 
     trang_thai: status,
@@ -823,10 +938,8 @@ function buildResponse(sessions) {
     pattern: result.pattern,
 
     thong_ke: {
-      tai: result.thong_ke.tai,
-      xiu: result.thong_ke.xiu,
       so_loi_hoat_dong: result.cores_active,
-      tong_loi: CORE_LIST.length,
+      tong_loi: CORES.length,
 
       diem_tai: result.score_tai ?? 0,
       diem_xiu: result.score_xiu ?? 0,
@@ -837,7 +950,9 @@ function buildResponse(sessions) {
 
       thang: state.thang,
       thua: state.thua,
+
       tong_du_doan: state.tong_du_doan,
+
       ty_le_thang: `${winRate.toFixed(2)}%`
     },
 
@@ -846,7 +961,8 @@ function buildResponse(sessions) {
     du_lieu: {
       so_phien: history.length,
       so_phien_can_thu_thap: result.remaining,
-      phien_cu: previous?.id ?? null
+      phien_cu: previous?.id ?? null,
+      gioi_han_pattern: MAX_PATTERN
     },
 
     cap_nhat: new Date().toISOString()
@@ -861,11 +977,12 @@ app.get("/", (req, res) => {
   res.json({
     success: true,
     name: "VERTEX PREMIUM TX API",
-    version: "2.0.0",
+    version: "3.0.0",
     status: "online",
     endpoints: [
       "/health",
-      "/api/lc/md5"
+      "/api/lc/md5",
+      "/api/stats"
     ]
   });
 });
@@ -885,13 +1002,9 @@ app.get("/api/lc/md5", async (req, res) => {
 
     const response = buildResponse(sessions);
 
-    res.setHeader(
-      "Cache-Control",
-      "no-store"
-    );
+    res.setHeader("Cache-Control", "no-store");
 
     return res.json(response);
-
   } catch (error) {
     console.error("API ERROR:", error.message);
 
@@ -927,7 +1040,7 @@ app.get("/api/stats", (req, res) => {
 });
 
 // =====================================================
-// RESET STATS
+// RESET
 // =====================================================
 
 app.post("/api/reset", (req, res) => {
@@ -954,7 +1067,7 @@ app.post("/api/reset", (req, res) => {
   state = defaultState();
   saveState();
 
-  res.json({
+  return res.json({
     success: true,
     message: "Đã reset thống kê"
   });
@@ -966,12 +1079,14 @@ app.post("/api/reset", (req, res) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log("==================================");
-  console.log(" VERTEX PREMIUM TX API");
+  console.log(" VERTEX PREMIUM TX API V3");
   console.log("==================================");
   console.log(`PORT: ${PORT}`);
   console.log(`API: /api/lc/md5`);
   console.log(`HEALTH: /health`);
   console.log(`MIN_HISTORY: ${MIN_HISTORY}`);
   console.log(`MAX_PATTERN: ${MAX_PATTERN}`);
+  console.log(`CORES: ${CORES.length}`);
+  console.log("MODE: PATTERN-BASED");
   console.log("SERVER READY");
 });
