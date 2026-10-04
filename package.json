@@ -1,9 +1,8 @@
 {
-  "name": "tx-md5-api",
-  "version": "1.0.0",
-  "description": "TX pattern analysis API",
+  "name": "vertex-tx-api",
+  "version": "2.0.0",
+  "description": "Vertex TX Prediction API",
   "main": "lc79.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node lc79.js"
   },
