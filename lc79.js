@@ -6,431 +6,972 @@ const fs = require("fs");
 const path = require("path");
 
 const app = express();
+
+app.disable("x-powered-by");
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const SOURCE_API = "https://wtxmd52.tele68.com/v1/txmd5/sessions";
-const STATE_FILE = path.join(__dirname, "stats.json");
 
-let cache = null;
-let lastFetch = 0;
-let busy = false;
+const API_URL =
+  process.env.API_URL ||
+  "https://wtxmd52.tele68.com/v1/txmd5/sessions";
 
-const CACHE_TIME = 3000;
+const DATA_FILE = path.join(__dirname, "stats.json");
 
-function normalize(value) {
-    const v = String(value || "").toUpperCase().trim();
+const MIN_HISTORY = 6;
+const MAX_PATTERN = 15;
+const MAX_HISTORY = 500;
+const MAX_BACKTEST = 250;
 
-    if (["TAI", "TÀI", "T"].includes(v)) return "T";
-    if (["XIU", "XỈU", "X"].includes(v)) return "X";
+const REQUEST_TIMEOUT = 10000;
 
-    return null;
-}
+const LABEL = {
+  T: "Tài",
+  X: "Xỉu"
+};
 
-function vietnamese(value) {
-    return value === "T" ? "Tài" : "Xỉu";
+// =====================================================
+// STATE
+// =====================================================
+
+function defaultState() {
+  return {
+    thang: 0,
+    thua: 0,
+    tong_du_doan: 0,
+    pending: null,
+    last_settled_id: null,
+    updated_at: null
+  };
 }
 
 function loadState() {
-    try {
-        if (!fs.existsSync(STATE_FILE)) {
-            return {
-                thang: 0,
-                thua: 0,
-                pending: null
-            };
-        }
-
-        return JSON.parse(
-            fs.readFileSync(STATE_FILE, "utf8")
-        );
-    } catch {
-        return {
-            thang: 0,
-            thua: 0,
-            pending: null
-        };
-    }
-}
-
-function saveState(state) {
-    const temp = STATE_FILE + ".tmp";
-
-    fs.writeFileSync(
-        temp,
-        JSON.stringify(state, null, 2),
-        "utf8"
-    );
-
-    fs.renameSync(temp, STATE_FILE);
-}
-
-function analyze(history) {
-    history = history.filter(
-        x => x === "T" || x === "X"
-    );
-
-    if (!history.length) {
-        return {
-            prediction: "X",
-            confidence: 50,
-            pattern: ""
-        };
+  try {
+    if (!fs.existsSync(DATA_FILE)) {
+      return defaultState();
     }
 
-    const pattern = history.slice(-30).join("");
-
-    const scores = {
-        T: 0,
-        X: 0
-    };
-
-    const weights = {
-        frequency: 1,
-        pattern: 2,
-        transition: 1.5,
-        streak: 1.2,
-        alternation: 1,
-        recency: 1.5
-    };
-
-    // CORE 1: Tần suất
-    const recent = history.slice(-30);
-
-    for (const side of ["T", "X"]) {
-        const count = recent.filter(
-            x => x === side
-        ).length;
-
-        const probability =
-            (count + 1) / (recent.length + 2);
-
-        scores[side] +=
-            (probability - 0.5) * weights.frequency;
-    }
-
-    // CORE 2: Pattern 2-6 ký tự
-    for (let size = 2; size <= 6; size++) {
-        if (history.length <= size) continue;
-
-        const key = history.slice(-size).join("");
-
-        let countT = 0;
-        let countX = 0;
-
-        for (let i = 0; i < history.length - size; i++) {
-            const segment = history
-                .slice(i, i + size)
-                .join("");
-
-            if (segment === key) {
-                if (history[i + size] === "T") {
-                    countT++;
-                } else {
-                    countX++;
-                }
-            }
-        }
-
-        const total = countT + countX;
-
-        if (total > 0) {
-            const difference =
-                (countT - countX) / (total + 2);
-
-            const factor =
-                weights.pattern * size / 6;
-
-            scores.T += difference * factor;
-            scores.X -= difference * factor;
-        }
-    }
-
-    // CORE 3: Chuỗi bệt
-    let streak = 1;
-
-    for (let i = history.length - 1; i > 0; i--) {
-        if (history[i] === history[i - 1]) {
-            streak++;
-        } else {
-            break;
-        }
-    }
-
-    const last = history[history.length - 1];
-    const opposite = last === "T" ? "X" : "T";
-
-    if (streak >= 3) {
-        scores[opposite] +=
-            Math.min(0.8, (streak - 2) * 0.12) *
-            weights.streak;
-    }
-
-    // CORE 4: Chuyển tiếp
-    const transitions = {
-        T: { T: 0, X: 0 },
-        X: { T: 0, X: 0 }
-    };
-
-    for (let i = 0; i < history.length - 1; i++) {
-        transitions[history[i]][history[i + 1]]++;
-    }
-
-    const row = transitions[last];
-    const rowTotal = row.T + row.X;
-
-    if (rowTotal > 0) {
-        for (const side of ["T", "X"]) {
-            const probability =
-                (row[side] + 1) / (rowTotal + 2);
-
-            scores[side] +=
-                (probability - 0.5) *
-                weights.transition;
-        }
-    }
-
-    // CORE 5: Nhịp luân phiên
-    let alternating = 0;
-
-    for (let i = history.length - 1; i > 0; i--) {
-        if (history[i] !== history[i - 1]) {
-            alternating++;
-        } else {
-            break;
-        }
-    }
-
-    if (alternating >= 3) {
-        const factor = Math.min(alternating, 6) / 6;
-
-        scores[last] +=
-            factor * weights.alternation * 0.25;
-
-        scores[opposite] +=
-            factor * weights.alternation * 0.25;
-    }
-
-    // CORE 6: Xu hướng gần nhất
-    const window = history.slice(-8);
-
-    const diff =
-        (window.filter(x => x === "T").length -
-         window.filter(x => x === "X").length) /
-        window.length;
-
-    scores.T += diff * weights.recency;
-    scores.X -= diff * weights.recency;
-
-    // Tổng hợp
-    const difference = scores.T - scores.X;
-
-    let prediction;
-
-    if (difference > 0) {
-        prediction = "T";
-    } else if (difference < 0) {
-        prediction = "X";
-    } else {
-        prediction = opposite;
-    }
-
-    const confidence = Number(
-        Math.max(
-            50,
-            Math.min(90, 50 + Math.abs(difference) * 12)
-        ).toFixed(2)
+    const data = JSON.parse(
+      fs.readFileSync(DATA_FILE, "utf8")
     );
 
     return {
-        prediction,
-        confidence,
-        pattern
+      ...defaultState(),
+      ...data
     };
+  } catch (error) {
+    console.error("Lỗi đọc stats.json:", error.message);
+    return defaultState();
+  }
 }
 
-async function fetchSource() {
-    const response = await fetch(SOURCE_API, {
-        headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
-        },
-        signal: AbortSignal.timeout(15000)
+let state = loadState();
+
+function saveState() {
+  try {
+    state.updated_at = new Date().toISOString();
+
+    const tempFile = DATA_FILE + ".tmp";
+
+    fs.writeFileSync(
+      tempFile,
+      JSON.stringify(state, null, 2),
+      "utf8"
+    );
+
+    fs.renameSync(tempFile, DATA_FILE);
+  } catch (error) {
+    console.error("Lỗi lưu thống kê:", error.message);
+  }
+}
+
+// =====================================================
+// NORMALIZE DATA
+// =====================================================
+
+function normalizeResult(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const text = String(value).trim().toUpperCase();
+
+  if (
+    text === "TAI" ||
+    text === "TÀI" ||
+    text === "T"
+  ) {
+    return "T";
+  }
+
+  if (
+    text === "XIU" ||
+    text === "XỈU" ||
+    text === "X"
+  ) {
+    return "X";
+  }
+
+  return null;
+}
+
+function normalizeSessions(payload) {
+  let list = [];
+
+  if (Array.isArray(payload)) {
+    list = payload;
+  } else if (Array.isArray(payload?.list)) {
+    list = payload.list;
+  } else if (Array.isArray(payload?.data)) {
+    list = payload.data;
+  } else if (Array.isArray(payload?.data?.list)) {
+    list = payload.data.list;
+  }
+
+  const sessions = [];
+
+  for (const item of list) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const id = Number(
+      item.id ??
+      item.session ??
+      item.phien ??
+      item.issue
+    );
+
+    const result = normalizeResult(
+      item.resultTruyenThong ??
+      item.result ??
+      item.ket_qua ??
+      item.outcome
+    );
+
+    const dices = Array.isArray(item.dices)
+      ? item.dices.map(Number)
+      : [];
+
+    const validDices =
+      dices.length === 3 &&
+      dices.every(
+        n => Number.isInteger(n) && n >= 1 && n <= 6
+      );
+
+    const point = Number(
+      item.point ??
+      item.total ??
+      (validDices
+        ? dices.reduce((a, b) => a + b, 0)
+        : NaN)
+    );
+
+    if (!Number.isFinite(id) || !result) {
+      continue;
+    }
+
+    sessions.push({
+      id,
+      result,
+      dices: validDices ? dices : [],
+      point: Number.isFinite(point) ? point : null
     });
+  }
 
-    if (!response.ok) {
-        throw new Error(`Source HTTP ${response.status}`);
-    }
+  const unique = new Map();
 
-    return response.json();
+  for (const item of sessions) {
+    unique.set(item.id, item);
+  }
+
+  // API thường trả phiên mới nhất trước.
+  // Đưa về thứ tự cũ -> mới để phân tích.
+  return Array.from(unique.values())
+    .sort((a, b) => a.id - b.id)
+    .slice(-MAX_HISTORY);
 }
 
-function updateStats(records, prediction, currentId) {
-    const state = loadState();
+// =====================================================
+// FETCH API
+// =====================================================
 
-    if (state.pending) {
-        const settled = records.find(
-            x => Number(x.id) === Number(state.pending.phien)
-        );
+async function fetchSessions() {
+  const response = await fetch(API_URL, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json",
+      "User-Agent": "Vertex-TX-API/2.0"
+    },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT)
+  });
 
-        if (settled) {
-            const actual = normalize(
-                settled.resultTruyenThong
-            );
+  if (!response.ok) {
+    throw new Error(
+      `API nguồn trả HTTP ${response.status}`
+    );
+  }
 
-            if (actual) {
-                if (actual === state.pending.du_doan) {
-                    state.thang++;
-                } else {
-                    state.thua++;
-                }
+  const payload = await response.json();
+  const sessions = normalizeSessions(payload);
 
-                state.pending = null;
-            }
-        }
-    }
+  if (!sessions.length) {
+    throw new Error("API nguồn không có dữ liệu hợp lệ");
+  }
 
-    if (
-        !state.pending ||
-        Number(state.pending.phien) !== currentId
-    ) {
-        state.pending = {
-            phien: currentId,
-            du_doan: prediction
-        };
-    }
-
-    saveState(state);
-
-    return state;
+  return sessions;
 }
 
-async function getPrediction() {
-    if (cache && Date.now() - lastFetch < CACHE_TIME) {
-        return cache;
+// =====================================================
+// BASIC HELPERS
+// =====================================================
+
+function opposite(value) {
+  return value === "T" ? "X" : "T";
+}
+
+function countSide(history, side) {
+  return history.filter(x => x === side).length;
+}
+
+function ratio(history, side) {
+  if (!history.length) return 0;
+
+  return countSide(history, side) / history.length;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function majority(scoreT, scoreX) {
+  if (scoreT > scoreX) return "T";
+  if (scoreX > scoreT) return "X";
+  return null;
+}
+
+function patternString(history) {
+  return history
+    .slice(-MAX_PATTERN)
+    .join("");
+}
+
+// =====================================================
+// CORE 1: FREQUENCY 10
+// =====================================================
+
+function coreFrequency(history, windowSize) {
+  const sample = history.slice(-windowSize);
+
+  if (sample.length < 3) return null;
+
+  const t = countSide(sample, "T");
+  const x = countSide(sample, "X");
+
+  if (t === x) return null;
+
+  return t > x ? "T" : "X";
+}
+
+// =====================================================
+// CORE 2: PATTERN MATCHING
+// =====================================================
+
+function corePattern(history, length) {
+  if (history.length < length + 2) {
+    return null;
+  }
+
+  const target = history.slice(-length).join("");
+
+  let tai = 0;
+  let xiu = 0;
+
+  for (
+    let i = 0;
+    i <= history.length - length - 1;
+    i++
+  ) {
+    const candidate = history
+      .slice(i, i + length)
+      .join("");
+
+    if (candidate !== target) {
+      continue;
     }
 
-    if (busy) {
-        if (cache) return cache;
-        throw new Error("API đang xử lý");
-    }
+    const next = history[i + length];
 
-    busy = true;
+    if (next === "T") tai++;
+    if (next === "X") xiu++;
+  }
+
+  if (tai === xiu) return null;
+
+  return tai > xiu ? "T" : "X";
+}
+
+// =====================================================
+// CORE 3: TRANSITION
+// =====================================================
+
+function coreTransition(history) {
+  if (history.length < 4) return null;
+
+  const last = history[history.length - 1];
+
+  let tai = 0;
+  let xiu = 0;
+
+  for (let i = 0; i < history.length - 1; i++) {
+    if (history[i] !== last) continue;
+
+    if (history[i + 1] === "T") tai++;
+    if (history[i + 1] === "X") xiu++;
+  }
+
+  if (tai === xiu) return null;
+
+  return tai > xiu ? "T" : "X";
+}
+
+// =====================================================
+// CORE 4: STREAK
+// =====================================================
+
+function coreStreak(history) {
+  if (history.length < 3) return null;
+
+  const last = history[history.length - 1];
+
+  let streak = 0;
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i] !== last) break;
+    streak++;
+  }
+
+  if (streak >= 3) {
+    return last;
+  }
+
+  if (streak === 1) {
+    return opposite(last);
+  }
+
+  return null;
+}
+
+// =====================================================
+// CORE 5: ALTERNATION
+// =====================================================
+
+function coreAlternation(history) {
+  if (history.length < 4) return null;
+
+  const last4 = history.slice(-4);
+
+  const alternating =
+    last4[0] !== last4[1] &&
+    last4[1] !== last4[2] &&
+    last4[2] !== last4[3];
+
+  if (!alternating) return null;
+
+  return opposite(last4[3]);
+}
+
+// =====================================================
+// CORE 6: RECENT 5
+// =====================================================
+
+function coreRecent5(history) {
+  return coreFrequency(history, 5);
+}
+
+// =====================================================
+// CORE 7: RECENT 15
+// =====================================================
+
+function coreRecent15(history) {
+  return coreFrequency(history, 15);
+}
+
+// =====================================================
+// CORE 8: GLOBAL BALANCE
+// =====================================================
+
+function coreBalance(history) {
+  if (history.length < 6) return null;
+
+  const t = countSide(history, "T");
+  const x = countSide(history, "X");
+
+  const difference = Math.abs(t - x);
+
+  if (difference < 2) return null;
+
+  return t > x ? "X" : "T";
+}
+
+// =====================================================
+// CORE 9: PAIR PATTERN
+// =====================================================
+
+function corePair(history) {
+  if (history.length < 5) return null;
+
+  const lastPair = history.slice(-2).join("");
+
+  let tai = 0;
+  let xiu = 0;
+
+  for (let i = 0; i < history.length - 2; i++) {
+    const pair = history.slice(i, i + 2).join("");
+
+    if (pair !== lastPair) continue;
+
+    if (history[i + 2] === "T") tai++;
+    if (history[i + 2] === "X") xiu++;
+  }
+
+  if (tai === xiu) return null;
+
+  return tai > xiu ? "T" : "X";
+}
+
+// =====================================================
+// CORE 10: TRIPLE PATTERN
+// =====================================================
+
+function coreTriple(history) {
+  return corePattern(history, 3);
+}
+
+// =====================================================
+// CORE 11: MOMENTUM
+// =====================================================
+
+function coreMomentum(history) {
+  if (history.length < 6) return null;
+
+  const recent = history.slice(-6);
+
+  const first = recent.slice(0, 3);
+  const last = recent.slice(3, 6);
+
+  const firstT = countSide(first, "T");
+  const lastT = countSide(last, "T");
+
+  if (lastT > firstT) return "T";
+  if (lastT < firstT) return "X";
+
+  return null;
+}
+
+// =====================================================
+// CORE 12: RECENT WEIGHTED
+// =====================================================
+
+function coreWeighted(history) {
+  const sample = history.slice(-10);
+
+  if (sample.length < 5) return null;
+
+  let scoreT = 0;
+  let scoreX = 0;
+
+  sample.forEach((side, index) => {
+    const weight = index + 1;
+
+    if (side === "T") scoreT += weight;
+    if (side === "X") scoreX += weight;
+  });
+
+  if (scoreT === scoreX) return null;
+
+  return scoreT > scoreX ? "T" : "X";
+}
+
+// =====================================================
+// CORE ENGINE
+// =====================================================
+
+const CORE_LIST = [
+  {
+    name: "frequency_10",
+    weight: 1.0,
+    run: h => coreFrequency(h, 10)
+  },
+  {
+    name: "frequency_30",
+    weight: 0.9,
+    run: h => coreFrequency(h, 30)
+  },
+  {
+    name: "frequency_50",
+    weight: 0.7,
+    run: h => coreFrequency(h, 50)
+  },
+  {
+    name: "pattern_2",
+    weight: 0.9,
+    run: h => corePattern(h, 2)
+  },
+  {
+    name: "pattern_3",
+    weight: 1.1,
+    run: h => corePattern(h, 3)
+  },
+  {
+    name: "pattern_4",
+    weight: 1.1,
+    run: h => corePattern(h, 4)
+  },
+  {
+    name: "transition",
+    weight: 1.0,
+    run: coreTransition
+  },
+  {
+    name: "streak",
+    weight: 0.8,
+    run: coreStreak
+  },
+  {
+    name: "alternation",
+    weight: 0.8,
+    run: coreAlternation
+  },
+  {
+    name: "recent_5",
+    weight: 1.0,
+    run: coreRecent5
+  },
+  {
+    name: "recent_15",
+    weight: 0.9,
+    run: coreRecent15
+  },
+  {
+    name: "balance",
+    weight: 0.7,
+    run: coreBalance
+  }
+];
+
+function analyzeCores(history) {
+  let scoreT = 0;
+  let scoreX = 0;
+
+  const details = [];
+
+  for (const core of CORE_LIST) {
+    let prediction = null;
 
     try {
-        const payload = await fetchSource();
-
-        const records = (payload.list || [])
-            .filter(x => normalize(x.resultTruyenThong))
-            .sort((a, b) => Number(a.id) - Number(b.id));
-
-        if (!records.length) {
-            throw new Error("Không có dữ liệu lịch sử");
-        }
-
-        const history = records.map(
-            x => normalize(x.resultTruyenThong)
-        );
-
-        const latest = records[records.length - 1];
-
-        const previousId = Number(latest.id);
-        const currentId = previousId + 1;
-
-        const dice = Array.isArray(latest.dices)
-            ? latest.dices.map(Number)
-            : [];
-
-        const totalDice = dice.reduce(
-            (sum, value) => sum + value,
-            0
-        );
-
-        const actual = normalize(
-            latest.resultTruyenThong
-        );
-
-        const result = analyze(history);
-
-        const state = updateStats(
-            records,
-            result.prediction,
-            currentId
-        );
-
-        const output = {
-            phien_truoc: previousId,
-            xuc_xac: dice,
-            tong: totalDice,
-            ket_qua: vietnamese(actual),
-            phien_hien_tai: currentId,
-            du_doan: vietnamese(result.prediction),
-            tin_cay: result.confidence,
-            pattern: result.pattern,
-            thong_ke: {
-                tai: history.filter(x => x === "T").length,
-                xiu: history.filter(x => x === "X").length,
-                tong_phien: history.length,
-                xu_huong: "Cân bằng"
-            },
-            thang: state.thang,
-            thua: state.thua,
-            tong_du_doan: state.thang + state.thua
-        };
-
-        cache = output;
-        lastFetch = Date.now();
-
-        return output;
-    } finally {
-        busy = false;
+      prediction = core.run(history);
+    } catch {
+      prediction = null;
     }
+
+    if (prediction === "T") {
+      scoreT += core.weight;
+    } else if (prediction === "X") {
+      scoreX += core.weight;
+    }
+
+    details.push({
+      ten: core.name,
+      du_doan: prediction ? LABEL[prediction] : null,
+      trong_so: core.weight
+    });
+  }
+
+  const active = details.filter(
+    item => item.du_doan !== null
+  ).length;
+
+  const total = scoreT + scoreX;
+
+  const prediction = majority(scoreT, scoreX);
+
+  const agreement = total > 0
+    ? Math.max(scoreT, scoreX) / total
+    : 0;
+
+  const margin = total > 0
+    ? Math.abs(scoreT - scoreX) / total
+    : 0;
+
+  // Confidence is a heuristic score, not a calibrated probability.
+  let confidence = 50 + agreement * 12 + margin * 6;
+
+  confidence = clamp(confidence, 50, 68);
+
+  if (!prediction || active < 3) {
+    confidence = 0;
+  }
+
+  return {
+    prediction,
+    scoreT: Number(scoreT.toFixed(3)),
+    scoreX: Number(scoreX.toFixed(3)),
+    active,
+    agreement: Number((agreement * 100).toFixed(2)),
+    confidence: Number(confidence.toFixed(2)),
+    details
+  };
 }
 
+// =====================================================
+// WALK-FORWARD BACKTEST
+// =====================================================
+
+function walkForward(history) {
+  const start = Math.max(MIN_HISTORY, history.length - MAX_BACKTEST);
+
+  let correct = 0;
+  let wrong = 0;
+  let tested = 0;
+
+  for (let i = start; i < history.length; i++) {
+    const training = history.slice(0, i);
+
+    if (training.length < MIN_HISTORY) {
+      continue;
+    }
+
+    const result = analyzeCores(training);
+
+    if (!result.prediction) {
+      continue;
+    }
+
+    tested++;
+
+    if (result.prediction === history[i]) {
+      correct++;
+    } else {
+      wrong++;
+    }
+  }
+
+  const accuracy = tested
+    ? (correct / tested) * 100
+    : 0;
+
+  return {
+    tested,
+    correct,
+    wrong,
+    accuracy: Number(accuracy.toFixed(2))
+  };
+}
+
+// =====================================================
+// MAIN ANALYSIS
+// =====================================================
+
+function analyze(history) {
+  const clean = history
+    .filter(x => x === "T" || x === "X")
+    .slice(-MAX_HISTORY);
+
+  const pattern = patternString(clean);
+
+  if (clean.length < MIN_HISTORY) {
+    return {
+      ready: false,
+      remaining: MIN_HISTORY - clean.length,
+      prediction: null,
+      confidence: 0,
+      pattern,
+      cores_active: 0,
+      thong_ke: {
+        tai: countSide(clean, "T"),
+        xiu: countSide(clean, "X"),
+        backtest: null
+      }
+    };
+  }
+
+  const result = analyzeCores(clean);
+  const backtest = walkForward(clean);
+
+  return {
+    ready: Boolean(result.prediction),
+    remaining: 0,
+    prediction: result.prediction,
+    confidence: result.confidence,
+    pattern,
+    cores_active: result.active,
+    score_tai: result.scoreT,
+    score_xiu: result.scoreX,
+    agreement: result.agreement,
+    cores: result.details,
+    thong_ke: {
+      tai: countSide(clean, "T"),
+      xiu: countSide(clean, "X"),
+      backtest
+    }
+  };
+}
+
+// =====================================================
+// SETTLE PREVIOUS PREDICTION
+// =====================================================
+
+function settlePrediction(latest) {
+  if (!state.pending) return;
+
+  if (latest.id < state.pending.target_id) {
+    return;
+  }
+
+  if (latest.id > state.pending.target_id) {
+    // Missed target session. Do not falsely count it.
+    state.pending = null;
+    saveState();
+    return;
+  }
+
+  if (
+    state.last_settled_id === latest.id
+  ) {
+    return;
+  }
+
+  state.tong_du_doan++;
+
+  if (state.pending.prediction === latest.result) {
+    state.thang++;
+  } else {
+    state.thua++;
+  }
+
+  state.last_settled_id = latest.id;
+  state.pending = null;
+
+  saveState();
+}
+
+// =====================================================
+// RESPONSE BUILDER
+// =====================================================
+
+function buildResponse(sessions) {
+  const latest = sessions[sessions.length - 1];
+
+  settlePrediction(latest);
+
+  const history = sessions.map(x => x.result);
+  const result = analyze(history);
+
+  const nextId = latest.id + 1;
+
+  let prediction = null;
+  let status = "Đang thu thập";
+
+  if (result.ready && result.prediction) {
+    prediction = result.prediction;
+    status = "Đã phân tích";
+
+    if (
+      !state.pending ||
+      state.pending.target_id !== nextId
+    ) {
+      state.pending = {
+        target_id: nextId,
+        prediction,
+        created_at: new Date().toISOString()
+      };
+
+      saveState();
+    } else {
+      prediction = state.pending.prediction;
+    }
+  }
+
+  const total = state.thang + state.thua;
+
+  const winRate = total > 0
+    ? (state.thang / total) * 100
+    : 0;
+
+  const previous = sessions.length > 1
+    ? sessions[sessions.length - 2]
+    : null;
+
+  return {
+    success: true,
+    source: "Vertex TX Engine",
+    phien_truoc: latest.id,
+    xuc_xac: latest.dices,
+    tong: latest.point,
+    ket_qua: LABEL[latest.result],
+    phien_hien_tai: nextId,
+
+    trang_thai: status,
+
+    du_doan: prediction
+      ? LABEL[prediction]
+      : null,
+
+    tin_cay: `${result.confidence.toFixed(2)}%`,
+
+    pattern: result.pattern,
+
+    thong_ke: {
+      tai: result.thong_ke.tai,
+      xiu: result.thong_ke.xiu,
+      so_loi_hoat_dong: result.cores_active,
+      tong_loi: CORE_LIST.length,
+
+      diem_tai: result.score_tai ?? 0,
+      diem_xiu: result.score_xiu ?? 0,
+
+      do_dong_thuan: result.agreement ?? 0,
+
+      backtest: result.thong_ke.backtest,
+
+      thang: state.thang,
+      thua: state.thua,
+      tong_du_doan: state.tong_du_doan,
+      ty_le_thang: `${winRate.toFixed(2)}%`
+    },
+
+    cores: result.cores ?? [],
+
+    du_lieu: {
+      so_phien: history.length,
+      so_phien_can_thu_thap: result.remaining,
+      phien_cu: previous?.id ?? null
+    },
+
+    cap_nhat: new Date().toISOString()
+  };
+}
+
+// =====================================================
+// ROUTES
+// =====================================================
+
 app.get("/", (req, res) => {
-    res.json({
-        name: "TX MD5 API",
-        status: "online",
-        endpoint: "/api/lc/md5",
-        health: "/health"
-    });
+  res.json({
+    success: true,
+    name: "VERTEX PREMIUM TX API",
+    version: "2.0.0",
+    status: "online",
+    endpoints: [
+      "/health",
+      "/api/lc/md5"
+    ]
+  });
 });
 
 app.get("/health", (req, res) => {
-    res.json({
-        status: "OK",
-        uptime: process.uptime()
-    });
+  res.json({
+    success: true,
+    status: "OK",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.get("/api/lc/md5", async (req, res) => {
-    try {
-        const data = await getPrediction();
-        res.json(data);
-    } catch (error) {
-        res.status(502).json({
-            error: "Không thể lấy dữ liệu",
-            detail: error.message
-        });
-    }
+  try {
+    const sessions = await fetchSessions();
+
+    const response = buildResponse(sessions);
+
+    res.setHeader(
+      "Cache-Control",
+      "no-store"
+    );
+
+    return res.json(response);
+
+  } catch (error) {
+    console.error("API ERROR:", error.message);
+
+    return res.status(502).json({
+      success: false,
+      error: "Không thể lấy dữ liệu phiên",
+      message: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
-// Ping giữ service
-setInterval(async () => {
-    try {
-        const response = await fetch(
-            `http://127.0.0.1:${PORT}/health`,
-            { signal: AbortSignal.timeout(5000) }
-        );
+// =====================================================
+// STATS
+// =====================================================
 
-        console.log(
-            response.ok ? "PING 200 OK" : "PING FAILED"
-        );
-    } catch (error) {
-        console.log("PING ERROR:", error.message);
-    }
-}, 5 * 60 * 1000);
+app.get("/api/stats", (req, res) => {
+  const total = state.thang + state.thua;
+
+  const winRate = total > 0
+    ? (state.thang / total) * 100
+    : 0;
+
+  res.json({
+    success: true,
+    thang: state.thang,
+    thua: state.thua,
+    tong_du_doan: state.tong_du_doan,
+    ty_le_thang: `${winRate.toFixed(2)}%`,
+    pending: state.pending,
+    updated_at: state.updated_at
+  });
+});
+
+// =====================================================
+// RESET STATS
+// =====================================================
+
+app.post("/api/reset", (req, res) => {
+  const token = process.env.ADMIN_TOKEN;
+
+  if (!token) {
+    return res.status(403).json({
+      success: false,
+      error: "ADMIN_TOKEN chưa được cấu hình"
+    });
+  }
+
+  const supplied =
+    req.headers["x-admin-token"] ||
+    req.query.token;
+
+  if (supplied !== token) {
+    return res.status(401).json({
+      success: false,
+      error: "Unauthorized"
+    });
+  }
+
+  state = defaultState();
+  saveState();
+
+  res.json({
+    success: true,
+    message: "Đã reset thống kê"
+  });
+});
+
+// =====================================================
+// SERVER
+// =====================================================
 
 app.listen(PORT, "0.0.0.0", () => {
-    console.log(`TX MD5 API running on port ${PORT}`);
+  console.log("==================================");
+  console.log(" VERTEX PREMIUM TX API");
+  console.log("==================================");
+  console.log(`PORT: ${PORT}`);
+  console.log(`API: /api/lc/md5`);
+  console.log(`HEALTH: /health`);
+  console.log(`MIN_HISTORY: ${MIN_HISTORY}`);
+  console.log(`MAX_PATTERN: ${MAX_PATTERN}`);
+  console.log("SERVER READY");
 });
