@@ -4,7 +4,7 @@
  VERTEX PREMIUM - Render One File
  - No npm packages required
  - Embedded HTML/CSS/JS
- - Server-side proxy to Tele68
+ - Direct server-side connection to Tele68 (no public CORS proxy)
  - /health, /api/sessions
  - Robust API parsing + timeout + cache
  - Core formula is the only formula used for the displayed signal
@@ -18,10 +18,6 @@ const { URL } = require('url');
 const PORT = Number(process.env.PORT || 10000);
 const HOST = '0.0.0.0';
 const UPSTREAM = process.env.UPSTREAM_URL || 'https://wtxmd52.tele68.com/v1/txmd5/sessions';
-const PUBLIC_PROXIES = [
-  target => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(target),
-  target => 'https://corsproxy.io/?url=' + encodeURIComponent(target)
-];
 const CACHE_MS = 1500;
 const REQUEST_TIMEOUT = 12000;
 let cache = { at: 0, data: null };
@@ -108,7 +104,7 @@ async function getSessions(force=false) {
   const now = Date.now();
   if (!force && cache.data && now - cache.at < CACHE_MS) return cache.data;
   const target = UPSTREAM + '?t=' + now;
-  const attempts = [target, ...PUBLIC_PROXIES.map(fn => fn(target))];
+  const attempts = [target];
   let last = null;
   for (const endpoint of attempts) {
     try {
@@ -387,7 +383,8 @@ server.listen(PORT,HOST,()=>{
   console.log(' URL: http://'+HOST+':'+PORT);
   console.log(' HEALTH: /health');
   console.log(' API: /api/sessions');
-  console.log(' UPSTREAM: '+UPSTREAM);
+  console.log(' UPSTREAM DIRECT: '+UPSTREAM);
+  console.log(' PUBLIC PROXY: DISABLED');
   console.log('==============================================');
 });
 
