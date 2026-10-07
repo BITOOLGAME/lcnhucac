@@ -25,6 +25,8 @@ const PUBLIC_PROXIES = [
 const CACHE_MS = 1500;
 const REQUEST_TIMEOUT = 12000;
 let cache = { at: 0, data: null };
+const PING_INTERVAL_MS = 240000;
+let heartbeatTimer = null;
 
 function json(res, status, body) {
   const out = JSON.stringify(body);
@@ -128,9 +130,7 @@ return `<!doctype html>
 <meta name="theme-color" content="#050815">
 <title>VERTEX PREMIUM • Analyzer</title>
 <style>
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#050815;color:#eaf2ff}body{padding:14px}button{font:inherit} .wrap{width:min(1180px,100%);margin:auto}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:4px 0 14px}.brand{padding:18px 20px;border:1px solid #24345b;border-radius:22px;background:linear-gradient(135deg,#0d1833,#080b18);box-shadow:0 0 35px #091a45}.brand h1{margin:0;font-size:clamp(26px,6vw,44px);letter-spacing:8px}.brand p{margin:6px 0 0;color:#7182a8;font-size:11px;letter-spacing:2px}.status{font-size:12px;padding:8px 12px;border-radius:999px;border:1px solid #26345b;background:#0b1124;color:#9fb0d3}.ok{color:#62f7bb;border-color:#1d6e55}.bad{color:#ff7387;border-color:#713043}.card{background:linear-gradient(180deg,#0b1225,#070b18);border:1px solid #202d50;border-radius:18px;padding:14px;margin:12px 0;box-shadow:0 12px 35px #0005}.title{font-size:13px;font-weight:800;letter-spacing:.8px;margin-bottom:10px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.cell{border:1px solid #1c2948;background:#070c1b;border-radius:11px;padding:10px;min-height:56px}.cell small{display:block;color:#637394;font-size:9px;text-transform:uppercase}.cell b{display:block;margin-top:5px;font-size:14px;overflow:hidden;text-overflow:ellipsis}.actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}.btn{border:1px solid #30426d;border-radius:12px;padding:13px;background:#121b34;color:#eaf2ff;font-weight:800;cursor:pointer}.btn.main{background:linear-gradient(90deg,#00d9ff,#5ef2ff);color:#04101a;border:0}.btn.stop{background:#321322;color:#ff9aae}.btn:active{transform:scale(.99)}.hero{display:grid;place-items:center;min-height:165px;border:1px solid #21345e;border-radius:16px;background:radial-gradient(circle at 50% 45%,#162448,#070b18 58%);position:relative;overflow:hidden}.hero .sig{font-size:44px;font-weight:900}.hero .id{position:absolute;right:12px;top:10px;color:#7182a8;font-size:11px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}.stat{border:1px solid #1d2947;background:#060a17;border-radius:12px;padding:12px;text-align:center}.stat span{display:block;color:#7180a0;font-size:10px;text-transform:uppercase}.stat b{display:block;font-size:18px;margin-top:5px}.bars{margin-top:10px}.barrow{margin:9px 0}.barhead{display:flex;justify-content:space-between;font-size:10px;color:#8796b6}.track{height:8px;background:#131a2d;border-radius:99px;overflow:hidden;margin-top:5px}.fill{height:100%;width:50%;border-radius:99px}.tai{background:linear-gradient(90deg,#ff426c,#ff9860)}.xiu{background:linear-gradient(90deg,#16d9ff,#39f5d1)}.note{border:1px dashed #263558;color:#7180a0;border-radius:12px;padding:10px;font-size:11px;margin-top:10px}.section-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.mini{border:1px solid #1d2947;background:#070b18;border-radius:11px;padding:10px}.mini strong{font-size:11px}.mini div{color:#7180a0;font-size:10px;margin-top:5px}.table{overflow:auto;border:1px solid #1d2947;border-radius:12px}.row{display:grid;grid-template-columns:90px 70px 70px 70px 1fr;min-width:370px;border-bottom:1px solid #121c32}.row:last-child{border:0}.row>div{padding:8px;font-size:10px}.head{color:#7484a7;background:#0a1020}.win{color:#5ef2b7}.loss{color:#ff7288}.muted{color:#7180a0}.foot{font-size:10px;color:#566685;text-align:center;padding:16px 0}.spin{animation:spin 1s linear infinite;display:inline-block}@keyframes spin{to{transform:rotate(360deg)}}
-@media(max-width:800px){body{padding:7px}.top{display:block}.status{display:inline-block;margin-top:8px}.grid{grid-template-columns:repeat(2,1fr)}.actions{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.section-grid{grid-template-columns:repeat(2,1fr)}.card{padding:10px;border-radius:14px}.brand{padding:15px}.brand h1{letter-spacing:5px}}
-@media(min-width:801px){.card{padding:18px}}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#030611;color:#edf5ff}body{padding:10px;background:radial-gradient(circle at 50% -10%,#122247 0,#050915 35%,#02040b 100%)}button{font:inherit}.wrap{width:min(980px,100%);margin:auto}.top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 10px}.brand{flex:1;padding:16px 18px;border:1px solid #20335c;border-radius:20px;background:linear-gradient(135deg,#0b1730,#070a16);box-shadow:0 12px 40px #0007}.brand h1{margin:0;font-size:clamp(27px,7vw,42px);letter-spacing:8px}.brand p{margin:5px 0 0;color:#7184aa;font-size:9px;letter-spacing:1.7px}.status{white-space:nowrap;font-size:10px;font-weight:800;padding:9px 11px;border-radius:999px;border:1px solid #28375c;background:#091022;color:#9eb0d4}.ok{color:#5ef2bb;border-color:#1d6c54;background:#071a16}.bad{color:#ff7187;border-color:#6d2d3e;background:#1c0b13}.card{background:linear-gradient(180deg,#0a1122,#060a15);border:1px solid #1d2b4b;border-radius:18px;padding:13px;margin:10px 0;box-shadow:0 10px 35px #0006}.title{font-size:12px;font-weight:900;letter-spacing:.8px;margin-bottom:9px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.cell{border:1px solid #182541;background:#060a15;border-radius:10px;padding:9px;min-height:51px}.cell small{display:block;color:#5f7093;font-size:8px;text-transform:uppercase}.cell b{display:block;margin-top:4px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:7px;margin-top:9px}.btn{border:1px solid #293b64;border-radius:11px;padding:12px;background:#111a31;color:#eaf2ff;font-weight:900;font-size:12px;cursor:pointer}.btn.main{background:linear-gradient(90deg,#00d8f5,#62efff);color:#031018;border:0}.btn.stop{background:#2a101b;color:#ff9bad}.hero{display:grid;place-items:center;min-height:190px;border:1px solid #20355e;border-radius:16px;background:radial-gradient(circle at 50% 45%,#172a51,#070b16 58%);position:relative;overflow:hidden}.hero:before{content:"";position:absolute;width:180px;height:180px;border:1px solid #1e4c78;border-radius:50%;box-shadow:0 0 70px #0874b533}.hero .sig{font-size:clamp(38px,11vw,62px);font-weight:950;letter-spacing:2px;position:relative;text-shadow:0 0 25px #39ddff55}.hero .id{position:absolute;right:12px;top:10px;color:#7182a7;font-size:10px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:7px}.stat{border:1px solid #192641;background:#050914;border-radius:11px;padding:11px;text-align:center}.stat span{display:block;color:#687a9c;font-size:9px;text-transform:uppercase}.stat b{display:block;font-size:16px;margin-top:4px}.bars{margin-top:9px}.barrow{margin:8px 0}.barhead{display:flex;justify-content:space-between;font-size:9px;color:#8190ad}.track{height:7px;background:#12192b;border-radius:99px;overflow:hidden;margin-top:4px}.fill{height:100%;width:50%;border-radius:99px;transition:width .35s ease}.tai{background:linear-gradient(90deg,#ff416c,#ff9a61)}.xiu{background:linear-gradient(90deg,#11d9ff,#45f4d2)}.note{border:1px dashed #223252;color:#7180a0;border-radius:11px;padding:9px;font-size:10px;margin-top:9px}.live{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 10px;border:1px solid #1d3153;border-radius:11px;background:#071021;font-size:10px}.live b{color:#64f2c0}.history-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.table{overflow:auto;border:1px solid #192641;border-radius:11px;max-height:340px}.row{display:grid;grid-template-columns:90px 70px 70px 70px 1fr;min-width:370px;border-bottom:1px solid #101a2d}.row:last-child{border:0}.row>div{padding:8px;font-size:10px}.head{color:#7182a4;background:#091021;position:sticky;top:0}.win{color:#5ef2b7}.loss{color:#ff7288}.muted{color:#7180a0}.foot{font-size:9px;color:#536482;text-align:center;padding:14px 0 8px}@media(max-width:700px){body{padding:6px}.top{align-items:flex-start}.brand{padding:14px}.brand h1{letter-spacing:5px}.grid{grid-template-columns:repeat(2,1fr)}.actions{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:10px;border-radius:14px}.hero{min-height:170px}.cell{min-height:48px}}
 </style>
 </head>
 <body>
@@ -160,15 +160,13 @@ return `<!doctype html>
     <div id="diag" class="note">Chưa có dữ liệu API.</div>
   </section>
 
-  <section class="card"><div class="title">40 ANALYSIS ENGINES</div><div id="engines" class="section-grid"></div></section>
-  <section class="card"><div class="title">20 ENSEMBLE MODELS</div><div id="models" class="section-grid"></div></section>
-  <section class="card"><div class="title">10 SMART AI LAYERS</div><div id="ais" class="section-grid"></div></section>
+  <section class="card"><div class="live"><span>● AUTO UPDATE</span><b id="liveText">Đang chờ dữ liệu</b><span id="nextTick" class="muted">—</span></div></section>
 
-  <section class="card"><div class="title">📊 AUTO BACKTEST <span id="btCount" class="muted" style="float:right">0</span></div><div id="backtest" class="table"><div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div></div></section>
+  <section class="card"><div class="title">📊 LỊCH SỬ ĐÁNH GIÁ <span id="btCount" class="muted" style="float:right">0</span></div><div id="backtest" class="table"><div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div></div></section>
   <div class="foot">VERTEX PREMIUM • Research / backtest interface • Không đảm bảo kết quả ngẫu nhiên</div>
 </div>
 <script>
-const state={running:false,timer:null,last:null,predictions:new Map(),history:[]};
+const state={running:false,timer:null,last:null,predictions:new Map(),history:[],busy:false,nextAt:0};
 try{state.history=JSON.parse(localStorage.getItem('vertex_history_v2')||'[]');}catch(_){}
 const $=id=>document.getElementById(id);
 const api='/api/sessions';
@@ -180,9 +178,11 @@ function clearError(){$('error').style.display='none';}
 function fmtTime(){return new Date().toLocaleTimeString('vi-VN');}
 
 async function load(){
+  if(state.busy)return;
+  state.busy=true;
   const t0=performance.now();
   try{
-    setStatus('LOADING');
+    setStatus('ĐANG CẬP NHẬT');
     const r=await fetch(api+'?t='+Date.now(),{cache:'no-store',headers:{Accept:'application/json'}});
     const j=await r.json();
     if(!r.ok||!j.success) throw new Error(j.error||('HTTP '+r.status));
@@ -191,8 +191,10 @@ async function load(){
     $('latency').textContent=Math.round(performance.now()-t0)+' ms';
     $('updated').textContent=fmtTime();
     clearError();setStatus('ONLINE','ok');
+    $('liveText').textContent='Đã cập nhật '+fmtTime();
     process(list);
-  }catch(e){setStatus('API ERROR','bad');showError(e.message||String(e));$('masterState').textContent='ERROR';}
+  }catch(e){setStatus('API ERROR','bad');showError(e.message||String(e));$('masterState').textContent='LỖI API';$('liveText').textContent='Đang thử lại tự động';}
+  finally{state.busy=false;}
 }
 
 function coreFormula(prev,current,d1,d2){
@@ -257,14 +259,11 @@ function renderAnalysis(a){
   $('value').textContent=a.s.core.value;
   $('tai').textContent=a.coreDir==='TAI'?a.confidence.toFixed(2)+'%':'—';
   $('xiu').textContent=a.coreDir==='XIU'?a.confidence.toFixed(2)+'%':'—';
-  const tp=a.coreDir==='TAI'?a.confidence:100-a.confidence;
-  const xp=100-tp;
-  $('taiPct').textContent=tp.toFixed(2)+'%';$('xiuPct').textContent=xp.toFixed(2)+'%';$('taiBar').style.width=tp+'%';$('xiuBar').style.width=xp+'%';
+  const tp=a.coreDir==='TAI'?a.confidence:100-a.confidence, xp=100-tp;
+  $('taiPct').textContent=tp.toFixed(2)+'%';$('xiuPct').textContent=xp.toFixed(2)+'%';
+  $('taiBar').style.width=tp+'%';$('xiuBar').style.width=xp+'%';
   $('masterState').textContent='READY';
-  $('diag').textContent='Core: '+a.coreDir+' • Giá trị '+a.s.core.value+' • parity '+a.parity+' • '+a.engineItems.filter(x=>x.score!==0).length+'/40 engines có tín hiệu chẩn đoán. Consensus chỉ là chỉ số nghiên cứu, không phải xác suất thắng.';
-  $('engines').innerHTML=a.engineItems.map((x,i)=>'<div class="mini"><strong>'+(i+1)+'. '+esc(x.name)+'</strong><div>'+esc(x.detail)+'</div></div>').join('');
-  $('models').innerHTML=a.models.map((x,i)=>'<div class="mini"><strong>'+(i+1)+'. '+esc(x.name)+'</strong><div>'+esc(x.detail)+'</div></div>').join('');
-  $('ais').innerHTML=a.ais.map((x,i)=>'<div class="mini"><strong>'+(i+1)+'. '+esc(x.name)+'</strong><div>'+esc(x.detail)+'</div></div>').join('');
+  $('diag').textContent='Tự động cập nhật • Phiên mục tiêu #'+a.s.targetId+' • Công thức lõi: một công thức • Kết quả chỉ dùng để đánh giá sau khi phiên xuất hiện.';
 }
 
 function process(list){
@@ -317,12 +316,28 @@ function renderBacktest(){
   $('backtest').innerHTML='<div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div>'+state.history.map(x=>'<div class="row"><div>'+esc(x.id)+'</div><div>'+esc(x.pred)+'</div><div>'+esc(x.actual)+'</div><div class="'+(x.win?'win':'loss')+'">'+(x.win?'WIN':'MISS')+'</div><div class="muted">'+esc(x.time)+'</div></div>').join('')+'<div class="note">Đã đánh giá: '+total+' phiên • WIN: '+wins+' • MISS: '+(total-wins)+' • Accuracy lịch sử: '+rate+'%</div>';
 }
 
-$('start').onclick=()=>{if(state.running)return;state.running=true;state.timer=setInterval(load,5000);load();$('start').textContent='⚡ AUTO ENGINE ĐANG CHẠY';};
+function startAuto(){if(state.running)return;state.running=true;state.timer=setInterval(()=>{state.nextAt=Date.now()+3000;load();},3000);state.nextAt=Date.now();load();$('start').textContent='⚡ AUTO ĐANG CHẠY';$('liveText').textContent='Theo dõi liên tục';}
+$('start').onclick=startAuto;
 $('once').onclick=load;
-$('stop').onclick=()=>{state.running=false;if(state.timer)clearInterval(state.timer);state.timer=null;$('start').textContent='⚡ BẬT AUTO ENGINE';setStatus('STOPPED');};
+$('stop').onclick=()=>{state.running=false;if(state.timer)clearInterval(state.timer);state.timer=null;$('start').textContent='⚡ BẬT AUTO ENGINE';$('liveText').textContent='Đã dừng tự động';$('nextTick').textContent='—';setStatus('STOPPED');};
+setInterval(()=>{if(state.running&&state.nextAt){const sec=Math.max(0,Math.ceil((state.nextAt-Date.now())/1000));$('nextTick').textContent='+'+sec+'s';}},500);
 load();
 </script>
 </body></html>`;
+}
+
+function startHeartbeat(){
+  if(heartbeatTimer)clearInterval(heartbeatTimer);
+  heartbeatTimer=setInterval(()=>{
+    const started=Date.now();
+    const req=http.request({host:'127.0.0.1',port:PORT,path:'/ping',method:'GET',timeout:5000},r=>{
+      r.resume();
+      console.log(`PING ${r.statusCode} OK ${Date.now()-started}ms`);
+    });
+    req.on('error',e=>console.log('PING ERROR',e.message));
+    req.end();
+  },PING_INTERVAL_MS);
+  heartbeatTimer.unref?.();
 }
 
 const server=http.createServer(async (req,res)=>{
@@ -330,6 +345,7 @@ const server=http.createServer(async (req,res)=>{
     if(req.method==='OPTIONS'){res.writeHead(204,{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,OPTIONS','Access-Control-Allow-Headers':'Content-Type'});return res.end();}
     const u=new URL(req.url,'http://'+(req.headers.host||'localhost'));
     if(u.pathname==='/health') return json(res,200,{success:true,status:'ONLINE',service:'VERTEX PREMIUM',uptime:process.uptime(),time:new Date().toISOString()});
+    if(u.pathname==='/ping') return json(res,200,{success:true,status:'PONG',time:new Date().toISOString()});
     if(u.pathname==='/api/sessions'){
       try{return json(res,200,{success:true,list:await getSessions(u.searchParams.get('force')==='1'),source:'tele68',serverTime:new Date().toISOString()});}
       catch(e){return json(res,502,{success:false,error:e.message||'UPSTREAM_ERROR',source:UPSTREAM});}
@@ -346,6 +362,7 @@ const server=http.createServer(async (req,res)=>{
 });
 
 server.listen(PORT,HOST,()=>{
+  startHeartbeat();
   console.log('==============================================');
   console.log(' VERTEX PREMIUM - ONE FILE SERVER');
   console.log(' URL: http://'+HOST+':'+PORT);
