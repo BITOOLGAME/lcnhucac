@@ -169,6 +169,7 @@ return `<!doctype html>
 </div>
 <script>
 const state={running:false,timer:null,last:null,predictions:new Map(),history:[]};
+try{state.history=JSON.parse(localStorage.getItem('vertex_history_v2')||'[]');}catch(_){}
 const $=id=>document.getElementById(id);
 const api='/api/sessions';
 
@@ -268,24 +269,52 @@ function renderAnalysis(a){
 
 function process(list){
   const a=analyze(list);if(!a)return;
-  renderAnalysis(a);
-  const target=list.find(x=>x.id===a.s.targetId);
-  state.predictions.set(a.s.targetId,{pred:a.coreDir,created:Date.now()});
-  if(target && (target.result==='TAI'||target.result==='XIU')){
-    const p=state.predictions.get(target.id);
-    if(p && !p.settled){
-      p.settled=true;p.actual=target.result;p.win=p.pred===target.result;
-      state.history.unshift({id:target.id,pred:p.pred,actual:p.actual,win:p.win,time:new Date().toLocaleTimeString('vi-VN')});
-      if(state.history.length>50)state.history.pop();
+
+  // 1) Trước tiên chốt toàn bộ dự đoán cũ khi phiên thực tế đã xuất hiện.
+  // Không dùng kết quả tương lai để tạo dự đoán mới.
+  let changed=false;
+  for(const [id,p] of state.predictions){
+    if(p.settled) continue;
+    const actualRow=list.find(x=>x.id===Number(id));
+    if(actualRow && (actualRow.result==='TAI'||actualRow.result==='XIU')){
+      p.settled=true;
+      p.actual=actualRow.result;
+      p.win=p.pred===actualRow.result;
+      if(!state.history.some(h=>Number(h.id)===Number(id))){
+        state.history.unshift({
+          id:Number(id),
+          pred:p.pred,
+          actual:p.actual,
+          win:p.win,
+          time:new Date().toLocaleTimeString('vi-VN')
+        });
+        changed=true;
+      }
     }
   }
+
+  // 2) Chỉ tạo dự đoán mới cho target nếu target chưa từng được dự đoán.
+  if(!state.predictions.has(a.s.targetId)){
+    state.predictions.set(a.s.targetId,{pred:a.coreDir,created:Date.now(),settled:false});
+  }
+
+  // 3) Giới hạn lịch sử và lưu local để refresh trang không mất đánh giá.
+  if(state.history.length>100)state.history.length=100;
+  if(changed){
+    try{localStorage.setItem('vertex_history_v2',JSON.stringify(state.history));}catch(_){}
+  }
+
+  renderAnalysis(a);
   renderBacktest();
   state.last=a;
 }
 
 function renderBacktest(){
   $('btCount').textContent=state.history.length;
-  $('backtest').innerHTML='<div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div>'+state.history.map(x=>'<div class="row"><div>'+x.id+'</div><div>'+x.pred+'</div><div>'+x.actual+'</div><div class="'+(x.win?'win':'loss')+'">'+(x.win?'WIN':'MISS')+'</div><div class="muted">'+x.time+'</div></div>').join('');
+  const total=state.history.length;
+  const wins=state.history.filter(x=>x.win).length;
+  const rate=total?((wins/total)*100).toFixed(2):'0.00';
+  $('backtest').innerHTML='<div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div>'+state.history.map(x=>'<div class="row"><div>'+esc(x.id)+'</div><div>'+esc(x.pred)+'</div><div>'+esc(x.actual)+'</div><div class="'+(x.win?'win':'loss')+'">'+(x.win?'WIN':'MISS')+'</div><div class="muted">'+esc(x.time)+'</div></div>').join('')+'<div class="note">Đã đánh giá: '+total+' phiên • WIN: '+wins+' • MISS: '+(total-wins)+' • Accuracy lịch sử: '+rate+'%</div>';
 }
 
 $('start').onclick=()=>{if(state.running)return;state.running=true;state.timer=setInterval(load,5000);load();$('start').textContent='⚡ AUTO ENGINE ĐANG CHẠY';};
