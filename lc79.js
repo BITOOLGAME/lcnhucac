@@ -1,1092 +1,129 @@
+/*
+ * VERTEX ULTRA - SINGLE FILE RENDER SERVER
+ * Deploy: node vertex_render.js
+ * Render Start Command: node vertex_render.js
+ * No package.json required.
+ */
 
-"use strict";
+const http = require("http");
+const https = require("https");
 
-const express = require("express");
-const fs = require("fs");
-const path = require("path");
+const PORT = Number(process.env.PORT || 9898);
+const HOST = "0.0.0.0";
+const API_URL = "https://wtxmd52.tele68.com/v1/txmd5/sessions";
 
-const app = express();
+const HTML = "<!DOCTYPE html>\n<html lang=\"vi\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\n<meta name=\"theme-color\" content=\"#050711\">\n<title>VERTEX ULTRA • Auto Analyzer</title>\n<style>\n*{box-sizing:border-box;margin:0;padding:0}\n:root{--bg:#050711;--card:#0b1020;--card2:#0f1628;--line:#25314d;--text:#f5f7ff;--muted:#7e8aa5;--cyan:#00e5ff;--purple:#9b5cff;--green:#39f59b;--red:#ff4d78;--yellow:#ffd166}\nhtml{background:var(--bg)}\nbody{min-height:100vh;overflow-x:hidden;background:radial-gradient(circle at 10% 0%,rgba(0,229,255,.10),transparent 28%),radial-gradient(circle at 90% 5%,rgba(155,92,255,.11),transparent 30%),linear-gradient(145deg,#070a15,#03040a);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;padding:16px}\nbutton{font:inherit}\n.wrap{max-width:1240px;margin:auto}\n.hero{text-align:center;padding:7px 0 19px}\n.logo{font-size:clamp(32px,7vw,58px);font-weight:1000;letter-spacing:6px;background:linear-gradient(90deg,var(--cyan),#fff,var(--purple));-webkit-background-clip:text;color:transparent}\n.sub{color:var(--muted);font-size:10px;letter-spacing:2.5px;margin-top:5px}\n.status{display:inline-flex;align-items:center;gap:7px;margin-top:10px;padding:6px 11px;border:1px solid #23304a;border-radius:99px;background:#0b1220;color:#aeb9d0;font-size:9px}\n.status i{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 12px var(--green)}\n.status.off i{background:var(--red);box-shadow:0 0 12px var(--red)}\n.layout{display:grid;grid-template-columns:335px minmax(0,1fr);gap:15px}\n.card{position:relative;background:linear-gradient(145deg,rgba(17,24,43,.97),rgba(6,9,18,.98));border:1px solid rgba(91,112,170,.25);border-radius:21px;padding:16px;box-shadow:0 18px 55px rgba(0,0,0,.30);overflow:hidden}\n.card:after{content:\"\";position:absolute;inset:0;pointer-events:none;background:linear-gradient(135deg,rgba(0,229,255,.035),transparent 35%),linear-gradient(315deg,rgba(155,92,255,.035),transparent 35%)}\n.card>*{position:relative;z-index:1}\n.left{height:max-content;position:sticky;top:12px}\nh2{font-size:15px;margin-bottom:13px;display:flex;justify-content:space-between;align-items:center;gap:8px}\n.badge{padding:5px 8px;border-radius:99px;background:#141c30;border:1px solid #283550;color:#9eabc4;font-size:8px;white-space:nowrap}\n.info{background:#080c17;border:1px solid #202b45;border-radius:13px;padding:11px;margin-bottom:10px}\n.info-row{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #172139;font-size:10px}\n.info-row:last-child{border-bottom:0}\n.info-row span{color:#697690}\n.info-row b{text-align:right;color:#dbe4f5;word-break:break-all}\nbutton{width:100%;border:0;border-radius:12px;padding:12px;cursor:pointer;font-weight:900;color:#031015;background:linear-gradient(90deg,var(--cyan),#7df6ff);box-shadow:0 8px 25px rgba(0,229,255,.13);transition:.2s}\nbutton:hover{transform:translateY(-1px);filter:brightness(1.06)}\nbutton.secondary{margin-top:8px;background:#141b2d;color:#cbd4e9;border:1px solid #293651;box-shadow:none}\nbutton.stop{background:#24121a;color:#ff9bb1;border-color:#542236}\n.note{color:#66738d;font-size:9px;line-height:1.6;margin-top:10px}\n.error{display:none;margin-top:9px;padding:10px;border-radius:11px;background:#24121a;border:1px solid #542236;color:#ff9bb1;font-size:9px;line-height:1.5}\n.result{min-height:205px;border:1px solid #293650;border-radius:18px;background:radial-gradient(circle,#17233e,#070a13);display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}\n.result:after{content:\"\";position:absolute;width:230px;height:230px;border-radius:50%;border:1px solid rgba(0,229,255,.07);box-shadow:0 0 70px rgba(0,229,255,.05)}\n.tag{position:absolute;left:13px;top:13px;color:#75819a;font-size:9px;letter-spacing:2px}\n.target{position:absolute;right:13px;top:13px;color:#aab5cb;font-size:9px}\n.pred{position:relative;z-index:2;font-size:clamp(48px,8vw,78px);font-weight:1000;letter-spacing:3px;text-shadow:0 0 35px currentColor}\n.tai{color:var(--red)}.xiu{color:var(--cyan)}\n.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:9px}\n.metric{padding:10px 5px;text-align:center;background:#080c17;border:1px solid #202b45;border-radius:13px}\n.metric span{display:block;color:#727e97;font-size:8px}\n.metric b{display:block;margin-top:5px;font-size:17px}\n.score{margin-top:10px;padding:12px;border-radius:14px;background:#080c17;border:1px solid #202b45}\n.score-head{display:flex;justify-content:space-between;font-size:10px;margin-bottom:6px}\n.bar{height:8px;background:#171f32;border-radius:99px;overflow:hidden;margin-bottom:10px}\n.fill{height:100%;width:50%;border-radius:99px;transition:.4s}\n.fill.t{background:linear-gradient(90deg,#ff416c,#ff8a65)}.fill.x{background:linear-gradient(90deg,#00c6ff,#00f2fe)}\n.formula{margin-top:10px;padding:12px;background:#070a13;border:1px dashed #2b3854;border-radius:14px;color:#aeb9d0;font-size:10px;line-height:1.7}\n.formula strong{color:#fff}\n.title{margin:16px 0 8px;color:#dce4f5;font-size:10px;font-weight:900;letter-spacing:1px}\n.grid6{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}\n.mini{padding:9px;background:#080c17;border:1px solid #202b45;border-radius:11px}\n.mini-top{display:flex;justify-content:space-between;gap:5px;font-size:8px}\n.mini b{font-size:10px}\n.mini p{margin-top:4px;color:#68748c;font-size:7px;line-height:1.4}\n.good{color:var(--green)}.bad{color:var(--red)}.neutral{color:var(--yellow)}\n.history{margin-top:15px}\n.hstats{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}\n.hstat{padding:9px 4px;text-align:center;background:#080c17;border:1px solid #202b45;border-radius:12px}\n.hstat span{display:block;color:#6d7992;font-size:7px}.hstat b{display:block;margin-top:4px;font-size:15px}\n.table-wrap{overflow:auto;margin-top:11px}\ntable{width:100%;min-width:790px;border-collapse:collapse;font-size:9px}\nth,td{padding:8px 6px;border-bottom:1px solid #19233a;text-align:left;white-space:nowrap}\nth{color:#66728b;font-size:7px}td{color:#c0c9db}\n.win{color:var(--green);font-weight:900}.loss{color:var(--red);font-weight:900}.pending{color:var(--yellow);font-weight:900}\n.panel{margin-top:10px;background:#080c17;border:1px solid #202b45;border-radius:13px;padding:10px}\n.panel-head{display:flex;justify-content:space-between;align-items:center;font-size:9px;color:#9aa6bf;margin-bottom:7px}\npre{white-space:pre-wrap;word-break:break-word;color:#8290aa;font-size:8px;line-height:1.5;max-height:220px;overflow:auto}\n@media(max-width:900px){.layout{grid-template-columns:1fr}.left{position:relative;top:auto}}\n@media(max-width:600px){body{padding:8px;overflow-x:hidden}.card{padding:13px;border-radius:18px}.metrics{grid-template-columns:repeat(2,1fr)}.hstats{grid-template-columns:repeat(2,1fr)}.grid6{grid-template-columns:repeat(2,1fr)}.result{min-height:185px}}\n@media(min-width:901px){.history{grid-column:1/-1}}\n</style>\n</head>\n<body>\n<div class=\"wrap\">\n\n<header class=\"hero\">\n <div class=\"logo\">VERTEX</div>\n <div class=\"sub\">ULTRA AUTO ANALYZER • 40 ANALYSIS • 20 MODELS • 10 AI</div>\n <div id=\"status\" class=\"status\"><i></i><span id=\"statusText\">ĐANG KHỞI ĐỘNG</span></div>\n</header>\n\n<main class=\"layout\">\n\n<section class=\"card left\">\n <h2>⚡ AUTO API <span class=\"badge\">ID + 1</span></h2>\n\n <div class=\"info\">\n  <div class=\"info-row\"><span>API</span><b>TXMD5 / SESSIONS</b></div>\n  <div class=\"info-row\"><span>SESSION NGUỒN</span><b id=\"sourceId\">—</b></div>\n  <div class=\"info-row\"><span>SESSION MỤC TIÊU</span><b id=\"targetId\">—</b></div>\n  <div class=\"info-row\"><span>XÚC XẮC</span><b id=\"dice\">—</b></div>\n  <div class=\"info-row\"><span>POINT</span><b id=\"point\">—</b></div>\n  <div class=\"info-row\"><span>KẾT QUẢ NGUỒN</span><b id=\"sourceResult\">—</b></div>\n </div>\n\n <button onclick=\"startAuto()\">⚡ BẬT AUTO ENGINE</button>\n <button class=\"secondary\" onclick=\"refreshNow()\">↻ CẬP NHẬT NGAY</button>\n <button class=\"secondary stop\" onclick=\"stopAuto()\">■ DỪNG AUTO</button>\n\n <div id=\"error\" class=\"error\"></div>\n\n <div class=\"note\">\n  D1/D2 và phiên được đọc trực tiếp từ API. Công thức lõi chỉ có một.\n  Kết quả của phiên mục tiêu chỉ dùng để backtest sau khi API đã trả phiên đó.\n </div>\n</section>\n\n<section>\n\n<div class=\"card\">\n <h2>🎯 MASTER ANALYZER <span id=\"state\" class=\"badge\">WAITING</span></h2>\n\n <div class=\"result\">\n  <span class=\"tag\">VERTEX SIGNAL</span>\n  <span class=\"target\">#<span id=\"targetMini\">—</span></span>\n  <div id=\"prediction\" class=\"pred\">—</div>\n </div>\n\n <div class=\"metrics\">\n  <div class=\"metric\"><span>CONSENSUS</span><b id=\"confidence\">—</b></div>\n  <div class=\"metric\"><span>GIÁ TRỊ</span><b id=\"value\">—</b></div>\n  <div class=\"metric\"><span>TÀI</span><b id=\"taiScore\">—</b></div>\n  <div class=\"metric\"><span>XỈU</span><b id=\"xiuScore\">—</b></div>\n </div>\n\n <div class=\"score\">\n  <div class=\"score-head\"><span>TÀI SCORE</span><b id=\"taiText\">50%</b></div>\n  <div class=\"bar\"><div id=\"taiBar\" class=\"fill t\"></div></div>\n  <div class=\"score-head\"><span>XỈU SCORE</span><b id=\"xiuText\">50%</b></div>\n  <div class=\"bar\"><div id=\"xiuBar\" class=\"fill x\"></div></div>\n </div>\n\n <div id=\"formula\" class=\"formula\">Chưa có dữ liệu API.</div>\n\n <div class=\"title\">40 ANALYSIS ENGINES</div>\n <div id=\"algorithms\" class=\"grid6\"></div>\n\n <div class=\"title\">20 ENSEMBLE MODELS</div>\n <div id=\"models\" class=\"grid6\"></div>\n\n <div class=\"title\">10 SMART AI LAYERS</div>\n <div id=\"ais\" class=\"grid6\"></div>\n\n <div class=\"panel\">\n  <div class=\"panel-head\"><span>ENGINE DIAGNOSTIC</span><span id=\"diag\">READY</span></div>\n  <pre id=\"diagnostic\">Chưa chạy.</pre>\n </div>\n</div>\n\n<div class=\"card history\">\n <h2>📊 AUTO BACKTEST <span id=\"record\" class=\"badge\">0</span></h2>\n\n <div class=\"hstats\">\n  <div class=\"hstat\"><span>THẮNG</span><b id=\"wins\">0</b></div>\n  <div class=\"hstat\"><span>THUA</span><b id=\"losses\">0</b></div>\n  <div class=\"hstat\"><span>ĐÃ CHẤM</span><b id=\"done\">0</b></div>\n  <div class=\"hstat\"><span>ACCURACY</span><b id=\"accuracy\">0%</b></div>\n  <div class=\"hstat\"><span>API STATUS</span><b id=\"apiStatus\">—</b></div>\n </div>\n\n <div class=\"table-wrap\">\n <table>\n  <thead>\n   <tr>\n    <th>PHIÊN</th><th>DỰ ĐOÁN</th><th>D1/D2</th><th>CÔNG THỨC</th><th>CONSENSUS</th><th>API RESULT</th><th>BACKTEST</th>\n   </tr>\n  </thead>\n  <tbody id=\"historyBody\"><tr><td colspan=\"7\" style=\"text-align:center;padding:20px;color:#65718a\">Chưa có dữ liệu</td></tr></tbody>\n </table>\n </div>\n\n <div class=\"note\">Accuracy ở đây là thống kê backtest của các phiên đã có kết quả, không phải cam kết hay xác suất thắng phiên kế tiếp.</div>\n</div>\n\n</section>\n</main>\n</div>\n\n<script>\n/* =========================================================\n   VERTEX ULTRA\n   1 CORE FORMULA\n   40 ANALYSIS\n   20 MODELS\n   10 AI\n   AUTO API / ID + 1\n   ========================================================= */\n\nconst API_URL=\"/api/sessions\";\nconst POLL_MS=2500;\nconst HISTORY_KEY=\"vertex_ultra_research_v1\";\nlet history=[];\nlet timer=null;\nlet running=false;\nlet lastTarget=null;\nlet lastList=[];\n\ntry{\n history=JSON.parse(localStorage.getItem(HISTORY_KEY)||\"[]\");\n if(!Array.isArray(history))history=[];\n}catch(e){history=[]}\n\nconst $=id=>document.getElementById(id);\nconst clamp=(v,a,b)=>Math.max(a,Math.min(b,v));\nconst lastDigit=id=>Math.abs(Number(id))%10;\nconst side=v=>v>0?\"TÀI\":v<0?\"XỈU\":\"CÂN\";\nconst pct=v=>Number(v).toFixed(1)+\"%\";\n\nfunction setText(id,v){$(id).textContent=v}\n\nfunction save(){localStorage.setItem(HISTORY_KEY,JSON.stringify(history.slice(0,100)))}\n\nfunction setStatus(text,on=true){\n $(\"statusText\").textContent=text;\n $(\"status\").classList.toggle(\"off\",!on);\n}\n\nfunction errorShow(msg){\n $(\"error\").style.display=\"block\";\n $(\"error\").textContent=msg;\n}\n\nfunction errorHide(){\n $(\"error\").style.display=\"none\";\n}\n\n/* =========================================================\n   CORE FORMULA — DUY NHẤT\n   (D1+D2) / last(prev) * last(target)\n   ========================================================= */\n\nfunction coreFormula(d1,d2,prevId,targetId){\n const prev=lastDigit(prevId);\n const curr=lastDigit(targetId);\n const divisor=prev===0?1:prev;\n const raw=((d1+d2)/divisor)*curr;\n const value=Math.floor(Math.abs(raw));\n const parity=value%2===0?\"CHẴN\":\"LẺ\";\n const forward=parity===\"CHẴN\"?\"TÀI\":\"XỈU\";\n const reverse=parity===\"CHẴN\"?\"XỈU\":\"TÀI\";\n return {d1,d2,prev,curr,raw,value,parity,forward,reverse};\n}\n\n/* =========================================================\n   DATA FEATURES\n   Các hàm này KHÔNG tạo công thức mới.\n   Chỉ mô tả dữ liệu đầu vào cho research/backtest.\n   ========================================================= */\n\nfunction features(d1,d2,historyData){\n const sum=d1+d2;\n const spread=Math.abs(d1-d2);\n const doubles=d1===d2;\n const high=[d1,d2].filter(x=>x>=4).length;\n const low=[d1,d2].filter(x=>x<=3).length;\n const odd=[d1,d2].filter(x=>x%2).length;\n const even=2-odd;\n const recent=historyData.slice(0,20);\n const recentT=recent.filter(x=>String(x.result||\"\").toUpperCase()===\"TAI\").length;\n const recentX=recent.filter(x=>String(x.result||\"\").toUpperCase()===\"XIU\").length;\n return {sum,spread,doubles,high,low,odd,even,recentT,recentX};\n}\n\n/* =========================================================\n   40 ANALYSIS FUNCTIONS\n   Mỗi engine trả signal -1..1.\n   Đây là phân tích, không phải xác suất.\n   ========================================================= */\n\nconst ANALYSIS_NAMES=[\n\"01 Core Parity\",\"02 Sum Center\",\"03 Sum Distance\",\"04 Dice Spread\",\"05 High Count\",\n\"06 Low Count\",\"07 Odd Count\",\"08 Even Count\",\"09 Double Check\",\"10 D1 Direction\",\n\"11 D2 Direction\",\"12 Pair Balance\",\"13 Pair Distance\",\"14 Midpoint\",\"15 Edge Distance\",\n\"16 Session Digit\",\"17 Digit Delta\",\"18 Digit Parity\",\"19 Formula Agreement\",\"20 Formula Inversion\",\n\"21 Recent TAI Rate\",\"22 Recent XIU Rate\",\"23 Streak TAI\",\"24 Streak XIU\",\"25 Alternation\",\n\"26 Transition TAI\",\"27 Transition XIU\",\"28 Recent Sum Mean\",\"29 Recent Sum Volatility\",\"30 Result Entropy\",\n\"31 Result Balance\",\"32 Dice Mean\",\"33 Dice Variance\",\"34 Duplicate Pressure\",\"35 Extreme Pressure\",\n\"36 Center Pressure\",\"37 Recent Momentum\",\"38 Mean Reversion\",\"39 Noise Filter\",\"40 Stability\"\n];\n\nfunction coreSig(c){return c.forward===\"TÀI\"?1:-1}\nfunction sumCenter(f){return clamp((f.sum-7)/5,-1,1)}\nfunction sumDistance(f){return clamp((f.sum>=8?1:f.sum<=6?-1:0)*Math.abs(f.sum-7)/5,-1,1)}\nfunction spreadSig(f){return f.spread===0?0:clamp((f.sum-7)/5,-1,1)*Math.min(f.spread/5,.5)}\nfunction highSig(f){return (f.high-f.low)/2}\nfunction lowSig(f){return (f.low-f.high)/2}\nfunction oddSig(f){return (f.odd-f.even)/2}\nfunction evenSig(f){return (f.even-f.odd)/2}\nfunction doubleSig(f){return f.doubles?0:clamp((f.sum-7)/5,-1,1)*.3}\nfunction d1Sig(f){return (f.sum?((f.sum/2-3.5)/2.5):0)}\nfunction d2Sig(f){return d1Sig(f)}\nfunction pairBalance(f){return clamp((f.sum-7)/5,-1,1)*.5}\nfunction pairDistance(f){return clamp((f.spread/5)*((f.sum-7)/5),-1,1)}\nfunction midpoint(f){return clamp((f.sum-7)/5,-1,1)}\nfunction edgeDistance(f){return Math.abs(f.sum-7)>=4?(f.sum>7?1:-1):0}\nfunction digitSig(c){return c.curr>c.prev?.25:c.curr<c.prev?-.25:0}\nfunction digitDelta(c){return clamp((c.curr-c.prev)/9,-1,1)}\nfunction digitParity(c){return c.curr%2===0?.15:-.15}\nfunction formulaAgreement(c){return coreSig(c)}\nfunction formulaInverse(c){return -coreSig(c)}\nfunction recentTRate(f){let n=f.recentT+f.recentX;return n?clamp((f.recentT/f.recentX-1)/2,-1,1):0}\nfunction recentXRate(f){let n=f.recentT+f.recentX;return n?clamp((f.recentX/f.recentT-1)/2,-1,1):0}\nfunction streakT(f){let r=f.recent;let n=0;for(const x of r){if(String(x.result||\"\").toUpperCase()===\"TAI\")n++;else break}return clamp(n/5,0,1)}\nfunction streakX(f){let r=f.recent;let n=0;for(const x of r){if(String(x.result||\"\").toUpperCase()===\"XIU\")n++;else break}return -clamp(n/5,0,1)}\nfunction alternation(f){let r=f.recent.slice(0,8).map(x=>String(x.result||\"\").toUpperCase());if(r.length<3)return 0;let a=0;for(let i=1;i<r.length;i++)if(r[i]!==r[i-1])a++;return (a/(r.length-1)-.5)*2}\nfunction transitionT(f){return f.recent[0]&&String(f.recent[0].result||\"\").toUpperCase()===\"XIU\"?0.15:0}\nfunction transitionX(f){return f.recent[0]&&String(f.recent[0].result||\"\").toUpperCase()===\"TAI\"?-0.15:0}\nfunction recentMean(f){let a=f.recent.map(x=>Number(x.point)).filter(Number.isFinite);if(!a.length)return 0;let m=a.reduce((a,b)=>a+b,0)/a.length;return clamp((m-10)/8,-1,1)}\nfunction recentVol(f){let a=f.recent.map(x=>Number(x.point)).filter(Number.isFinite);if(a.length<2)return 0;let m=a.reduce((a,b)=>a+b,0)/a.length;let v=a.reduce((a,b)=>a+(b-m)**2,0)/a.length;return clamp((v-5)/20,-1,1)}\nfunction entropy(f){let n=f.recentT+f.recentX;if(!n)return 0;let p=f.recentT/n;if(p<=0||p>=1)return 0;let h=-(p*Math.log2(p)+(1-p)*Math.log2(1-p));return (h-.5)*.3}\nfunction balance(f){let n=f.recentT+f.recentX;if(!n)return 0;return clamp((f.recentT-f.recentX)/Math.max(5,n),-1,1)}\nfunction diceMean(f){return clamp(((f.sum/2)-3.5)/2.5,-1,1)}\nfunction diceVariance(f){return f.spread===0?-.1:clamp((f.spread-2)/4,-1,1)*.25}\nfunction duplicatePressure(f){return f.doubles?-.1:.1}\nfunction extremePressure(f){return (f.sum<=4?-1:f.sum>=10?1:0)}\nfunction centerPressure(f){return clamp((7-f.sum)/3,-1,1)*.15}\nfunction momentum(f){return clamp((f.recentT-f.recentX)/10,-1,1)}\nfunction meanReversion(f){return -balance(f)*.6}\nfunction noiseFilter(f){return f.spread===5||f.sum===7?0:clamp((f.sum-7)/7,-1,1)*.25}\nfunction stability(f){return f.recent.length>=10?0.1:0}\n\nconst ANALYSIS_FUNCS=[\ncoreSig,sumCenter,sumDistance,spreadSig,highSig,lowSig,oddSig,evenSig,doubleSig,\nd1Sig,d2Sig,pairBalance,pairDistance,midpoint,edgeDistance,digitSig,digitDelta,digitParity,\nformulaAgreement,formulaInverse,recentTRate,recentXRate,streakT,streakX,alternation,\ntransitionT,transitionX,recentMean,recentVol,entropy,balance,diceMean,diceVariance,\nduplicatePressure,extremePressure,centerPressure,momentum,meanReversion,noiseFilter,stability\n];\n\nfunction run40(c,f){\n return ANALYSIS_FUNCS.map((fn,i)=>{\n  let s=Number(fn(c,f));\n  if(!Number.isFinite(s))s=0;\n  return {id:i+1,name:ANALYSIS_NAMES[i],signal:clamp(s,-1,1)};\n });\n}\n\n/* =========================================================\n   20 MODELS\n   Các model gom nhóm 40 analysis.\n   ========================================================= */\n\nconst MODEL_NAMES=[\n\"01 Core Model\",\"02 Parity Model\",\"03 Dice Model\",\"04 Structure Model\",\"05 Balance Model\",\n\"06 Sequence Model\",\"07 Transition Model\",\"08 Frequency Model\",\"09 Momentum Model\",\"10 Reversion Model\",\n\"11 Volatility Model\",\"12 Entropy Model\",\"13 Stability Model\",\"14 Noise Model\",\"15 Pattern Matrix\",\n\"16 Weighted Consensus\",\"17 Contradiction Resolver\",\"18 Bias Guard\",\"19 Adaptive Ensemble\",\"20 Master Ensemble\"\n];\n\nfunction avg(a){return a.length?a.reduce((x,y)=>x+y,0)/a.length:0}\n\nfunction run20(a,c,f){\n const g=i=>a.slice(i[0],i[1]).map(x=>x.signal);\n const models=[\n  avg(g([0,2])),\n  avg(g([0,5])),\n  avg(g([4,10])),\n  avg(g([8,15])),\n  avg(g([10,16])),\n  avg(g([20,27])),\n  avg(g([25,27])),\n  avg(g([20,22])),\n  avg(g([36,37])),\n  avg(g([37,39])),\n  avg(g([28,30])),\n  avg(g([29,31])),\n  avg(g([39,40])),\n  avg(g([38,40])),\n  avg(a.map(x=>x.signal)),\n  avg(a.slice(0,20).map(x=>x.signal)),\n  avg(a.filter(x=>Math.abs(x.signal)>.15).map(x=>x.signal)),\n  clamp(avg(a.map(x=>x.signal)), -.5,.5),\n  avg(a.map((x,i)=>x.signal*(1+((i%5)*.03)))),\n  avg(a.map(x=>x.signal))\n ];\n return models.map((signal,i)=>({id:i+1,name:MODEL_NAMES[i],signal:clamp(signal,-1,1)}));\n}\n\n/* =========================================================\n   10 SMART AI LAYERS\n   AI = validators / diagnostics, not future-result access.\n   ========================================================= */\n\nconst AI_NAMES=[\n\"01 Signal Validator\",\"02 Pattern Detector\",\"03 Noise Detector\",\"04 Bias Detector\",\"05 Stability AI\",\n\"06 Confidence Calibrator\",\"07 Contradiction Resolver\",\"08 Ensemble Optimizer\",\"09 Risk Filter\",\"10 Master AI\"\n];\n\nfunction run10(a,m,c,f){\n const all=[...a.map(x=>x.signal),...m.map(x=>x.signal)];\n const base=avg(all);\n const abs=avg(all.map(x=>Math.abs(x)));\n const pos=all.filter(x=>x>0).length;\n const neg=all.filter(x=>x<0).length;\n const contradiction=1-Math.abs(pos-neg)/Math.max(1,pos+neg);\n const variance=avg(all.map(x=>(x-base)**2));\n const ai=[\n  base,\n  clamp(base*(1-contradiction*.15),-1,1),\n  clamp(base*(1-Math.min(variance,.8)*.2),-1,1),\n  clamp(base*(1-Math.min(Math.abs(pos-neg)/(pos+neg||1),1)*.1),-1,1),\n  clamp(base*(.7+abs*.3),-1,1),\n  clamp(base*(.65+abs*.35),-1,1),\n  clamp(base*(1-contradiction*.2),-1,1),\n  clamp(avg(m.map(x=>x.signal)),-1,1),\n  clamp(base*.9,-1,1),\n  clamp(avg([base,...m.map(x=>x.signal)]),-1,1)\n ];\n return ai.map((signal,i)=>({id:i+1,name:AI_NAMES[i],signal:clamp(signal,-1,1)}));\n}\n\n/* =========================================================\n   MASTER ENSEMBLE\n   ========================================================= */\n\nfunction master(c,a,m,ai){\n const signals=[\n  ...a.map(x=>x.signal*.35),\n  ...m.map(x=>x.signal*.40),\n  ...ai.map(x=>x.signal*.25)\n ];\n const raw=avg(signals);\n const tai=clamp(50+raw*40,0,100);\n const xiu=100-tai;\n const edge=Math.abs(tai-xiu);\n const consensus=clamp(50+edge*.5,50,90);\n const prediction=tai>=xiu?\"TÀI\":\"XỈU\";\n return {tai,xiu,edge,consensus,prediction,raw};\n}\n\n/* =========================================================\n   API\n   ========================================================= */\n\n/* =========================================================\n   SAME-ORIGIN RENDER API\n   Browser -> /api/sessions -> Node -> Tele68\n   ========================================================= */\n\nasync function fetchAPI(){\n const target=API_URL+\"?t=\"+Date.now();\n const ctl=new AbortController();\n const timeout=setTimeout(()=>ctl.abort(),10000);\n try{\n  const r=await fetch(target,{\n   method:\"GET\",\n   cache:\"no-store\",\n   signal:ctl.signal,\n   headers:{\"Accept\":\"application/json\"}\n  });\n  if(!r.ok)throw new Error(\"HTTP \"+r.status);\n  const j=await r.json();\n  if(!j||!Array.isArray(j.list)||!j.list.length)throw new Error(\"API list rỗng\");\n  return j.list\n   .filter(x=>x&&Number.isFinite(Number(x.id)))\n   .sort((a,b)=>Number(b.id)-Number(a.id));\n }finally{\n  clearTimeout(timeout);\n }\n}\n\n/* =========================================================\n   REFRESH\n   ========================================================= */\n\nasync function refreshNow(){\n try{\n  errorHide();\n  setStatus(\"ĐANG ĐỌC API\",true);\n  const list=await fetchAPI();\n  lastList=list;\n  processList(list);\n  $(\"apiStatus\").textContent=\"ONLINE\";\n }catch(e){\n  $(\"apiStatus\").textContent=\"ERROR\";\n  errorShow(\"API lỗi: \"+(e && e.message ? e.message : String(e))+\". Render proxy chưa lấy được dữ liệu từ Tele68.\");\n  setStatus(\"API ERROR\",false);\n }\n}\n\nfunction processList(list){\n const latest=list[0];\n const sourceId=Number(latest.id);\n const targetId=sourceId+1;\n const dices=Array.isArray(latest.dices)?latest.dices:[];\n if(dices.length<2)throw new Error(\"Session thiếu D1/D2\");\n\n const d1=Number(dices[0]),d2=Number(dices[1]);\n const core=coreFormula(d1,d2,sourceId,targetId);\n\n const research=features(d1,d2,history);\n const a=run40(core,research);\n const m=run20(a,core,research);\n const ai=run10(a,m,core,research);\n const masterResult=master(core,a,m,ai);\n\n const result={sourceId,targetId,d1,d2,core,a,m,ai,master:masterResult,createdAt:Date.now()};\n\n setText(\"sourceId\",sourceId);\n setText(\"targetId\",targetId);\n setText(\"targetMini\",targetId);\n setText(\"dice\",d1+\" / \"+d2);\n setText(\"point\",latest.point??(d1+d2));\n setText(\"sourceResult\",normalizeResult(latest.resultTruyenThong)||\"—\");\n\n renderResult(result);\n addPrediction(result);\n\n const target=list.find(x=>Number(x.id)===targetId);\n if(target)resolveTarget(targetId,target);\n\n lastTarget=targetId;\n renderHistory();\n}\n\nfunction normalizeResult(v){\n const s=String(v||\"\").toUpperCase();\n return s===\"TAI\"?\"TÀI\":s===\"XIU\"?\"XỈU\":null;\n}\n\n/* =========================================================\n   RENDER\n   ========================================================= */\n\nfunction renderResult(r){\n const p=$(\"prediction\");\n p.textContent=r.master.prediction;\n p.className=\"pred \"+(r.master.prediction===\"TÀI\"?\"tai\":\"xiu\");\n\n setText(\"confidence\",pct(r.master.consensus));\n setText(\"value\",r.core.value);\n setText(\"taiScore\",pct(r.master.tai));\n setText(\"xiuScore\",pct(r.master.xiu));\n setText(\"taiText\",pct(r.master.tai));\n setText(\"xiuText\",pct(r.master.xiu));\n $(\"taiBar\").style.width=r.master.tai+\"%\";\n $(\"xiuBar\").style.width=r.master.xiu+\"%\";\n\n $(\"formula\").innerHTML=\n `<strong>CÔNG THỨC DUY NHẤT:</strong>\n (${r.d1} + ${r.d2}) ÷ ${r.core.prev===0?\"1\":r.core.prev} × ${r.core.curr}\n = <strong>${r.core.raw.toFixed(4)}</strong>\n → <strong>${r.core.value}</strong>\n → <strong>${r.core.parity}</strong>\n → Thuận: <strong>${r.core.forward}</strong>\n → Ngược: <strong>${r.core.reverse}</strong>\n <br><strong>Phiên nguồn:</strong> #${r.sourceId}\n → <strong>Phiên mục tiêu:</strong> #${r.targetId}\n <br><strong>Master consensus:</strong> ${r.master.consensus.toFixed(1)}%.\n Đây là điểm đồng thuận nghiên cứu, không phải xác suất thắng.`;\n\n renderCards(\"algorithms\",r.a,40);\n renderCards(\"models\",r.m,20);\n renderCards(\"ais\",r.ai,10);\n\n $(\"state\").textContent=\"LIVE\";\n $(\"diag\").textContent=\"OK\";\n $(\"diagnostic\").textContent=\n `SOURCE #${r.sourceId}\nTARGET #${r.targetId}\nDICE ${r.d1}/${r.d2}\nFORMULA ${r.core.raw.toFixed(4)} -> ${r.core.value} -> ${r.core.parity}\nFORWARD ${r.core.forward}\nREVERSE ${r.core.reverse}\nMASTER ${r.master.prediction}\nTAI ${r.master.tai.toFixed(2)}\nXIU ${r.master.xiu.toFixed(2)}\nCONSENSUS ${r.master.consensus.toFixed(2)}\n40 ANALYSIS READY\n20 MODELS READY\n10 AI LAYERS READY`;\n}\n\nfunction renderCards(id,items,count){\n $(id).innerHTML=items.map(x=>{\n  const cls=x.signal>0.05?\"tai\":x.signal<-.05?\"xiu\":\"neutral\";\n  const label=x.signal>0.05?\"TÀI\":x.signal<-.05?\"XỈU\":\"CÂN\";\n  return `<div class=\"mini\">\n   <div class=\"mini-top\"><span>${x.name}</span><b class=\"${cls}\">${label}</b></div>\n   <p>signal ${x.signal.toFixed(3)}</p>\n  </div>`;\n }).join(\"\");\n}\n\n/* =========================================================\n   HISTORY\n   ========================================================= */\n\nfunction addPrediction(r){\n const existing=history.find(x=>Number(x.targetId)===Number(r.targetId));\n if(existing)return;\n\n history.unshift({\n  targetId:r.targetId,\n  sourceId:r.sourceId,\n  d1:r.d1,\n  d2:r.d2,\n  value:r.core.value,\n  prediction:r.master.prediction,\n  consensus:r.master.consensus,\n  result:null,\n  createdAt:r.createdAt\n });\n\n history=history.slice(0,100);\n save();\n}\n\nfunction resolveTarget(targetId,target){\n const item=history.find(x=>Number(x.targetId)===Number(targetId));\n if(!item)return;\n const result=normalizeResult(target.resultTruyenThong);\n if(!result)return;\n if(item.result===result)return;\n item.result=result;\n save();\n}\n\nfunction renderHistory(){\n const body=$(\"historyBody\");\n const done=history.filter(x=>x.result);\n const wins=done.filter(x=>x.result===x.prediction).length;\n const losses=done.length-wins;\n const accuracy=done.length?wins/done.length*100:0;\n\n setText(\"wins\",wins);\n setText(\"losses\",losses);\n setText(\"done\",done.length);\n setText(\"accuracy\",accuracy.toFixed(1)+\"%\");\n setText(\"record\",history.length);\n\n if(!history.length){\n  body.innerHTML='<tr><td colspan=\"7\" style=\"text-align:center;padding:20px;color:#65718a\">Chưa có dữ liệu</td></tr>';\n  return;\n }\n\n body.innerHTML=history.map(x=>{\n  let status='<span class=\"pending\">CHỜ API</span>';\n  if(x.result)status=x.result===x.prediction?'<span class=\"win\">THẮNG</span>':'<span class=\"loss\">THUA</span>';\n  return `<tr>\n   <td>#${x.targetId}</td>\n   <td><b class=\"${x.prediction===\"TÀI\"?\"tai\":\"xiu\"}\">${x.prediction}</b></td>\n   <td>${x.d1}/${x.d2}</td>\n   <td>${x.value}</td>\n   <td>${x.consensus.toFixed(1)}%</td>\n   <td>${x.result||\"—\"}</td>\n   <td>${status}</td>\n  </tr>`;\n }).join(\"\");\n}\n\n/* =========================================================\n   AUTO\n   ========================================================= */\n\nfunction startAuto(){\n if(running)return;\n running=true;\n setStatus(\"AUTO LIVE\",true);\n refreshNow();\n timer=setInterval(refreshNow,POLL_MS);\n}\n\nfunction stopAuto(){\n running=false;\n if(timer){clearInterval(timer);timer=null}\n setStatus(\"ĐÃ DỪNG\",false);\n $(\"state\").textContent=\"STOPPED\";\n}\n\nrenderHistory();\nstartAuto();\n</script>\n</body>\n</html>\n";
 
-app.disable("x-powered-by");
-app.use(express.json());
+let apiCache = null;
+let apiCacheAt = 0;
+let apiBusy = null;
+const CACHE_MS = 1200;
 
-const PORT = process.env.PORT || 3000;
-
-const API_URL =
-  process.env.API_URL ||
-  "https://wtxmd52.tele68.com/v1/txmd5/sessions";
-
-const DATA_FILE = path.join(__dirname, "stats.json");
-
-const MIN_HISTORY = 6;
-const MAX_PATTERN = 15;
-const MAX_HISTORY = 500;
-const MAX_BACKTEST = 250;
-
-const REQUEST_TIMEOUT = 10000;
-
-const LABEL = {
-  T: "Tài",
-  X: "Xỉu"
-};
-
-// =====================================================
-// STATE
-// =====================================================
-
-function defaultState() {
-  return {
-    thang: 0,
-    thua: 0,
-    tong_du_doan: 0,
-    pending: null,
-    last_settled_id: null,
-    updated_at: null
-  };
-}
-
-function loadState() {
-  try {
-    if (!fs.existsSync(DATA_FILE)) {
-      return defaultState();
-    }
-
-    const data = JSON.parse(
-      fs.readFileSync(DATA_FILE, "utf8")
-    );
-
-    return {
-      ...defaultState(),
-      ...data
-    };
-  } catch (error) {
-    console.error("Lỗi đọc stats:", error.message);
-    return defaultState();
-  }
-}
-
-let state = loadState();
-
-function saveState() {
-  try {
-    state.updated_at = new Date().toISOString();
-
-    const temp = DATA_FILE + ".tmp";
-
-    fs.writeFileSync(
-      temp,
-      JSON.stringify(state, null, 2),
-      "utf8"
-    );
-
-    fs.renameSync(temp, DATA_FILE);
-  } catch (error) {
-    console.error("Lỗi lưu stats:", error.message);
-  }
-}
-
-// =====================================================
-// NORMALIZE
-// =====================================================
-
-function normalizeResult(value) {
-  if (value === null || value === undefined) {
-    return null;
-  }
-
-  const text = String(value)
-    .trim()
-    .toUpperCase();
-
-  if (["TAI", "TÀI", "T"].includes(text)) {
-    return "T";
-  }
-
-  if (["XIU", "XỈU", "X"].includes(text)) {
-    return "X";
-  }
-
-  return null;
-}
-
-function normalizeSessions(payload) {
-  let list = [];
-
-  if (Array.isArray(payload)) {
-    list = payload;
-  } else if (Array.isArray(payload?.list)) {
-    list = payload.list;
-  } else if (Array.isArray(payload?.data)) {
-    list = payload.data;
-  } else if (Array.isArray(payload?.data?.list)) {
-    list = payload.data.list;
-  }
-
-  const map = new Map();
-
-  for (const item of list) {
-    if (!item || typeof item !== "object") {
-      continue;
-    }
-
-    const id = Number(
-      item.id ??
-      item.session ??
-      item.phien ??
-      item.issue
-    );
-
-    const result = normalizeResult(
-      item.resultTruyenThong ??
-      item.result ??
-      item.ket_qua ??
-      item.outcome
-    );
-
-    const dices = Array.isArray(item.dices)
-      ? item.dices.map(Number)
-      : [];
-
-    const validDices =
-      dices.length === 3 &&
-      dices.every(
-        n => Number.isInteger(n) && n >= 1 && n <= 6
-      );
-
-    const point = Number(
-      item.point ??
-      item.total ??
-      (
-        validDices
-          ? dices.reduce((a, b) => a + b, 0)
-          : NaN
-      )
-    );
-
-    if (!Number.isFinite(id) || !result) {
-      continue;
-    }
-
-    map.set(id, {
-      id,
-      result,
-      dices: validDices ? dices : [],
-      point: Number.isFinite(point) ? point : null
-    });
-  }
-
-  return Array.from(map.values())
-    .sort((a, b) => a.id - b.id)
-    .slice(-MAX_HISTORY);
-}
-
-// =====================================================
-// FETCH
-// =====================================================
-
-async function fetchSessions() {
-  const response = await fetch(API_URL, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "Vertex-TX-API/3.0"
-    },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT)
+function send(res, status, type, body) {
+  res.writeHead(status, {
+    "Content-Type": type,
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Accept",
+    "Access-Control-Allow-Methods": "GET, OPTIONS"
   });
-
-  if (!response.ok) {
-    throw new Error(
-      `Nguồn dữ liệu HTTP ${response.status}`
-    );
-  }
-
-  const payload = await response.json();
-  const sessions = normalizeSessions(payload);
-
-  if (!sessions.length) {
-    throw new Error("Không có dữ liệu phiên hợp lệ");
-  }
-
-  return sessions;
+  res.end(body);
 }
 
-// =====================================================
-// HELPERS
-// =====================================================
-
-function opposite(value) {
-  return value === "T" ? "X" : "T";
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function patternString(history) {
-  return history.slice(-MAX_PATTERN).join("");
-}
-
-function getStreak(history) {
-  if (!history.length) {
-    return {
-      side: null,
-      length: 0
-    };
-  }
-
-  const side = history[history.length - 1];
-
-  let length = 0;
-
-  for (let i = history.length - 1; i >= 0; i--) {
-    if (history[i] !== side) break;
-    length++;
-  }
-
-  return { side, length };
-}
-
-function getTransitions(history) {
-  const result = [];
-
-  for (let i = 0; i < history.length - 1; i++) {
-    result.push(history[i] + history[i + 1]);
-  }
-
-  return result;
-}
-
-// =====================================================
-// PATTERN MATCHING
-// Chỉ so khớp mẫu cục bộ, không dùng tổng Tài/Xỉu toàn bộ.
-// =====================================================
-
-function matchPattern(history, length) {
-  if (history.length < length + 2) {
-    return null;
-  }
-
-  const target = history
-    .slice(-length)
-    .join("");
-
-  let tai = 0;
-  let xiu = 0;
-  let matches = 0;
-
-  for (
-    let i = 0;
-    i <= history.length - length - 1;
-    i++
-  ) {
-    const candidate = history
-      .slice(i, i + length)
-      .join("");
-
-    if (candidate !== target) {
-      continue;
-    }
-
-    const next = history[i + length];
-
-    if (next === "T") tai++;
-    if (next === "X") xiu++;
-
-    matches++;
-  }
-
-  if (matches < 1 || tai === xiu) {
-    return null;
-  }
-
-  return {
-    prediction: tai > xiu ? "T" : "X",
-    support: Math.max(tai, xiu) / matches,
-    matches
-  };
-}
-
-// =====================================================
-// CORE 1: PATTERN 2
-// =====================================================
-
-function core1(h) {
-  return matchPattern(h, 2);
-}
-
-// =====================================================
-// CORE 2: PATTERN 3
-// =====================================================
-
-function core2(h) {
-  return matchPattern(h, 3);
-}
-
-// =====================================================
-// CORE 3: PATTERN 4
-// =====================================================
-
-function core3(h) {
-  return matchPattern(h, 4);
-}
-
-// =====================================================
-// CORE 4: PATTERN 5
-// =====================================================
-
-function core4(h) {
-  return matchPattern(h, 5);
-}
-
-// =====================================================
-// CORE 5: PATTERN 6
-// =====================================================
-
-function core5(h) {
-  return matchPattern(h, 6);
-}
-
-// =====================================================
-// CORE 6: TRANSITION
-// =====================================================
-
-function core6(h) {
-  if (h.length < 4) return null;
-
-  const last = h[h.length - 1];
-
-  let tai = 0;
-  let xiu = 0;
-  let matches = 0;
-
-  for (let i = 0; i < h.length - 1; i++) {
-    if (h[i] !== last) continue;
-
-    matches++;
-
-    if (h[i + 1] === "T") tai++;
-    if (h[i + 1] === "X") xiu++;
-  }
-
-  if (matches < 2 || tai === xiu) {
-    return null;
-  }
-
-  return {
-    prediction: tai > xiu ? "T" : "X",
-    support: Math.max(tai, xiu) / matches,
-    matches
-  };
-}
-
-// =====================================================
-// CORE 7: STREAK STRUCTURE
-// =====================================================
-
-function core7(h) {
-  const streak = getStreak(h);
-
-  if (streak.length >= 3) {
-    return {
-      prediction: streak.side,
-      support: 0.55 + Math.min(streak.length, 5) * 0.05,
-      matches: streak.length
-    };
-  }
-
-  if (streak.length === 1 && h.length >= 4) {
-    return {
-      prediction: opposite(streak.side),
-      support: 0.55,
-      matches: 1
-    };
-  }
-
-  return null;
-}
-
-// =====================================================
-// CORE 8: ALTERNATION
-// =====================================================
-
-function core8(h) {
-  if (h.length < 4) return null;
-
-  const last = h.slice(-4);
-
-  const alternating =
-    last[0] !== last[1] &&
-    last[1] !== last[2] &&
-    last[2] !== last[3];
-
-  if (!alternating) return null;
-
-  return {
-    prediction: opposite(last[3]),
-    support: 0.62,
-    matches: 1
-  };
-}
-
-// =====================================================
-// CORE 9: PAIR TRANSITION
-// =====================================================
-
-function core9(h) {
-  if (h.length < 5) return null;
-
-  const pair = h.slice(-2).join("");
-
-  let tai = 0;
-  let xiu = 0;
-  let matches = 0;
-
-  for (let i = 0; i < h.length - 2; i++) {
-    if (h[i] + h[i + 1] !== pair) {
-      continue;
-    }
-
-    matches++;
-
-    if (h[i + 2] === "T") tai++;
-    if (h[i + 2] === "X") xiu++;
-  }
-
-  if (matches < 2 || tai === xiu) {
-    return null;
-  }
-
-  return {
-    prediction: tai > xiu ? "T" : "X",
-    support: Math.max(tai, xiu) / matches,
-    matches
-  };
-}
-
-// =====================================================
-// CORE 10: TRIPLE TRANSITION
-// =====================================================
-
-function core10(h) {
-  if (h.length < 6) return null;
-
-  const triple = h.slice(-3).join("");
-
-  let tai = 0;
-  let xiu = 0;
-  let matches = 0;
-
-  for (let i = 0; i < h.length - 3; i++) {
-    if (h.slice(i, i + 3).join("") !== triple) {
-      continue;
-    }
-
-    matches++;
-
-    if (h[i + 3] === "T") tai++;
-    if (h[i + 3] === "X") xiu++;
-  }
-
-  if (matches < 2 || tai === xiu) {
-    return null;
-  }
-
-  return {
-    prediction: tai > xiu ? "T" : "X",
-    support: Math.max(tai, xiu) / matches,
-    matches
-  };
-}
-
-// =====================================================
-// CORE 11: RHYTHM STRUCTURE
-// =====================================================
-
-function core11(h) {
-  if (h.length < 6) return null;
-
-  const last6 = h.slice(-6);
-
-  const runs = [];
-
-  let current = last6[0];
-  let length = 1;
-
-  for (let i = 1; i < last6.length; i++) {
-    if (last6[i] === current) {
-      length++;
-    } else {
-      runs.push({
-        side: current,
-        length
+function fetchUpstream() {
+  if (apiBusy) return apiBusy;
+  if (apiCache && Date.now() - apiCacheAt < CACHE_MS) return Promise.resolve(apiCache);
+
+  apiBusy = new Promise((resolve, reject) => {
+    const url = new URL(API_URL + "?t=" + Date.now());
+    const req = https.request({
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: 443,
+      path: url.pathname + url.search,
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 VERTEX-RENDER/1.0"
+      },
+      timeout: 10000
+    }, upstream => {
+      let data = "";
+      upstream.setEncoding("utf8");
+      upstream.on("data", chunk => data += chunk);
+      upstream.on("end", () => {
+        if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
+          return reject(new Error("UPSTREAM_HTTP_" + upstream.statusCode));
+        }
+        try {
+          const json = JSON.parse(data);
+          if (!json || !Array.isArray(json.list)) throw new Error("UPSTREAM_INVALID_LIST");
+          apiCache = json;
+          apiCacheAt = Date.now();
+          resolve(json);
+        } catch (e) {
+          reject(e);
+        }
       });
+    });
 
-      current = last6[i];
-      length = 1;
-    }
-  }
-
-  runs.push({
-    side: current,
-    length
+    req.on("timeout", () => req.destroy(new Error("UPSTREAM_TIMEOUT")));
+    req.on("error", reject);
+    req.end();
+  }).finally(() => {
+    apiBusy = null;
   });
 
-  if (runs.length < 2) return null;
-
-  const lastRun = runs[runs.length - 1];
-
-  if (lastRun.length >= 2) {
-    return {
-      prediction: lastRun.side,
-      support: 0.58,
-      matches: lastRun.length
-    };
-  }
-
-  return {
-    prediction: opposite(lastRun.side),
-    support: 0.55,
-    matches: 1
-  };
+  return apiBusy;
 }
 
-// =====================================================
-// CORE 12: TRANSITION SEQUENCE
-// =====================================================
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
 
-function core12(h) {
-  if (h.length < 6) return null;
+  if (req.method === "OPTIONS") return send(res, 204, "text/plain; charset=utf-8", "");
 
-  const transitions = getTransitions(h);
-
-  const lastTransition =
-    transitions[transitions.length - 1];
-
-  let same = 0;
-  let reverse = 0;
-
-  for (let i = 0; i < transitions.length - 1; i++) {
-    if (transitions[i] === lastTransition) {
-      same++;
-    } else if (
-      transitions[i] ===
-      lastTransition.split("").reverse().join("")
-    ) {
-      reverse++;
-    }
+  if (url.pathname === "/health") {
+    return send(res, 200, "application/json; charset=utf-8", JSON.stringify({
+      success: true,
+      status: "ONLINE",
+      service: "VERTEX ULTRA",
+      uptime: process.uptime(),
+      time: new Date().toISOString()
+    }));
   }
 
-  if (same === reverse) return null;
-
-  const last = h[h.length - 1];
-
-  return {
-    prediction: same > reverse
-      ? last
-      : opposite(last),
-    support:
-      Math.max(same, reverse) /
-      Math.max(1, same + reverse),
-    matches: same + reverse
-  };
-}
-
-// =====================================================
-// 12 CORE ENGINE
-// =====================================================
-
-const CORES = [
-  { name: "pattern_2", weight: 1.0, run: core1 },
-  { name: "pattern_3", weight: 1.1, run: core2 },
-  { name: "pattern_4", weight: 1.2, run: core3 },
-  { name: "pattern_5", weight: 1.1, run: core4 },
-  { name: "pattern_6", weight: 0.9, run: core5 },
-  { name: "transition", weight: 1.0, run: core6 },
-  { name: "streak", weight: 0.8, run: core7 },
-  { name: "alternation", weight: 0.8, run: core8 },
-  { name: "pair_transition", weight: 1.0, run: core9 },
-  { name: "triple_transition", weight: 1.1, run: core10 },
-  { name: "rhythm", weight: 0.9, run: core11 },
-  { name: "transition_sequence", weight: 0.9, run: core12 }
-];
-
-// =====================================================
-// ANALYZE CORES
-// =====================================================
-
-function analyzeCores(history) {
-  let scoreT = 0;
-  let scoreX = 0;
-
-  const details = [];
-
-  for (const core of CORES) {
-    let result = null;
-
+  if (url.pathname === "/api/sessions") {
     try {
-      result = core.run(history);
-    } catch (error) {
-      result = null;
-    }
-
-    if (
-      !result ||
-      !["T", "X"].includes(result.prediction)
-    ) {
-      details.push({
-        ten: core.name,
-        du_doan: null,
-        trong_so: core.weight,
-        ho_tro: 0,
-        so_mau: 0
-      });
-
-      continue;
-    }
-
-    const support = clamp(
-      Number(result.support) || 0.5,
-      0.5,
-      1
-    );
-
-    const effectiveWeight =
-      core.weight * (0.75 + support * 0.5);
-
-    if (result.prediction === "T") {
-      scoreT += effectiveWeight;
-    } else {
-      scoreX += effectiveWeight;
-    }
-
-    details.push({
-      ten: core.name,
-      du_doan: LABEL[result.prediction],
-      trong_so: core.weight,
-      ho_tro: Number((support * 100).toFixed(2)),
-      so_mau: result.matches || 0
-    });
-  }
-
-  const active = details.filter(
-    item => item.du_doan !== null
-  ).length;
-
-  const total = scoreT + scoreX;
-
-  const prediction =
-    scoreT > scoreX
-      ? "T"
-      : scoreX > scoreT
-        ? "X"
-        : null;
-
-  const agreement = total
-    ? Math.max(scoreT, scoreX) / total
-    : 0;
-
-  const margin = total
-    ? Math.abs(scoreT - scoreX) / total
-    : 0;
-
-  let confidence =
-    50 +
-    agreement * 10 +
-    margin * 8;
-
-  confidence = clamp(confidence, 50, 68);
-
-  // Không ép dự đoán nếu tín hiệu quá yếu.
-  if (
-    !prediction ||
-    active < 4 ||
-    agreement < 0.53
-  ) {
-    confidence = 0;
-  }
-
-  return {
-    prediction:
-      confidence > 0 ? prediction : null,
-
-    scoreT: Number(scoreT.toFixed(3)),
-    scoreX: Number(scoreX.toFixed(3)),
-
-    active,
-
-    agreement: Number(
-      (agreement * 100).toFixed(2)
-    ),
-
-    confidence: Number(confidence.toFixed(2)),
-
-    details
-  };
-}
-
-// =====================================================
-// WALK-FORWARD BACKTEST
-// =====================================================
-
-function walkForward(history) {
-  const start = Math.max(
-    MIN_HISTORY,
-    history.length - MAX_BACKTEST
-  );
-
-  let correct = 0;
-  let wrong = 0;
-  let tested = 0;
-
-  for (let i = start; i < history.length; i++) {
-    const training = history.slice(0, i);
-
-    if (training.length < MIN_HISTORY) {
-      continue;
-    }
-
-    const result = analyzeCores(training);
-
-    if (!result.prediction) {
-      continue;
-    }
-
-    tested++;
-
-    if (result.prediction === history[i]) {
-      correct++;
-    } else {
-      wrong++;
+      const json = await fetchUpstream();
+      return send(res, 200, "application/json; charset=utf-8", JSON.stringify(json));
+    } catch (e) {
+      return send(res, 502, "application/json; charset=utf-8", JSON.stringify({
+        success: false,
+        error: e && e.message ? e.message : "UPSTREAM_ERROR",
+        source: "VERTEX_RENDER_PROXY"
+      }));
     }
   }
 
-  return {
-    tested,
-    correct,
-    wrong,
-    accuracy: tested
-      ? Number(((correct / tested) * 100).toFixed(2))
-      : 0
-  };
-}
-
-// =====================================================
-// MAIN ANALYSIS
-// =====================================================
-
-function analyze(history) {
-  const clean = history
-    .filter(x => x === "T" || x === "X")
-    .slice(-MAX_HISTORY);
-
-  const pattern = patternString(clean);
-
-  if (clean.length < MIN_HISTORY) {
-    return {
-      ready: false,
-      remaining: MIN_HISTORY - clean.length,
-      prediction: null,
-      confidence: 0,
-      pattern,
-      cores_active: 0,
-      thong_ke: {
-        backtest: null
-      }
-    };
+  if (url.pathname === "/" || url.pathname === "/index.html") {
+    return send(res, 200, "text/html; charset=utf-8", HTML);
   }
 
-  const result = analyzeCores(clean);
-  const backtest = walkForward(clean);
-
-  return {
-    ready: Boolean(result.prediction),
-    remaining: 0,
-
-    prediction: result.prediction,
-    confidence: result.confidence,
-
-    pattern,
-
-    cores_active: result.active,
-
-    score_tai: result.scoreT,
-    score_xiu: result.scoreX,
-
-    agreement: result.agreement,
-
-    cores: result.details,
-
-    thong_ke: {
-      backtest
-    }
-  };
-}
-
-// =====================================================
-// SETTLE PREDICTION
-// =====================================================
-
-function settlePrediction(latest) {
-  if (!state.pending) return;
-
-  if (latest.id < state.pending.target_id) {
-    return;
-  }
-
-  if (latest.id > state.pending.target_id) {
-    // Không tự tính thắng/thua khi bỏ lỡ phiên mục tiêu.
-    state.pending = null;
-    saveState();
-    return;
-  }
-
-  if (state.last_settled_id === latest.id) {
-    return;
-  }
-
-  state.tong_du_doan++;
-
-  if (state.pending.prediction === latest.result) {
-    state.thang++;
-  } else {
-    state.thua++;
-  }
-
-  state.last_settled_id = latest.id;
-  state.pending = null;
-
-  saveState();
-}
-
-// =====================================================
-// RESPONSE
-// =====================================================
-
-function buildResponse(sessions) {
-  const latest = sessions[sessions.length - 1];
-
-  settlePrediction(latest);
-
-  const history = sessions.map(
-    item => item.result
-  );
-
-  const result = analyze(history);
-
-  const nextId = latest.id + 1;
-
-  let prediction = null;
-  let status = "Đang thu thập";
-
-  if (result.ready && result.prediction) {
-    status = "Đã phân tích";
-
-    if (
-      state.pending &&
-      state.pending.target_id === nextId
-    ) {
-      prediction = state.pending.prediction;
-    } else {
-      prediction = result.prediction;
-
-      state.pending = {
-        target_id: nextId,
-        prediction,
-        created_at: new Date().toISOString()
-      };
-
-      saveState();
-    }
-  } else if (history.length >= MIN_HISTORY) {
-    status = "Tín hiệu chưa đủ mạnh";
-  }
-
-  const total = state.thang + state.thua;
-
-  const winRate = total > 0
-    ? (state.thang / total) * 100
-    : 0;
-
-  const previous =
-    sessions.length > 1
-      ? sessions[sessions.length - 2]
-      : null;
-
-  return {
-    success: true,
-
-    source: "Vertex TX Engine V3",
-
-    phien_truoc: latest.id,
-
-    xuc_xac: latest.dices,
-
-    tong: latest.point,
-
-    ket_qua: LABEL[latest.result],
-
-    phien_hien_tai: nextId,
-
-    trang_thai: status,
-
-    du_doan: prediction
-      ? LABEL[prediction]
-      : null,
-
-    tin_cay: `${result.confidence.toFixed(2)}%`,
-
-    pattern: result.pattern,
-
-    thong_ke: {
-      so_loi_hoat_dong: result.cores_active,
-      tong_loi: CORES.length,
-
-      diem_tai: result.score_tai ?? 0,
-      diem_xiu: result.score_xiu ?? 0,
-
-      do_dong_thuan: result.agreement ?? 0,
-
-      backtest: result.thong_ke.backtest,
-
-      thang: state.thang,
-      thua: state.thua,
-
-      tong_du_doan: state.tong_du_doan,
-
-      ty_le_thang: `${winRate.toFixed(2)}%`
-    },
-
-    cores: result.cores ?? [],
-
-    du_lieu: {
-      so_phien: history.length,
-      so_phien_can_thu_thap: result.remaining,
-      phien_cu: previous?.id ?? null,
-      gioi_han_pattern: MAX_PATTERN
-    },
-
-    cap_nhat: new Date().toISOString()
-  };
-}
-
-// =====================================================
-// ROUTES
-// =====================================================
-
-app.get("/", (req, res) => {
-  res.json({
-    success: true,
-    name: "VERTEX PREMIUM TX API",
-    version: "3.0.0",
-    status: "online",
-    endpoints: [
-      "/health",
-      "/api/lc/md5",
-      "/api/stats"
-    ]
-  });
+  return send(res, 404, "application/json; charset=utf-8", JSON.stringify({
+    success: false,
+    error: "NOT_FOUND"
+  }));
 });
 
-app.get("/health", (req, res) => {
-  res.json({
-    success: true,
-    status: "OK",
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
-  });
+server.listen(PORT, HOST, () => {
+  console.log("====================================================");
+  console.log(" VERTEX ULTRA - RENDER SINGLE FILE ONLINE");
+  console.log(" PORT: " + PORT);
+  console.log(" API: " + API_URL);
+  console.log(" /health       -> health check");
+  console.log(" /api/sessions -> Tele68 proxy");
+  console.log("====================================================");
 });
 
-app.get("/api/lc/md5", async (req, res) => {
-  try {
-    const sessions = await fetchSessions();
-
-    const response = buildResponse(sessions);
-
-    res.setHeader("Cache-Control", "no-store");
-
-    return res.json(response);
-  } catch (error) {
-    console.error("API ERROR:", error.message);
-
-    return res.status(502).json({
-      success: false,
-      error: "Không thể lấy dữ liệu phiên",
-      message: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// =====================================================
-// STATS
-// =====================================================
-
-app.get("/api/stats", (req, res) => {
-  const total = state.thang + state.thua;
-
-  const winRate = total > 0
-    ? (state.thang / total) * 100
-    : 0;
-
-  res.json({
-    success: true,
-    thang: state.thang,
-    thua: state.thua,
-    tong_du_doan: state.tong_du_doan,
-    ty_le_thang: `${winRate.toFixed(2)}%`,
-    pending: state.pending,
-    updated_at: state.updated_at
-  });
-});
-
-// =====================================================
-// RESET
-// =====================================================
-
-app.post("/api/reset", (req, res) => {
-  const token = process.env.ADMIN_TOKEN;
-
-  if (!token) {
-    return res.status(403).json({
-      success: false,
-      error: "ADMIN_TOKEN chưa được cấu hình"
-    });
-  }
-
-  const supplied =
-    req.headers["x-admin-token"] ||
-    req.query.token;
-
-  if (supplied !== token) {
-    return res.status(401).json({
-      success: false,
-      error: "Unauthorized"
-    });
-  }
-
-  state = defaultState();
-  saveState();
-
-  return res.json({
-    success: true,
-    message: "Đã reset thống kê"
-  });
-});
-
-// =====================================================
-// SERVER
-// =====================================================
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log("==================================");
-  console.log(" VERTEX PREMIUM TX API V3");
-  console.log("==================================");
-  console.log(`PORT: ${PORT}`);
-  console.log(`API: /api/lc/md5`);
-  console.log(`HEALTH: /health`);
-  console.log(`MIN_HISTORY: ${MIN_HISTORY}`);
-  console.log(`MAX_PATTERN: ${MAX_PATTERN}`);
-  console.log(`CORES: ${CORES.length}`);
-  console.log("MODE: PATTERN-BASED");
-  console.log("SERVER READY");
-});
+process.on("SIGTERM", () => server.close(() => process.exit(0)));
+process.on("SIGINT", () => server.close(() => process.exit(0)));
