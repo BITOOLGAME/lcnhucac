@@ -174,7 +174,7 @@ return `<!doctype html>
 </div>
 <script>
 const BOOT_ID='${BOOT_ID}';
-const state={running:false,timer:null,last:null,predictions:new Map(),history:[],busy:false,nextAt:0};
+const state={running:false,timer:null,last:null,predictions:new Map(),history:[],busy:false,nextAt:0,mode:'THUAN'};
 // Persist through page refreshes; reset only when the Node server's BOOT_ID changes.
 try{
   const previousBoot=localStorage.getItem('vertex_boot_id');
@@ -253,6 +253,41 @@ function signals(list){
   return {src,targetId,prevLast,curLast,d1,d2,core};
 }
 
+function opposite(signal){return signal==='TAI'?'XIU':'TAI';}
+function strategyWin(row,mode){
+  if(mode==='NGUOC') return row.reverseWin;
+  return row.straightWin;
+}
+function chooseMode(){
+  const recent=state.history.slice(0,20);
+  const current=state.mode||'THUAN';
+
+  // Rule 1: if the active strategy has two consecutive settled losses, reverse it.
+  const streakRows=state.history.filter(h=>h.actual==='TAI'||h.actual==='XIU');
+  if(streakRows.length>=2 &&
+     strategyWin(streakRows[0],current)===false &&
+     strategyWin(streakRows[1],current)===false){
+    state.mode=current==='THUAN'?'NGUOC':'THUAN';
+    return state.mode;
+  }
+
+  // Rule 2: compare both approaches on the same settled sessions and follow the one with more wins.
+  let straightWins=0,reverseWins=0,compared=0;
+  for(const h of recent){
+    if(typeof h.straightWin==='boolean' && typeof h.reverseWin==='boolean'){
+      compared++;
+      if(h.straightWin) straightWins++;
+      if(h.reverseWin) reverseWins++;
+    }
+  }
+  if(compared>0 && straightWins!==reverseWins){
+    state.mode=straightWins>reverseWins?'THUAN':'NGUOC';
+  } else if(!state.mode){
+    state.mode='THUAN';
+  }
+  return state.mode;
+}
+
 function analyze(list){
   const s=signals(list); if(!s.core.signal) { $('masterState').textContent='CHỜ DỮ LIỆU'; $('diag').textContent=s.core.error||'Chưa đủ dữ liệu hợp lệ cho công thức 2 xúc xắc.'; return null; }
   const recent=list.slice(0,40);
@@ -277,10 +312,13 @@ function analyze(list){
   });
   const models=Array.from({length:20},(_,i)=>({name:'Ensemble Model '+(i+1),detail:i===0?'Core-only validation':i%3===0?'Balance diagnostic':i%3===1?'Dice diagnostic':'Stability diagnostic',score:i===0?(s.core.signal==='TAI'?1:-1):0}));
   const ais=Array.from({length:10},(_,i)=>({name:'AI Layer '+(i+1),detail:i===0?'Input validation':i===1?'Consistency check':i===2?'Backtest guard':'Research diagnostic',score:0}));
-  const coreDir=s.core.signal;
+  const straightDir=s.core.signal;
+  const reverseDir=opposite(straightDir);
+  const mode=chooseMode();
+  const coreDir=mode==='NGUOC'?reverseDir:straightDir;
   const agreement=recent.length?Math.round((Math.max(counts.TAI,counts.XIU)/Math.max(1,counts.TAI+counts.XIU))*100):50;
   const confidence=Math.max(50,Math.min(90,Math.round(50+Math.abs(agreement-50)*0.8))); // diagnostic consensus, not win probability
-  return {s,counts,balance,parity,engineItems,models,ais,confidence,coreDir};
+  return {s,counts,balance,parity,engineItems,models,ais,confidence,coreDir,straightDir,reverseDir,mode};
 }
 
 function renderAnalysis(a){
@@ -299,7 +337,7 @@ function renderAnalysis(a){
   $('taiPct').textContent=tp.toFixed(2)+'%';$('xiuPct').textContent=xp.toFixed(2)+'%';
   $('taiBar').style.width=tp+'%';$('xiuBar').style.width=xp+'%';
   $('masterState').textContent='READY';
-  $('diag').textContent='Đang theo dõi phiên #'+a.s.targetId+' • V = floor(abs(((D1 + D2) / P) × C)); chẵn = Tài, lẻ = Xỉu. Đồng thuận chỉ là chỉ số kỹ thuật, không phải xác suất thắng.';
+  $('diag').textContent='Chế độ đang dùng: '+(a.mode==='NGUOC'?'NGƯỢC':'THUẬN')+' • Thuận: chẵn Tài / lẻ Xỉu • Ngược: chẵn Xỉu / lẻ Tài • Tự chọn theo lịch sử; đổi bên sau 2 LOSS liên tiếp. Công thức chỉ dùng D1 và D2; đồng thuận không phải xác suất thắng.';
 }
 
 function process(list){
@@ -310,16 +348,29 @@ function process(list){
     if(p.settled) continue;
     const actualRow=list.find(x=>Number(x.id)===Number(id));
     if(actualRow && (actualRow.result==='TAI'||actualRow.result==='XIU')){
-      p.settled=true; p.actual=actualRow.result; p.win=p.pred===actualRow.result;
+      p.settled=true;
+      p.actual=actualRow.result;
+      p.win=p.pred===actualRow.result;
+      p.straightWin=p.straightPred===actualRow.result;
+      p.reverseWin=p.reversePred===actualRow.result;
       if(!state.history.some(h=>Number(h.id)===Number(id))){
-        state.history.unshift({id:Number(id),pred:p.pred,actual:p.actual,win:p.win,time:new Date().toLocaleString('vi-VN')});
+        state.history.unshift({
+          id:Number(id),pred:p.pred,actual:p.actual,win:p.win,
+          mode:p.mode||'THUAN',
+          straightPred:p.straightPred,reversePred:p.reversePred,
+          straightWin:p.straightWin,reverseWin:p.reverseWin,
+          time:new Date().toLocaleString('vi-VN')
+        });
         changed=true;
       }
     }
   }
   // Never overwrite an existing prediction for a target session.
   if(!state.predictions.has(Number(a.s.targetId))){
-    state.predictions.set(Number(a.s.targetId),{pred:a.coreDir,created:Date.now(),settled:false});
+    state.predictions.set(Number(a.s.targetId),{
+      pred:a.coreDir,straightPred:a.straightDir,reversePred:a.reverseDir,
+      mode:a.mode,created:Date.now(),settled:false
+    });
     changed=true;
   }
   // Remove old settled entries while keeping enough unresolved targets for delayed APIs.
@@ -339,7 +390,10 @@ function renderBacktest(){
   const total=state.history.length;
   const wins=state.history.filter(x=>x.win).length;
   const rate=total?((wins/total)*100).toFixed(2):'0.00';
-  $('backtest').innerHTML='<div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div>'+state.history.map(x=>'<div class="row"><div>'+esc(x.id)+'</div><div>'+esc(x.pred)+'</div><div>'+esc(x.actual)+'</div><div class="'+(x.win?'win':'loss')+'">'+(x.win?'WIN':'LOSS')+'</div><div class="muted">'+esc(x.time)+'</div></div>').join('')+'<div class="note">Đã đánh giá: '+total+' phiên • WIN: '+wins+' • LOSS: '+(total-wins)+' • Accuracy lịch sử: '+rate+'%</div>';
+  const compared=state.history.filter(x=>typeof x.straightWin==='boolean'&&typeof x.reverseWin==='boolean');
+  const straightWins=compared.filter(x=>x.straightWin).length;
+  const reverseWins=compared.filter(x=>x.reverseWin).length;
+  $('backtest').innerHTML='<div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div>'+state.history.map(x=>'<div class="row"><div>'+esc(x.id)+'</div><div>'+esc(x.pred)+' <small class="muted">'+esc(x.mode==='NGUOC'?'NGƯỢC':'THUẬN')+'</small></div><div>'+esc(x.actual)+'</div><div class="'+(x.win?'win':'loss')+'">'+(x.win?'WIN':'LOSS')+'</div><div class="muted">'+esc(x.time)+'</div></div>').join('')+'<div class="note">Đã đánh giá: '+total+' • WIN: '+wins+' • LOSS: '+(total-wins)+' • Accuracy chế độ đã chọn: '+rate+'%<br>So sánh cùng '+compared.length+' phiên: Thuận '+straightWins+' WIN / Ngược '+reverseWins+' WIN. Chỉ số lịch sử không đảm bảo kết quả sau.</div>';
 }
 
 function startAuto(){if(state.running)return;state.running=true;state.timer=setInterval(()=>{state.nextAt=Date.now()+3000;load();},3000);state.nextAt=Date.now();load();$('start').textContent='<svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 10-13h-7z"/></svg> AUTO ĐANG CHẠY';$('liveText').textContent='Theo dõi liên tục';}
