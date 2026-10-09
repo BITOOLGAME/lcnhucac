@@ -127,7 +127,7 @@ return `<!doctype html>
 <meta name="theme-color" content="#050815">
 <title>VERTEX PREMIUM • Live Engine</title>
 <style>
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#030611;color:#edf5ff}body{padding:10px;background:radial-gradient(circle at 50% -10%,#122247 0,#050915 35%,#02040b 100%)}button{font:inherit}.wrap{width:min(980px,100%);margin:auto}.top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 10px}.brand{flex:1;padding:16px 18px;position:relative;overflow:hidden;border:1px solid #20335c;border-radius:20px;background:linear-gradient(135deg,#0b1730,#070a16);box-shadow:0 12px 40px #0007}.brandmark{display:flex;align-items:center;gap:12px}.logo-svg{width:54px;height:54px;filter:drop-shadow(0 0 18px #00d8f555)}.brand h1{margin:0;font-size:clamp(27px,7vw,42px);letter-spacing:8px}.brandline{display:flex;gap:14px;margin-top:10px;color:#7f91b5;font-size:8px;font-weight:900;letter-spacing:1.3px}.brandline span{display:flex;align-items:center;gap:5px}.brandline svg{width:12px;height:12px;fill:none;stroke:#5eefff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.brand p{margin:5px 0 0;color:#7184aa;font-size:9px;letter-spacing:1.7px}.status{white-space:nowrap;font-size:10px;font-weight:800;padding:9px 11px;border-radius:999px;border:1px solid #28375c;background:#091022;color:#9eb0d4}.ok{color:#5ef2bb;border-color:#1d6c54;background:#071a16}.bad{color:#ff7187;border-color:#6d2d3e;background:#1c0b13}.card{background:linear-gradient(180deg,#0a1122,#060a15);border:1px solid #1d2b4b;border-radius:18px;padding:13px;margin:10px 0;box-shadow:0 10px 35px #0006}.title{font-size:12px;font-weight:900;letter-spacing:.8px;margin-bottom:9px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.cell{border:1px solid #182541;background:#060a15;border-radius:10px;padding:9px;min-height:51px}.cell small{display:block;color:#5f7093;font-size:8px;text-transform:uppercase}.cell b{display:block;margin-top:4px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:7px;margin-top:9px}.btn{border:1px solid #293b64;border-radius:11px;padding:12px;background:#111a31;color:#eaf2ff;font-weight:900;font-size:12px;cursor:pointer}.btn.main{background:linear-gradient(90deg,#00d8f5,#62efff);color:#031018;border:0}.btn.stop{background:#2a101b;color:#ff9bad}.hero{display:grid;place-items:center;min-height:190px;border:1px solid #20355e;border-radius:16px;background:radial-gradient(circle at 50% 45%,#172a51,#070b16 58%);position:relative;overflow:hidden}.hero:before{content:"";position:absolute;width:180px;height:180px;border:1px solid #1e4c78;border-radius:50%;box-shadow:0 0 70px #0874b533}.hero .sig{font-size:clamp(38px,11vw,62px);font-weight:950;letter-spacing:2px;position:relative;text-shadow:0 0 25px #39ddff55}.hero .id{position:absolute;right:12px;top:10px;color:#7182a7;font-size:10px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:7px}.stat{border:1px solid #192641;background:#050914;border-radius:11px;padding:11px;text-align:center}.stat span{display:block;color:#687a9c;font-size:9px;text-transform:uppercase}.stat b{display:block;font-size:16px;margin-top:4px}.bars{margin-top:9px}.barrow{margin:8px 0}.barhead{display:flex;justify-content:space-between;font-size:9px;color:#8190ad}.track{height:7px;background:#12192b;border-radius:99px;overflow:hidden;margin-top:4px}.fill{height:100%;width:50%;border-radius:99px;transition:width .35s ease}.tai{background:linear-gradient(90deg,#ff416c,#ff9a61)}.xiu{background:linear-gradient(90deg,#11d9ff,#45f4d2)}.note{border:1px dashed #223252;color:#7180a0;border-radius:11px;padding:9px;font-size:10px;margin-top:9px}.live{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 10px;border:1px solid #1d3153;border-radius:11px;background:#071021;font-size:10px}.live b{color:#64f2c0}.history-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.table{overflow:auto;border:1px solid #192641;border-radius:11px;max-height:340px}.row{display:grid;grid-template-columns:90px 70px 70px 70px 1fr;min-width:370px;border-bottom:1px solid #101a2d}.row:last-child{border:0}.row>div{padding:8px;font-size:10px}.head{color:#7182a4;background:#091021;position:sticky;top:0}.win{color:#5ef2b7}.loss{color:#ff7288}.muted{color:#7180a0}.foot{font-size:9px;color:#536482;text-align:center;padding:14px 0 8px}.copyright{margin-top:6px;color:#6f82aa;font-weight:800;letter-spacing:.7px}.copyright b{color:#63ecff}.mini-svg{width:14px;height:14px;vertical-align:-2px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}@media(max-width:700px){body{padding:6px}.top{align-items:flex-start}.brand{padding:14px}.brand h1{letter-spacing:5px}.grid{grid-template-columns:repeat(2,1fr)}.actions{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:10px;border-radius:14px}.hero{min-height:170px}.cell{min-height:48px}}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#030611;color:#edf5ff}body{padding:10px;background:radial-gradient(circle at 50% -10%,#122247 0,#050915 35%,#02040b 100%)}button{font:inherit}.wrap{width:min(980px,100%);margin:auto}.top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 10px}.brand{flex:1;padding:16px 18px;position:relative;overflow:hidden;border:1px solid #20335c;border-radius:20px;background:linear-gradient(135deg,#0b1730,#070a16);box-shadow:0 12px 40px #0007}.brandmark{display:flex;align-items:center;gap:12px}.logo-svg{width:54px;height:54px;filter:drop-shadow(0 0 18px #00d8f555)}.brand h1{margin:0;font-size:clamp(27px,7vw,42px);letter-spacing:8px}.brandline{display:flex;gap:14px;margin-top:10px;color:#7f91b5;font-size:8px;font-weight:900;letter-spacing:1.3px}.brandline span{display:flex;align-items:center;gap:5px}.brandline svg{width:12px;height:12px;fill:none;stroke:#5eefff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.brand p{margin:5px 0 0;color:#7184aa;font-size:9px;letter-spacing:1.7px}.status{white-space:nowrap;font-size:10px;font-weight:800;padding:9px 11px;border-radius:999px;border:1px solid #28375c;background:#091022;color:#9eb0d4}.ok{color:#5ef2bb;border-color:#1d6c54;background:#071a16}.bad{color:#ff7187;border-color:#6d2d3e;background:#1c0b13}.card{background:linear-gradient(180deg,#0a1122,#060a15);border:1px solid #1d2b4b;border-radius:18px;padding:13px;margin:10px 0;box-shadow:0 10px 35px #0006}.title{font-size:12px;font-weight:900;letter-spacing:.8px;margin-bottom:9px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.cell{border:1px solid #182541;background:#060a15;border-radius:10px;padding:9px;min-height:51px}.cell small{display:block;color:#5f7093;font-size:8px;text-transform:uppercase}.cell b{display:block;margin-top:4px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:7px;margin-top:9px}.btn{border:1px solid #293b64;border-radius:11px;padding:12px;background:#111a31;color:#eaf2ff;font-weight:900;font-size:12px;cursor:pointer}.btn.main{background:linear-gradient(90deg,#00d8f5,#62efff);color:#031018;border:0}.btn.stop{background:#2a101b;color:#ff9bad}.hero{display:grid;place-items:center;min-height:190px;border:1px solid #20355e;border-radius:16px;background:radial-gradient(circle at 50% 45%,#172a51,#070b16 58%);position:relative;overflow:hidden}.hero:before{content:"";position:absolute;width:180px;height:180px;border:1px solid #1e4c78;border-radius:50%;box-shadow:0 0 70px #0874b533}.hero .sig{font-size:clamp(38px,11vw,62px);font-weight:950;letter-spacing:2px;position:relative;text-shadow:0 0 25px #39ddff55}.hero .id{position:absolute;right:12px;top:10px;color:#7182a7;font-size:10px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:7px}.stat{border:1px solid #192641;background:#050914;border-radius:11px;padding:11px;text-align:center}.stat span{display:block;color:#687a9c;font-size:9px;text-transform:uppercase}.stat b{display:block;font-size:16px;margin-top:4px}.bars{margin-top:9px}.barrow{margin:8px 0}.barhead{display:flex;justify-content:space-between;font-size:9px;color:#8190ad}.track{height:7px;background:#12192b;border-radius:99px;overflow:hidden;margin-top:4px}.fill{height:100%;width:50%;border-radius:99px;transition:width .35s ease}.tai{background:linear-gradient(90deg,#ff416c,#ff9a61)}.xiu{background:linear-gradient(90deg,#11d9ff,#45f4d2)}.note{border:1px dashed #223252;color:#7180a0;border-radius:11px;padding:9px;font-size:10px;margin-top:9px}.live{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 10px;border:1px solid #1d3153;border-radius:11px;background:#071021;font-size:10px}.live b{color:#64f2c0}.history-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.table{overflow:auto;border:1px solid #192641;border-radius:11px;max-height:340px}.row{display:grid;grid-template-columns:90px 70px 70px 70px 1fr;min-width:370px;border-bottom:1px solid #101a2d}.row:last-child{border:0}.row>div{padding:8px;font-size:10px}.head{color:#7182a4;background:#091021;position:sticky;top:0}.win{color:#5ef2b7}.loss{color:#ff7288}.muted{color:#7180a0}.foot{font-size:9px;color:#536482;text-align:center;padding:14px 0 8px}.copyright{margin-top:6px;color:#6f82aa;font-weight:800;letter-spacing:.7px}.copyright b{color:#63ecff}.mini-svg{width:14px;height:14px;vertical-align:-2px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}.btn .mini-svg{margin-right:5px}@media(max-width:700px){body{padding:6px}.top{align-items:flex-start}.brand{padding:14px}.brand h1{letter-spacing:5px}.grid{grid-template-columns:repeat(2,1fr)}.actions{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:10px;border-radius:14px}.hero{min-height:170px}.cell{min-height:48px}}
 .title{display:flex;align-items:center;gap:7px}.hero{isolation:isolate}.hero:after{content:"LIVE SIGNAL";position:absolute;bottom:12px;font-size:8px;letter-spacing:3px;color:#536b91}.stat b{font-variant-numeric:tabular-nums}.card{backdrop-filter:blur(8px)}.note{line-height:1.55}.row>div{overflow-wrap:anywhere}@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -141,10 +141,10 @@ return `<!doctype html>
     </div>
     <div class="brandline"><span><svg viewBox="0 0 24 24"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg> LIVE ENGINE</span><span><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 109 9"/><path d="M12 7v5l3 2"/></svg> AUTO SYNC</span></div>
   </div>
-  <div id="status" class="status">● CONNECTING</div>
+  <div id="status" class="status">CONNECTING</div>
 </div>
   <section class="card">
-    <div class="title">⚡ AUTO API</div>
+    <div class="title"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 10-13h-7z"/></svg> AUTO API</div>
     <div class="grid">
       <div class="cell"><small>API</small><b id="apiName">SERVER PROXY</b></div>
       <div class="cell"><small>SESSION NGUỒN</small><b id="sourceId">—</b></div>
@@ -155,21 +155,21 @@ return `<!doctype html>
       <div class="cell"><small>LAST UPDATE</small><b id="updated">—</b></div>
       <div class="cell"><small>API LATENCY</small><b id="latency">—</b></div>
     </div>
-    <div class="actions"><button id="start" class="btn main">⚡ BẬT AUTO ENGINE</button><button id="once" class="btn">↻ CẬP NHẬT NGAY</button><button id="stop" class="btn stop">■ DỪNG AUTO</button></div>
+    <div class="actions"><button id="start" class="btn main"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 10-13h-7z"/></svg> BẬT AUTO ENGINE</button><button id="once" class="btn"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M5.6 9A7 7 0 0118 6l2 6"/><path d="M18.4 15A7 7 0 016 18l-2-6"/></svg> CẬP NHẬT NGAY</button><button id="stop" class="btn stop"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> DỪNG AUTO</button></div>
     <div id="error" class="note" style="display:none"></div>
     <div class="note">Render kết nối trực tiếp Tele68, không dùng proxy công cộng. Công thức lõi chỉ có một. Kết quả phiên mục tiêu chỉ dùng để backtest sau khi API đã trả phiên đó.</div>
   </section>
 
-  <section class="card"><div class="title">🎯 MASTER ANALYZER <span id="masterState" class="muted" style="float:right">WAITING</span></div>
+  <section class="card"><div class="title"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg> MASTER ANALYZER <span id="masterState" class="muted" style="float:right">WAITING</span></div>
     <div class="hero"><span id="targetLabel" class="id">#—</span><div id="signal" class="sig">—</div></div>
     <div class="stats"><div class="stat"><span>Đồng thuận*</span><b id="consensus">—</b></div><div class="stat"><span>Giá trị</span><b id="value">—</b></div><div class="stat"><span>Tài</span><b id="tai">—</b></div><div class="stat"><span>Xỉu</span><b id="xiu">—</b></div></div>
     <div class="bars"><div class="barrow"><div class="barhead"><span>TÀI SCORE</span><span id="taiPct">50%</span></div><div class="track"><div id="taiBar" class="fill tai"></div></div></div><div class="barrow"><div class="barhead"><span>XỈU SCORE</span><span id="xiuPct">50%</span></div><div class="track"><div id="xiuBar" class="fill xiu"></div></div></div></div>
     <div id="diag" class="note">Chưa có dữ liệu API.</div>
   </section>
 
-  <section class="card"><div class="live"><span>● AUTO UPDATE</span><b id="liveText">Đang chờ dữ liệu</b><span id="nextTick" class="muted">—</span></div></section>
+  <section class="card"><div class="live"><span><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="currentColor" stroke="none"/></svg> AUTO UPDATE</span><b id="liveText">Đang chờ dữ liệu</b><span id="nextTick" class="muted">—</span></div></section>
 
-  <section class="card"><div class="title">📊 LỊCH SỬ ĐÁNH GIÁ <span id="btCount" class="muted" style="float:right">0</span></div><div id="backtest" class="table"><div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div></div></section>
+  <section class="card"><div class="title"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10h4v10M10 20V4h4v16M16 20v-7h4v7"/></svg> LỊCH SỬ ĐÁNH GIÁ <span id="btCount" class="muted" style="float:right">0</span></div><div id="backtest" class="table"><div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div></div></section>
   <div class="foot"><svg class="mini-svg" viewBox="0 0 24 24"><path d="M12 3l2.4 5.1L20 10.5l-5.6 2.4L12 18l-2.4-5.1L4 10.5l5.6-2.4z"/></svg> VERTEX PREMIUM • AUTO SYNC • Không đảm bảo kết quả ngẫu nhiên<div class="copyright">© BẢN QUYỀN CHÍNH CHỦ: <b>NOVA LÀ BỐ</b></div></div>
 </div>
 <script>
@@ -199,7 +199,7 @@ const $=id=>document.getElementById(id);
 const api='/api/sessions';
 
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
-function setStatus(text,cls=''){const e=$('status');e.textContent='● '+text;e.className='status '+cls;}
+function setStatus(text,cls=''){const e=$('status');e.innerHTML='<svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="currentColor" stroke="none"/></svg> '+esc(text);e.className='status '+cls;}
 function showError(msg){const e=$('error');e.style.display='block';e.textContent='API lỗi: '+msg;}
 function clearError(){$('error').style.display='none';}
 function fmtTime(){return new Date().toLocaleTimeString('vi-VN');}
@@ -224,16 +224,22 @@ async function load(){
   finally{state.busy=false;}
 }
 
-function coreFormula(prev,current,d1,d2,d3){
-  // Single deterministic parity formula; not a guarantee of the next random outcome.
-  // Use all available dice, and map a zero previous-session last digit to 10 to avoid division by zero.
-  const diceSum=[d1,d2,d3].map(v=>Math.abs(Number(v)||0)).reduce((a,b)=>a+b,0);
-  const p=Math.abs(Number(prev)||0)||10;
-  const c=Math.abs(Number(current)||0);
-  if(!c || !diceSum) return {value:null,signal:null,raw:null};
-  const raw=(diceSum/p)*c;
+function coreFormula(prev,current,d1,d2){
+  // Một công thức lõi duy nhất, chỉ dùng D1 và D2:
+  // V = floor(abs(((D1 + D2) / P) * C)); chẵn = TÀI, lẻ = XỈU.
+  // Không tự thay P=0 bằng giá trị giả và không dự đoán khi dữ liệu xúc xắc không hợp lệ.
+  const dice1=Number(d1), dice2=Number(d2);
+  const p=Number(prev), c=Number(current);
+  const validDice=Number.isInteger(dice1)&&dice1>=1&&dice1<=6&&
+                  Number.isInteger(dice2)&&dice2>=1&&dice2<=6;
+  if(!validDice || !Number.isInteger(p) || p<1 || p>9 ||
+     !Number.isInteger(c) || c<0 || c>9){
+    return {value:null,signal:null,raw:null,error:'Dữ liệu không hợp lệ hoặc số cuối phiên trước bằng 0'};
+  }
+  const raw=((dice1+dice2)/p)*c;
+  if(!Number.isFinite(raw)) return {value:null,signal:null,raw:null,error:'Giá trị công thức không hợp lệ'};
   const value=Math.floor(Math.abs(raw));
-  return {value,signal:value%2===0?'TAI':'XIU',raw};
+  return {value,signal:value%2===0?'TAI':'XIU',raw,error:null};
 }
 
 function signals(list){
@@ -242,13 +248,13 @@ function signals(list){
   const prevLast=Math.abs(Number(src.id))%10;
   const curLast=Math.abs(targetId)%10;
   const dices=Array.isArray(src.dices)?src.dices:[];
-  const d1=Number(dices[0]||0),d2=Number(dices[1]||0),d3=Number(dices[2]||0);
-  const core=coreFormula(prevLast,curLast,d1,d2,d3);
-  return {src,targetId,prevLast,curLast,d1,d2,d3,core};
+  const d1=Number(dices[0]||0),d2=Number(dices[1]||0);
+  const core=coreFormula(prevLast,curLast,d1,d2);
+  return {src,targetId,prevLast,curLast,d1,d2,core};
 }
 
 function analyze(list){
-  const s=signals(list); if(!s.core.signal) return null;
+  const s=signals(list); if(!s.core.signal) { $('masterState').textContent='CHỜ DỮ LIỆU'; $('diag').textContent=s.core.error||'Chưa đủ dữ liệu hợp lệ cho công thức 2 xúc xắc.'; return null; }
   const recent=list.slice(0,40);
   const counts={TAI:0,XIU:0}; recent.forEach(x=>{if(x.result==='TAI'||x.result==='XIU')counts[x.result]++;});
   // Diagnostics deliberately do not replace the core formula.
@@ -281,7 +287,7 @@ function renderAnalysis(a){
   $('sourceId').textContent=a.s.src.id;
   $('targetId').textContent=a.s.targetId;
   $('targetLabel').textContent='#'+a.s.targetId;
-  $('dice').textContent=(a.s.src.dices||[]).join(' • ')||'—';
+  $('dice').textContent=[a.s.d1,a.s.d2].join(' • ')||'—';
   $('point').textContent=a.s.src.point||'—';
   $('sourceResult').textContent=a.s.src.result||'—';
   $('signal').textContent=a.coreDir==='TAI'?'TÀI':'XỈU';
@@ -293,7 +299,7 @@ function renderAnalysis(a){
   $('taiPct').textContent=tp.toFixed(2)+'%';$('xiuPct').textContent=xp.toFixed(2)+'%';
   $('taiBar').style.width=tp+'%';$('xiuBar').style.width=xp+'%';
   $('masterState').textContent='READY';
-  $('diag').textContent='Đang theo dõi phiên #'+a.s.targetId+' • Công thức parity lõi • Điểm đồng thuận là chỉ số kỹ thuật, không phải xác suất thắng.';
+  $('diag').textContent='Đang theo dõi phiên #'+a.s.targetId+' • V = floor(abs(((D1 + D2) / P) × C)); chẵn = Tài, lẻ = Xỉu. Đồng thuận chỉ là chỉ số kỹ thuật, không phải xác suất thắng.';
 }
 
 function process(list){
@@ -336,10 +342,10 @@ function renderBacktest(){
   $('backtest').innerHTML='<div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div>'+state.history.map(x=>'<div class="row"><div>'+esc(x.id)+'</div><div>'+esc(x.pred)+'</div><div>'+esc(x.actual)+'</div><div class="'+(x.win?'win':'loss')+'">'+(x.win?'WIN':'LOSS')+'</div><div class="muted">'+esc(x.time)+'</div></div>').join('')+'<div class="note">Đã đánh giá: '+total+' phiên • WIN: '+wins+' • LOSS: '+(total-wins)+' • Accuracy lịch sử: '+rate+'%</div>';
 }
 
-function startAuto(){if(state.running)return;state.running=true;state.timer=setInterval(()=>{state.nextAt=Date.now()+3000;load();},3000);state.nextAt=Date.now();load();$('start').textContent='⚡ AUTO ĐANG CHẠY';$('liveText').textContent='Theo dõi liên tục';}
+function startAuto(){if(state.running)return;state.running=true;state.timer=setInterval(()=>{state.nextAt=Date.now()+3000;load();},3000);state.nextAt=Date.now();load();$('start').textContent='<svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 10-13h-7z"/></svg> AUTO ĐANG CHẠY';$('liveText').textContent='Theo dõi liên tục';}
 $('start').onclick=startAuto;
 $('once').onclick=load;
-$('stop').onclick=()=>{state.running=false;if(state.timer)clearInterval(state.timer);state.timer=null;$('start').textContent='⚡ BẬT AUTO ENGINE';$('liveText').textContent='Đã dừng tự động';$('nextTick').textContent='—';setStatus('STOPPED');};
+$('stop').onclick=()=>{state.running=false;if(state.timer)clearInterval(state.timer);state.timer=null;$('start').textContent='<svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 10-13h-7z"/></svg> BẬT AUTO ENGINE';$('liveText').textContent='Đã dừng tự động';$('nextTick').textContent='—';setStatus('STOPPED');};
 setInterval(()=>{if(state.running&&state.nextAt){const sec=Math.max(0,Math.ceil((state.nextAt-Date.now())/1000));$('nextTick').textContent='+'+sec+'s';}},500);
 renderBacktest();
 load();
