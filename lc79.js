@@ -1,5 +1,5 @@
-// VERTEX PREMIUM V14 — Adaptive Tài/Xỉu bias correction + 40-character analyzer + web UI
-// Requires Node.js 18+. Run: node vertex_analyzer_v13.js
+// VERTEX PREMIUM V15 — Adaptive Tài/Xỉu bias correction + 40-character analyzer + web UI
+// Requires Node.js 18+. Run: npm start
 // Uses only Node built-ins; state is saved to vertex_state_v9.json beside this file.
 "use strict";
 const http = require("node:http");
@@ -83,174 +83,272 @@ function weightedRate(samples) {
   return { tai, xiu, support, p: smoothedRate(tai, xiu, 0.5, 2) };
 }
 function forecastBits(bits) {
-  const nBits = bits.length;
-  if (!nBits) return {
+  const n = bits.length;
+  const neutral = {
     prediction: 0, mode: "CHƯA ĐỦ DỮ LIỆU", patterns: [],
-    votes: { 0: 0.5, 1: 0.5 }, confidence: 0.5, familySummary: {}
+    votes: { 0: 0.5, 1: 0.5 }, confidence: 0.5,
+    familySummary: {}, evidenceCount: 0, agreement: 0.5
   };
-  const last = bits[nBits - 1];
+  if (n < 8) return { ...neutral, prediction: n ? 1 - bits[n - 1] : 0 };
+
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const smooth = (tai, total, strength = 4) => (tai + strength * 0.5) / (total + strength);
+  const weightedStats = (samples, priorStrength = 3) => {
+    let tai = 0, xiu = 0;
+    for (const s of samples) {
+      if (s.bit === 1) tai += s.w;
+      else if (s.bit === 0) xiu += s.w;
+    }
+    const total = tai + xiu;
+    return { p: smooth(tai, total, priorStrength), support: total, tai, xiu };
+  };
   const families = {};
-  const addFamily = (name, pTai, evidence = 0, note = "") => {
-    if (!Number.isFinite(pTai)) pTai = 0.5;
-    // Shrink weak evidence toward neutral; no family gets extra votes for producing many patterns.
-    const reliability = clamp(evidence / (evidence + 5), 0, 0.75);
-    const adjusted = 0.5 + (clamp(pTai, 0, 1) - 0.5) * reliability;
-    families[name] = { pTai: adjusted, rawPTai: clamp(pTai, 0, 1), evidence, reliability, note };
+  const add = (name, p, support, detail) => {
+    if (!Number.isFinite(p)) p = 0.5;
+    // Evidence reliability shrinks weak/noisy estimates toward 50%; each family gets one vote.
+    const rel = clamp(support / (support + 7), 0, 0.82);
+    const adjusted = 0.5 + (clamp(p, 0, 1) - 0.5) * rel;
+    families[name] = {
+      pTai: adjusted, rawPTai: clamp(p, 0, 1),
+      support: Number(support.toFixed(2)), reliability: Number(rel.toFixed(3)),
+      detail
+    };
   };
+  const decayedSamples = (samples, decay = 24) =>
+    samples.map(s => ({ bit: s.bit, w: Math.exp(-Math.max(0, s.age) / decay) * (s.base || 1) }));
 
-  // FAMILY 1: matching suffix contexts, using the best-supported context at each length.
-  const contextSamples = [];
-  for (let len = 2; len <= Math.min(12, nBits - 1); len++) {
-    const ctx = bits.slice(-len), matches = [];
-    for (let i = 0; i + len < nBits; i++) {
-      let same = true;
-      for (let j = 0; j < len; j++) if (bits[i + j] !== ctx[j]) { same = false; break; }
-      if (same) {
-        const age = (nBits - 1) - (i + len);
-        matches.push({ bit: bits[i + len], weight: Math.exp(-age / 18) });
+  // 1. Variable-length suffix matching: patterns from length 2 to 16.
+  const suffixModels = [];
+  for (let len = 2; len <= Math.min(16, n - 1); len++) {
+    const context = bits.slice(n - len), matches = [];
+    for (let i = 0; i + len < n; i++) {
+      let match = true;
+      for (let j = 0; j < len; j++) {
+        if (bits[i + j] !== context[j]) { match = false; break; }
       }
+      if (match) matches.push({ bit: bits[i + len], age: n - (i + len) });
     }
     if (matches.length) {
-      const r = weightedRate(matches);
-      contextSamples.push({ p: r.p, evidence: r.support, len });
+      const stats = weightedStats(decayedSamples(matches, 20), 3);
+      suffixModels.push({ len, ...stats });
     }
   }
-  if (contextSamples.length) {
-    // Long contexts matter, but unsupported exact matches cannot dominate.
-    contextSamples.sort((a,b) => b.len - a.len);
-    const top = contextSamples.slice(0, 4);
-    const totalW = top.reduce((s,x) => s + Math.min(3, Math.sqrt(x.evidence)) * (0.8 + x.len / 15), 0);
-    const p = top.reduce((s,x) => s + x.p * Math.min(3, Math.sqrt(x.evidence)) * (0.8 + x.len / 15), 0) / totalW;
-    addFamily("suffix", p, top.reduce((s,x)=>s+x.evidence,0), "Mẫu lịch sử khớp hậu tố");
-  } else addFamily("suffix", 0.5, 0, "Chưa có mẫu khớp");
+  suffixModels.sort((a, b) => (b.len * Math.log1p(b.support)) - (a.len * Math.log1p(a.support)));
+  const suffixTop = suffixModels.slice(0, 5);
+  if (suffixTop.length) {
+    const weights = suffixTop.map(m => Math.min(2.5, Math.sqrt(m.support)) * (0.65 + m.len / 18));
+    const den = weights.reduce((a, b) => a + b, 0);
+    add("suffix", suffixTop.reduce((s, m, i) => s + m.p * weights[i], 0) / den,
+      suffixTop.reduce((s, m) => s + m.support, 0), `Mẫu hậu tố ${suffixTop.map(x => x.len).join("/")}`);
+  } else add("suffix", 0.5, 0, "Chưa có mẫu khớp");
 
-  // FAMILY 2: transition/Markov; all orders are merged into one family vote.
-  const markov = [];
-  for (let len = 1; len <= Math.min(4, nBits - 1); len++) {
-    const ctx = bits.slice(-len), matches = [];
-    for (let i = 0; i + len < nBits; i++) {
-      if (ctx.every((v,j)=>bits[i+j]===v)) {
-        const age = (nBits - 1) - (i + len);
-        matches.push({ bit: bits[i+len], weight: Math.exp(-age/24) });
+  // 2. Markov transitions: combine orders 1–6 into one family vote.
+  const markovModels = [];
+  for (let order = 1; order <= Math.min(6, n - 1); order++) {
+    const ctx = bits.slice(n - order), matches = [];
+    for (let i = 0; i + order < n; i++) {
+      if (ctx.every((v, j) => bits[i + j] === v)) {
+        matches.push({ bit: bits[i + order], age: n - (i + order) });
       }
     }
-    if (matches.length) {
-      const r = weightedRate(matches);
-      markov.push({ p:r.p, evidence:r.support, len });
-    }
+    if (matches.length) markovModels.push({ order, ...weightedStats(decayedSamples(matches, 28), 3) });
   }
-  if (markov.length) {
-    const den = markov.reduce((s,x)=>s+Math.min(2.5,Math.sqrt(x.evidence))*(1+x.len/8),0);
-    const p = markov.reduce((s,x)=>s+x.p*Math.min(2.5,Math.sqrt(x.evidence))*(1+x.len/8),0)/den;
-    addFamily("markov", p, markov.reduce((s,x)=>s+x.evidence,0), "Chuyển tiếp bậc 1–4");
-  } else addFamily("markov", 0.5, 0, "Chưa đủ chuyển tiếp");
+  if (markovModels.length) {
+    const ws = markovModels.map(m => Math.min(2.5, Math.sqrt(m.support)) * (0.8 + m.order / 12));
+    const den = ws.reduce((a, b) => a + b, 0);
+    add("markov", markovModels.reduce((s, m, i) => s + m.p * ws[i], 0) / den,
+      markovModels.reduce((s, m) => s + m.support, 0), `Bậc ${markovModels.map(x => x.order).join("/")}`);
+  } else add("markov", 0.5, 0, "Thiếu mẫu chuyển tiếp");
 
-  // FAMILY 3: run length and alternating behavior, using historical contexts of same structure.
+  // 3. Run-length / streak continuation versus reversal.
   let run = 1;
-  for (let i=nBits-2;i>=0 && bits[i]===last;i--) run++;
-  const structural = [];
-  for (let i=0;i<nBits-1;i++) {
-    let r=1;
-    for(let j=i;j>0 && bits[j-1]===bits[j];j--) r++;
-    if (r===run) {
-      const nextIndex=i+1;
-      if(nextIndex<nBits) structural.push({bit:bits[nextIndex],weight:Math.exp(-((nBits-1)-nextIndex)/25)});
-    }
+  for (let i = n - 2; i >= 0 && bits[i] === bits[n - 1]; i--) run++;
+  const runMatches = [];
+  for (let i = 0; i < n - 1; i++) {
+    let r = 1;
+    for (let j = i; j > 0 && bits[j - 1] === bits[j]; j--) r++;
+    if (r === run && i + 1 < n) runMatches.push({ bit: bits[i + 1], age: n - (i + 1) });
   }
-  const altLen = (() => {
-    let k=1;
-    for(let i=nBits-1;i>0 && bits[i]!==bits[i-1];i--) k++;
-    return k;
-  })();
-  for (let i=1;i<nBits-1;i++) {
-    let k=1;
-    for(let j=i;j>0 && bits[j]!==bits[j-1];j--) k++;
-    if(k===altLen && bits[i]!==bits[i-1]) {
-      structural.push({bit:bits[i+1],weight:Math.exp(-((nBits-1)-(i+1))/25)});
-    }
-  }
-  const sr = weightedRate(structural);
-  addFamily("structure", sr.p, sr.support, `Bệt ${run} · luân phiên ${altLen}`);
+  const runStats = weightedStats(decayedSamples(runMatches, 24), 4);
+  add("streak", runStats.p, runStats.support, `Bệt hiện tại ${run}`);
 
-  // FAMILY 4: repeated short rhythms and cycle positions; one combined vote, not one vote per pattern.
-  const periodic = [];
-  for (let period=2;period<=8;period++) {
-    const target = (nBits-1) % period;
-    for(let i=period;i<nBits-1;i++) {
-      if(i % period === target) {
-        const age=(nBits-1)-(i+1);
-        periodic.push({bit:bits[i+1],weight:Math.exp(-age/30)});
+  // 4. Alternation length: examine historical transitions after similar alternating runs.
+  let alt = 1;
+  for (let i = n - 1; i > 0 && bits[i] !== bits[i - 1]; i--) alt++;
+  const altMatches = [];
+  for (let i = 1; i < n - 1; i++) {
+    let k = 1;
+    for (let j = i; j > 0 && bits[j] !== bits[j - 1]; j--) k++;
+    if (k === alt && bits[i] !== bits[i - 1]) altMatches.push({ bit: bits[i + 1], age: n - (i + 1) });
+  }
+  const altStats = weightedStats(decayedSamples(altMatches, 25), 4);
+  add("alternation", altStats.p, altStats.support, `Luân phiên ${alt}`);
+
+  // 5. Cycle analysis across periods 2–12. All periods make one family vote.
+  const cycleSamples = [];
+  for (let period = 2; period <= Math.min(12, Math.floor(n / 2)); period++) {
+    const target = (n - 1) % period;
+    for (let i = 0; i < n - 1; i++) {
+      if (i % period === target) {
+        cycleSamples.push({ bit: bits[i + 1], age: n - (i + 1), base: 1 / Math.sqrt(period) });
       }
     }
   }
-  for (let len=3;len<=Math.min(6,nBits-1);len++) {
-    const ctx=bits.slice(-len);
-    for(let i=0;i+len<nBits;i++) {
-      if(ctx.every((v,j)=>bits[i+j]===v)) {
-        const age=(nBits-1)-(i+len);
-        periodic.push({bit:bits[i+len],weight:0.7*Math.exp(-age/30)});
+  const cycleStats = weightedStats(decayedSamples(cycleSamples, 30), 5);
+  add("cycle", cycleStats.p, cycleStats.support, "Chu kỳ 2–12");
+
+  // 6. Short motif mining: repeated 2–8 symbol motifs followed by the observed next bit.
+  const motifSamples = [];
+  for (let len = 2; len <= Math.min(8, n - 1); len++) {
+    const motif = bits.slice(n - len);
+    for (let i = 0; i + len < n; i++) {
+      if (motif.every((v, j) => bits[i + j] === v)) {
+        motifSamples.push({ bit: bits[i + len], age: n - (i + len), base: 1 / Math.sqrt(len) });
       }
     }
   }
-  const pr=weightedRate(periodic);
-  addFamily("rhythm", pr.p, pr.support, "Nhịp ngắn và vị trí chu kỳ");
+  const motifStats = weightedStats(decayedSamples(motifSamples, 22), 4);
+  add("motif", motifStats.p, motifStats.support, "Motif lặp 2–8");
 
-  // FAMILY 5: recency-aware frequencies; windows are combined into a single baseline estimate.
-  const windows=[8,15,25,40].filter(n=>nBits>=Math.min(n,8));
-  let freqSum=0, freqWeight=0;
-  for(const wlen of windows) {
-    const w=bits.slice(-wlen), tai=w.filter(v=>v===1).length, xiu=w.length-tai;
-    const p=smoothedRate(tai,xiu,0.5,4);
-    const weight = wlen===8 ? 1.2 : wlen===15 ? 1.1 : wlen===25 ? 0.9 : 0.7;
-    freqSum+=p*weight;freqWeight+=weight;
+  // 7. Frequency baseline: smoothed multi-window rate, with recent windows weighted more.
+  const windows = [6, 10, 16, 24, 40].filter(w => n >= w);
+  let freqSum = 0, freqDen = 0;
+  const freqNotes = [];
+  for (const w of windows) {
+    const chunk = bits.slice(-w);
+    const tai = chunk.filter(x => x === 1).length;
+    const p = smooth(tai, chunk.length, 5);
+    const weight = w === 6 ? 1.3 : w === 10 ? 1.2 : w === 16 ? 1.0 : w === 24 ? 0.85 : 0.7;
+    freqSum += p * weight; freqDen += weight;
+    freqNotes.push(`${w}:${Math.round(p * 100)}`);
   }
-  addFamily("frequency",freqWeight?freqSum/freqWeight:0.5,Math.min(nBits,40),"Tần suất cửa sổ 8/15/25/40");
+  add("frequency", freqDen ? freqSum / freqDen : 0.5, Math.min(n, 40), `Cửa sổ ${freqNotes.join(" · ")}`);
 
-  // Every family contributes exactly once. Families without evidence stay neutral (0.5).
-  const familyRows=Object.values(families);
-  const pTai=familyRows.reduce((s,x)=>s+x.pTai,0)/familyRows.length;
-  const pXiu=1-pTai;
-  const margin=Math.abs(pTai-0.5)*2;
-  const active=familyRows.filter(x=>x.evidence>=2);
-  const agreement=active.length ? Math.max(
-    active.filter(x=>x.pTai>=0.5).length,
-    active.filter(x=>x.pTai<0.5).length
-  )/active.length : 0.5;
-  const prediction=pTai>0.5000001?1:pTai<0.4999999?0:1-last;
-  const mode=active.length<3?"TÍN HIỆU YẾU · ƯU TIÊN TRUNG LẬP":agreement>=0.7?"CÁC NHÓM TƯƠNG ĐỒNG":"CÁC NHÓM CHƯA ĐỒNG THUẬN";
+  // 8. Recent weighted trend: exponential decay rather than a hard T/X count.
+  const trendSamples = bits.map((bit, i) => ({ bit, w: Math.exp(-(n - 1 - i) / 9) }));
+  const trendStats = weightedStats(trendSamples.map((s, i) => ({ bit: s.bit, age: n - 1 - i, base: 1 })), 5);
+  // Recompute explicitly with a shorter decay for the recent-regime estimate.
+  let trendTai = 0, trendTotal = 0;
+  for (let i = 0; i < n; i++) {
+    const w = Math.exp(-(n - 1 - i) / 9);
+    trendTotal += w;
+    if (bits[i] === 1) trendTai += w;
+  }
+  add("trend", smooth(trendTai, trendTotal, 4), trendTotal, "Trọng số giảm dần theo thời gian");
+
+  // 9. Block-to-block transition: compare recent blocks and historical next-block outcomes.
+  const blockSamples = [];
+  for (const size of [2, 3, 4, 5]) {
+    if (n < size * 3) continue;
+    const recent = bits.slice(-size);
+    for (let i = 0; i + size * 2 <= n; i++) {
+      const prev = bits.slice(i, i + size);
+      if (prev.every((v, j) => v === recent[j])) {
+        const nextStart = i + size;
+        const nextBlock = bits.slice(nextStart, nextStart + size);
+        if (nextBlock.length === size) {
+          const taiRatio = nextBlock.reduce((s, b) => s + b, 0) / size;
+          blockSamples.push({ bit: taiRatio >= 0.5 ? 1 : 0, age: n - (nextStart + size), base: 1 / size });
+        }
+      }
+    }
+  }
+  const blockStats = weightedStats(decayedSamples(blockSamples, 28), 4);
+  add("block", blockStats.p, blockStats.support, "So sánh khối 2–5");
+
+  // 10. Entropy/regime stability: only estimates how noisy the recent stream is.
+  const recent = bits.slice(-Math.min(16, n));
+  const recentTai = recent.filter(x => x === 1).length;
+  const p = recentTai / recent.length;
+  const entropy = (p === 0 || p === 1) ? 0 : -(p * Math.log2(p) + (1 - p) * Math.log2(1 - p));
+  const stability = 1 - entropy;
+  const stabilityP = smooth(recentTai, recent.length, 5);
+  add("regime", stabilityP, recent.length * (0.5 + stability), `Độ ổn định ${(stability * 100).toFixed(0)}%`);
+
+  // Aggregate each family exactly once; family scores are not independent probabilities.
+  const rows = Object.values(families);
+  const pTai = rows.reduce((s, x) => s + x.pTai, 0) / rows.length;
+  const pXiu = 1 - pTai;
+  const active = rows.filter(x => x.support >= 1.5);
+  const agreeTai = active.filter(x => x.pTai > 0.5).length;
+  const agreeXiu = active.filter(x => x.pTai < 0.5).length;
+  const agreement = active.length ? Math.max(agreeTai, agreeXiu) / active.length : 0.5;
+  const directionalStrength = Math.abs(pTai - 0.5) * 2;
+  const prediction = Math.abs(pTai - 0.5) < 0.008
+    ? (pTai >= 0.5 ? 1 : 0)
+    : (pTai > 0.5 ? 1 : 0);
+
+  // Internal model score; later combined with rolling backtest. It is not guaranteed win probability.
+  const evidenceRatio = active.length / rows.length;
+  const confidence = clamp(
+    0.50 + 0.24 * directionalStrength * (0.45 + 0.55 * agreement) * (0.55 + 0.45 * evidenceRatio),
+    0.50, 0.8999
+  );
+  const mode = active.length < 4
+    ? "DỮ LIỆU CÒN MỎNG"
+    : agreement >= 0.75 && directionalStrength >= 0.12
+      ? "NHIỀU NHÓM ĐỒNG THUẬN"
+      : agreement < 0.60
+        ? "TÍN HIỆU MÂU THUẪN"
+        : "TÍN HIỆU TRUNG BÌNH";
+
   return {
-    prediction, mode, run, runLength:run, patterns:[],
-    votes:{0:pXiu,1:pTai}, familySummary:families,
-    voteDifference:Math.abs(pTai-pXiu), agreement,
-    confidence:0.5 + Math.min(0.12, margin*0.12) * (0.55+0.45*agreement),
-    familyCount:familyRows.length, activeFamilies:active.length
+    prediction, mode, run, runLength: run, patterns: [],
+    votes: { 0: pXiu, 1: pTai }, familySummary: families,
+    voteDifference: Math.abs(pTai - pXiu),
+    agreement, evidenceRatio, evidenceCount: active.length,
+    directionalStrength, confidence,
+    confidenceLabel: `${(confidence * 100).toFixed(2)}%`,
+    analysis: {
+      families: rows.length, activeFamilies: active.length,
+      agreeTai, agreeXiu, entropy: Number(entropy.toFixed(3)),
+      sampleSize: n, recentBalance: { tai: recentTai, xiu: recent.length - recentTai }
+    }
   };
 }
 function forecast(history) {
-  // Strictly restrict each model input to the latest 40 T/X results.
+  // Model input is strictly limited to the latest 40 T/X results.
   const bits = bitsOf(history).slice(-40);
   const result = forecastBits(bits);
-  const testStart = Math.max(8, bits.length - 20);
-  let tested=0, correct=0, correctTai=0, predictedTai=0, actualTai=0;
-  for(let i=testStart;i<bits.length;i++) {
-    const test=forecastBits(bits.slice(Math.max(0,i-40),i));
-    if(test.prediction===null) continue;
+  let tested = 0, correct = 0, predictedTai = 0, predictedXiu = 0;
+  let hitsTai = 0, hitsXiu = 0;
+  const minTrain = 8;
+  for (let i = minTrain; i < bits.length; i++) {
+    const train = bits.slice(Math.max(0, i - 40), i);
+    const f = forecastBits(train);
+    const actual = bits[i];
     tested++;
-    if(test.prediction===bits[i]) correct++;
-    if(test.prediction===1) predictedTai++;
-    if(bits[i]===1) actualTai++;
-    if(test.prediction===1 && bits[i]===1) correctTai++;
+    if (f.prediction === actual) correct++;
+    if (f.prediction === 1) {
+      predictedTai++;
+      if (actual === 1) hitsTai++;
+    } else {
+      predictedXiu++;
+      if (actual === 0) hitsXiu++;
+    }
   }
-  const accuracy=tested?correct/tested:null;
-  // Confidence is deliberately capped: small historical samples must not look like certainty.
-  const empirical= tested>=10 ? accuracy : 0.5;
-  const signal=Number(result.confidence)||0.5;
-  const reliability=clamp((tested/20),0,1);
-  const confidence=clamp(0.5 + (signal-0.5)*0.55 + (empirical-0.5)*0.25*reliability,0.50,0.65);
-  result.confidence=confidence;
-  result.backtest={tested,correct,accuracy:tested>=10?accuracy:null,predictedTai,actualTai};
-  result.confidenceLabel=`${(confidence*100).toFixed(1)}%`;
-  result.predictionBalance={samples:tested,predictedTai,predictedXiu:tested-predictedTai};
+  const accuracy = tested ? correct / tested : null;
+  const baseline = 0.5;
+  const backtestReliability = Math.min(1, tested / 20);
+  const empiricalLift = accuracy === null ? 0 : (accuracy - baseline);
+  const rawModelScore = Number(result.confidence) || 0.5;
+  // Blend signal strength with walk-forward performance, but keep the UI range requested.
+  const calibrated = 0.50
+    + (rawModelScore - 0.50) * 0.72
+    + empiricalLift * 0.35 * backtestReliability;
+  result.confidence = clamp(calibrated, 0.50, 0.8999);
+  result.confidenceLabel = `${(result.confidence * 100).toFixed(2)}%`;
+  result.backtest = {
+    tested, correct,
+    accuracy: tested >= 10 ? Number(accuracy.toFixed(4)) : null,
+    predictedTai, predictedXiu, hitsTai, hitsXiu,
+    baseline: 0.5,
+    label: tested >= 10 ? "Kiểm thử cuốn chiếu" : "Chưa đủ mẫu kiểm thử"
+  };
+  result.predictionBalance = {
+    samples: tested, predictedTai, predictedXiu,
+    taiShare: tested ? Number((predictedTai / tested).toFixed(3)) : null
+  };
   return result;
 }
 function evaluatePending(history) {
@@ -275,7 +373,7 @@ function evaluatePending(history) {
 }
 function makeSnapshot() {
   return {
-    success: true, source: "VERTEX PREMIUM V14 · Adaptive Balanced Analyzer",
+    success: true, source: "VERTEX PREMIUM V15 · Adaptive Balanced Analyzer",
     updatedAt: state.lastUpdate, error: lastApiError,
     latest: state.latest || null, prediction: state.prediction || null,
     stats: { wins: state.wins, losses: state.losses },
@@ -383,7 +481,7 @@ const HTML = String.raw`<!doctype html>
 </style></head><body><div class="wrap">
 <header class="head"><div class="brand"><div class="logo">V</div><div><h1>VERTEX PREMIUM</h1><p>5 NHÓM PHÂN TÍCH · TRỌNG SỐ CÂN BẰNG</p></div></div><div class="pill" id="status">Đang kết nối API…</div></header>
 <div class="grid">
-<section class="card"><h2>Dự đoán phiên tiếp theo</h2><div class="hero"><div><div class="label">PHIÊN <span id="currentSid">—</span></div><div id="pred" class="prediction">—</div><span class="mode" id="mode">Đang phân tích</span></div><div class="confidence"><strong id="confidence">—</strong><small>Backtest quá khứ · không đảm bảo tương lai</small></div></div>
+<section class="card"><h2>Dự đoán phiên tiếp theo</h2><div class="hero"><div><div class="label">PHIÊN <span id="currentSid">—</span></div><div id="pred" class="prediction">—</div><span class="mode" id="mode">Đang phân tích</span></div><div class="confidence"><strong id="confidence">—</strong><small>Điểm mô hình · không bảo đảm tương lai</small></div></div>
 <div class="label" style="margin-top:17px">Kết quả phiên gần nhất · <span id="lastSid">—</span></div><div class="dice" id="dice"></div>
 <div class="metrics"><div class="metric"><span>Tổng điểm</span><strong id="sum">—</strong></div><div class="metric"><span>Kết quả thật</span><strong id="actual">—</strong></div><div class="metric"><span>Độ dài cầu</span><strong id="run">—</strong></div><div class="metric"><span>Đánh giá</span><strong id="evaluation">CHỜ</strong></div></div>
 <div id="error" class="error"></div></section>
@@ -414,7 +512,7 @@ function render(d){
  const wins=Number(s.wins)||0,losses=Number(s.losses)||0,total=wins+losses;
  $("wins").textContent=wins;$("losses").textContent=losses;$("winbar").style.width=(total?100*wins/total:0)+"%";
  const rows=d.evaluated||[];
- $("history").innerHTML=rows.length?rows.map(x=>'<tr><td>'+esc(x.sid)+'</td><td class="'+(x.prediction==="Tài"?"taiText":"xiuText")+'">'+esc(x.prediction)+'</td><td>'+esc(x.actual)+'</td><td>'+esc(x.sum??"—")+'</td><td><span class="badge '+(x.status==="THẮNG"?"win":"loss")+'">'+esc(x.status)+'</span></td></tr>').join(""):'<tr><td colspan="5">Chưa có phiên nào được chấm. Chờ API trả kết quả của phiên dự đoán.</td></tr>';
+ $("history").innerHTML=rows.length?rows.map(x=>'<tr><td>'+esc(x.sid)+'</td><td class="'+(x.prediction==="Tài"?"taiText":"xiuText")+'">'+esc(x.prediction)+'</td><td>'+esc(x.actual)+'</td><td>'+esc(x.sum??"—")+'</td><td><span class="badge '+(["WIN","THẮNG"].includes(x.status)?"win":"loss")+'">'+esc(x.status==="THẮNG"?"WIN":x.status==="THUA"?"LOSS":x.status)+'</span></td></tr>').join(""):'<tr><td colspan="5">Chưa có phiên nào được chấm. Chờ API trả kết quả của phiên dự đoán.</td></tr>';
 }
 async function refresh(){try{const r=await fetch("/api/state",{cache:"no-store"});render(await r.json());}catch(e){$("status").textContent="Mất kết nối giao diện";}}
 refresh();setInterval(refresh,3000);
@@ -423,7 +521,7 @@ refresh();setInterval(refresh,3000);
 const server = http.createServer((req, res) => {
   if (req.url === "/health" || req.url === "/ping") {
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ ok: true, service: "VERTEX PREMIUM V14", updatedAt: state.lastUpdate, apiError: lastApiError })); return;
+    res.end(JSON.stringify({ ok: true, service: "VERTEX PREMIUM V15", updatedAt: state.lastUpdate, apiError: lastApiError })); return;
   }
   if (req.url === "/" || req.url.startsWith("/index.html")) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
@@ -437,7 +535,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`VERTEX PREMIUM V14 UI: http://localhost:${PORT}`);
+  console.log(`VERTEX PREMIUM V15 UI: http://localhost:${PORT}`);
   console.log(`API: ${API_URL}`);
   console.log(`Health: /health · Ping: /ping · State: /api/state`);
   console.log(`Refresh API every ${POLL_MS/1000}s. Stop with Ctrl+C.`);
