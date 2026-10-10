@@ -1,458 +1,347 @@
-'use strict';
+// VERTEX PREMIUM V9 — Multi-pattern Tài/Xỉu analyzer + web UI
+// Requires Node.js 18+. Run: node vertex_analyzer_v9.js
+// Uses only Node built-ins; state is saved to vertex_state_v9.json beside this file.
+"use strict";
+const http = require("node:http");
+const fs = require("node:fs");
+const path = require("node:path");
 
-/*
- VERTEX PREMIUM - Render One File
- - No npm packages required
- - Embedded HTML/CSS/JS
- - Direct server-side connection to Tele68 (no public CORS proxy)
- - /health, /api/sessions
- - Robust API parsing + timeout + cache
- - Core formula is the only formula used for the displayed signal
- - Analysis layers are diagnostics/backtest, not a guarantee of future outcomes
-*/
+const API_URL = "https://wtxmd52.tele68.com/v1/txmd5/sessions";
+const PORT = Number(process.env.PORT || 3000);
+const POLL_MS = 10_000;
+const STATE_FILE = path.join(__dirname, "vertex_state_v9.json");
+const MAX_HISTORY = 500;
+let state = loadState();
+let lastApiError = null;
+let busy = false;
 
-const http = require('http');
-const https = require('https');
-const { URL } = require('url');
-
-const PORT = Number(process.env.PORT || 10000);
-const HOST = '0.0.0.0';
-const UPSTREAM = process.env.UPSTREAM_URL || 'https://wtxmd52.tele68.com/v1/txmd5/sessions';
-const CACHE_MS = 1500;
-const REQUEST_TIMEOUT = 12000;
-let cache = { at: 0, data: null };
-const PING_INTERVAL_MS = 240000;
-let heartbeatTimer = null;
-const BOOT_ID = `${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
-
-function json(res, status, body) {
-  const out = JSON.stringify(body);
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store, max-age=0',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
-  });
-  res.end(out);
+function defaultState() {
+  return { pending: {}, evaluated: [], wins: 0, losses: 0, lastSession: null, lastUpdate: null };
 }
-
-function fetchJson(urlString) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(urlString);
-    const req = https.request({
-      protocol: u.protocol,
-      hostname: u.hostname,
-      port: u.port || 443,
-      path: u.pathname + (u.search || ''),
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json, text/plain, */*',
-        'User-Agent': 'Mozilla/5.0 VERTEX-Render-Proxy',
-        'Cache-Control': 'no-cache'
-      },
-      timeout: REQUEST_TIMEOUT
-    }, r => {
-      let raw = '';
-      r.setEncoding('utf8');
-      r.on('data', c => { raw += c; });
-      r.on('end', () => {
-        if (r.statusCode < 200 || r.statusCode >= 300) {
-          return reject(new Error(`UPSTREAM_HTTP_${r.statusCode}`));
-        }
-        try {
-          resolve(JSON.parse(raw));
-        } catch (_) {
-          reject(new Error('UPSTREAM_NOT_JSON'));
-        }
-      });
-    });
-    req.on('timeout', () => req.destroy(new Error('UPSTREAM_TIMEOUT')));
-    req.on('error', reject);
-    req.end();
-  });
+function loadState() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+    const s = { ...defaultState(), ...parsed };
+    s.pending ||= {};
+    s.evaluated ||= [];
+    s.wins = Number(s.wins) || 0;
+    s.losses = Number(s.losses) || 0;
+    return s;
+  } catch { return defaultState(); }
 }
-
-function normalizeApi(raw) {
-  let list = [];
-  if (Array.isArray(raw)) list = raw;
-  else if (raw && Array.isArray(raw.list)) list = raw.list;
-  else if (raw && Array.isArray(raw.data)) list = raw.data;
-  else if (raw && raw.data && Array.isArray(raw.data.list)) list = raw.data.list;
-  else if (raw && raw.result && Array.isArray(raw.result)) list = raw.result;
-
-  const out = list.map(x => {
-    const id = Number(x?.id ?? x?.session ?? x?.phien ?? x?.sessionId);
-    const dices = Array.isArray(x?.dices) ? x.dices :
-      Array.isArray(x?.dice) ? x.dice :
-      [x?.d1, x?.d2, x?.d3].filter(v => v !== undefined).map(Number);
-    const point = Number(x?.point ?? x?.total ?? x?.tong ?? dices.reduce((a,b)=>a+Number(b||0),0));
-    const resultRaw = String(x?.resultTruyenThong ?? x?.result ?? x?.ket_qua ?? x?.ketqua ?? '').toUpperCase();
-    let result = resultRaw;
-    if (result === 'TAI' || result === 'TÀI') result = 'TAI';
-    else if (result === 'XIU' || result === 'XỈU') result = 'XIU';
-    else if (point >= 11) result = 'TAI';
-    else if (point > 0) result = 'XIU';
-    return { id, dices: dices.map(Number).slice(0,3), point, result, raw: x };
-  }).filter(x => Number.isFinite(x.id) && x.id > 0);
-
-  out.sort((a,b) => b.id - a.id);
-  return out;
+function saveState() {
+  const tmp = STATE_FILE + ".tmp";
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2), "utf8");
+    fs.renameSync(tmp, STATE_FILE);
+  } catch (e) { console.error("[STATE SAVE ERROR]", e.message); }
 }
-
-async function getSessions(force=false) {
-  const now = Date.now();
-  if (!force && cache.data && now - cache.at < CACHE_MS) return cache.data;
-  const target = UPSTREAM + '?t=' + now;
-  const attempts = [target];
-  let last = null;
-  for (const endpoint of attempts) {
-    try {
-      const raw = await fetchJson(endpoint);
-      const list = normalizeApi(raw);
-      if (!list.length) throw new Error('API_LIST_EMPTY');
-      cache = { at: now, data: list };
-      return list;
-    } catch (e) { last = e; }
+function cleanResult(value, dices) {
+  const v = String(value ?? "").trim().toUpperCase();
+  if (["TAI", "TÀI", "BIG", "大"].includes(v)) return { label: "Tài", bit: 1 };
+  if (["XIU", "XỈU", "SMALL", "小"].includes(v)) return { label: "Xỉu", bit: 0 };
+  const sum = Array.isArray(dices) ? dices.reduce((a, x) => a + Number(x || 0), 0) : NaN;
+  if (Number.isFinite(sum)) return { label: sum >= 11 ? "Tài" : "Xỉu", bit: sum >= 11 ? 1 : 0 };
+  return null;
+}
+function normalize(payload) {
+  const raw = Array.isArray(payload) ? payload : (payload?.list || payload?.data || payload?.sessions || []);
+  const unique = new Map();
+  for (const x of raw) {
+    const sid = Number(x.id ?? x.sid ?? x.phien ?? x.sessionId);
+    if (!Number.isFinite(sid)) continue;
+    const dice = Array.isArray(x.dices) ? x.dices.map(Number) :
+      [x.d1, x.d2, x.d3].every(v => v !== undefined) ? [Number(x.d1), Number(x.d2), Number(x.d3)] :
+      Array.isArray(x.xuc_xac) ? x.xuc_xac.map(Number) : [];
+    const rawResult = x.resultTruyenThong ?? x.ket_qua ?? x.result ?? x.resultText;
+    const outcome = cleanResult(rawResult, dice);
+    if (!outcome) continue;
+    const sum = Number.isFinite(Number(x.point)) ? Number(x.point) :
+      Number.isFinite(Number(x.tong)) ? Number(x.tong) :
+      dice.length ? dice.reduce((a, b) => a + b, 0) : null;
+    unique.set(sid, { sid, dice, sum, result: outcome.label, bit: outcome.bit, raw: rawResult ?? null });
   }
-  throw new Error((last && last.message) || 'ALL_API_SOURCES_FAILED');
+  return [...unique.values()].sort((a, b) => b.sid - a.sid).slice(0, MAX_HISTORY);
+}
+function bitsOf(history) { return history.slice().reverse().map(x => x.bit); } // oldest -> newest
+
+// Pattern evidence uses only observed outcomes. Each matching historical context votes for the
+// actual next outcome; ties abstain. Recent examples get slightly higher weight.
+function forecastBits(bits) {
+  if (!bits.length) return { prediction: null, mode: "CHƯA ĐỦ DỮ LIỆU", patterns: [], votes: { 0: 0, 1: 0 }, confidence: null };
+  const last = bits[bits.length - 1];
+  const patterns = [];
+  const add = (name, counts, samples, family, detail) => {
+    const total = counts[0] + counts[1];
+    if (!total || counts[0] === counts[1]) return;
+    const bit = counts[1] > counts[0] ? 1 : 0;
+    const ratio = Math.max(counts[0], counts[1]) / total;
+    const weight = Math.min(4, Math.log2(total + 1)) * (0.5 + ratio / 2);
+    patterns.push({ name, bit, samples: total, support: Math.max(...counts), ratio, weight, family, detail });
+  };
+
+  // Exact n-gram contexts, lengths 2–12.
+  for (let n = 2; n <= Math.min(12, bits.length - 1); n++) {
+    const ctx = bits.slice(-n), counts = [0, 0];
+    for (let i = 0; i + n < bits.length; i++) {
+      let same = true;
+      for (let j = 0; j < n; j++) if (bits[i + j] !== ctx[j]) { same = false; break; }
+      if (same) counts[bits[i + n]]++;
+    }
+    add(`N-GRAM ${n}`, counts, counts[0] + counts[1], "ngram", `Mẫu cuối dài ${n}`);
+  }
+  // Transition/Markov contexts of order 1–4.
+  for (let n = 1; n <= Math.min(4, bits.length - 1); n++) {
+    const ctx = bits.slice(-n), counts = [0, 0];
+    for (let i = 0; i + n < bits.length; i++) {
+      if (ctx.every((v, j) => bits[i + j] === v)) counts[bits[i + n]]++;
+    }
+    add(`MARKOV ${n}`, counts, counts[0] + counts[1], "markov", `Chuyển tiếp bậc ${n}`);
+  }
+  // Current run length: look at what followed historical runs of the same length and side.
+  let run = 1;
+  for (let i = bits.length - 2; i >= 0 && bits[i] === last; i--) run++;
+  for (const n of [...new Set([Math.max(2, run - 1), run, run + 1])]) {
+    if (n >= bits.length) continue;
+    const counts = [0, 0];
+    for (let i = 0; i + n < bits.length; i++) {
+      if (bits.slice(i, i + n).every(v => v === last)) counts[bits[i + n]]++;
+    }
+    add(`CẦU BỆT ${n}`, counts, counts[0] + counts[1], "bet", `Sau chuỗi cùng mặt dài ${n}`);
+  }
+  // Alternating suffixes 3–10.
+  for (let n = 3; n <= Math.min(10, bits.length - 1); n++) {
+    const ctx = bits.slice(-n);
+    if (!ctx.every((v, i) => i === 0 || v !== ctx[i - 1])) continue;
+    const counts = [0, 0];
+    for (let i = 0; i + n < bits.length; i++) {
+      const w = bits.slice(i, i + n);
+      if (w.every((v, j) => j === 0 || v !== w[j - 1])) counts[bits[i + n]]++;
+    }
+    add(`LUÂN PHIÊN ${n}`, counts, counts[0] + counts[1], "alternating", `Chuỗi luân phiên dài ${n}`);
+  }
+  // Common short rhythm patterns that match the very end of history.
+  const rhythms = [
+    ["NHỊP TTX", [1,1,0]], ["NHỊP XTT", [0,1,1]], ["NHỊP XXT", [0,0,1]], ["NHỊP TXX", [1,0,0]],
+    ["NHỊP TTXX", [1,1,0,0]], ["NHỊP XXTT", [0,0,1,1]], ["NHỊP TXTX", [1,0,1,0]],
+    ["NHỊP XTXT", [0,1,0,1]], ["NHỊP TXXT", [1,0,0,1]], ["NHỊP XTTX", [0,1,1,0]],
+    ["NHỊP TTTX", [1,1,1,0]], ["NHỊP XXXT", [0,0,0,1]], ["NHỊP TXTT", [1,0,1,1]], ["NHỊP XTXX", [0,1,0,0]]
+  ];
+  for (const [name, rhythm] of rhythms) {
+    const n = rhythm.length;
+    if (bits.length <= n || !rhythm.every((v, j) => bits[bits.length - n + j] === v)) continue;
+    const counts = [0, 0];
+    for (let i = 0; i + n < bits.length; i++) {
+      if (rhythm.every((v, j) => bits[i + j] === v)) counts[bits[i + n]]++;
+    }
+    add(name, counts, counts[0] + counts[1], "rhythm", "Nhịp đã khớp ở cuối lịch sử");
+  }
+  // Cycle-position pattern (2–8).
+  for (let period = 2; period <= 8; period++) {
+    const counts = [0, 0];
+    const targetPos = (bits.length - 1) % period;
+    for (let i = period; i < bits.length - 1; i++) {
+      if (i % period === targetPos) counts[bits[i + 1]]++;
+    }
+    add(`CHU KỲ ${period}`, counts, counts[0] + counts[1], "cycle", `Chu kỳ ${period}`,);
+  }
+  // Short-window frequency: use it as a weak pattern vote, not a hard prediction.
+  for (const n of [5, 10, 15, 20, 30, 50]) {
+    const w = bits.slice(-n);
+    if (w.length < 5) continue;
+    const counts = [w.filter(v => v === 0).length, w.filter(v => v === 1).length];
+    add(`TẦN SUẤT ${n}`, counts, w.length, "frequency", `Tần suất ${w.length} phiên`,);
+  }
+
+  const votes = { 0: 0, 1: 0 }, familyCounts = {};
+  for (const p of patterns) {
+    votes[p.bit] += p.weight;
+    familyCounts[p.family] = (familyCounts[p.family] || 0) + 1;
+  }
+  let prediction = null, mode = "CHƯA RÕ CẦU";
+  if (votes[0] !== votes[1] && patterns.length >= 2) {
+    prediction = votes[1] > votes[0] ? 1 : 0;
+    mode = prediction === last ? "THEO CẦU" : "BẺ CẦU";
+  }
+  return {
+    prediction, mode, run, patterns: patterns.sort((a,b) => b.weight-a.weight),
+    votes, familyCounts, runLength: run,
+    voteDifference: Math.abs(votes[1] - votes[0]),
+    agreement: votes[0] + votes[1] ? Math.max(votes[0], votes[1]) / (votes[0] + votes[1]) : null
+  };
+}
+function forecast(history) {
+  const bits = bitsOf(history);
+  const result = forecastBits(bits);
+  // Use a simple non-biased fallback if pattern evidence is insufficient.
+  if (result.prediction === null) {
+    const recent = bits.slice(-20);
+    if (recent.length >= 8) {
+      const tai = recent.filter(x => x === 1).length;
+      const xiu = recent.length - tai;
+      result.prediction = tai === xiu ? (bits[bits.length - 1] === 1 ? 0 : 1) : (tai > xiu ? 1 : 0);
+      result.mode = "CHƯA RÕ CẦU · DỰ PHÒNG";
+    } else {
+      result.prediction = bits.length ? 1 - bits[bits.length - 1] : 0;
+      result.mode = "CHƯA ĐỦ MẪU";
+    }
+  }
+  // Rolling-origin backtest: predictions at each historical point use only earlier sessions.
+  const testStart = Math.max(20, bits.length - 100);
+  let tested = 0, correct = 0;
+  for (let i = testStart; i < bits.length; i++) {
+    const test = forecastBits(bits.slice(0, i));
+    if (test.prediction === null) continue;
+    tested++;
+    if (test.prediction === bits[i]) correct++;
+  }
+  result.backtest = { tested, correct, accuracy: tested >= 10 ? correct / tested : null };
+  result.confidenceLabel = tested >= 10 ? `${(100 * correct / tested).toFixed(1)}%` : "Chưa đủ mẫu";
+  result.patterns = result.patterns.slice(0, 30);
+  return result;
+}
+function evaluatePending(history) {
+  const byId = new Map(history.map(x => [String(x.sid), x]));
+  let changed = false;
+  for (const [sid, p] of Object.entries(state.pending)) {
+    const actual = byId.get(String(sid));
+    if (!actual) continue;
+    const win = p.bit === actual.bit;
+    state.wins += win ? 1 : 0;
+    state.losses += win ? 0 : 1;
+    state.evaluated.unshift({
+      sid: Number(sid), prediction: p.prediction, actual: actual.result,
+      status: win ? "THẮNG" : "THUA", predictedAt: p.createdAt || null,
+      dice: actual.dice, sum: actual.sum
+    });
+    delete state.pending[sid];
+    changed = true;
+  }
+  state.evaluated = state.evaluated.slice(0, 100);
+  if (changed) saveState();
+}
+function makeSnapshot() {
+  return {
+    success: true, source: "VERTEX PREMIUM V9 · Multi-Pattern",
+    updatedAt: state.lastUpdate, error: lastApiError,
+    latest: state.latest || null, prediction: state.prediction || null,
+    stats: { wins: state.wins, losses: state.losses },
+    evaluated: state.evaluated.slice(0, 50),
+    patternNames: state.prediction?.patterns?.map(p => p.name) || []
+  };
+}
+async function pollApi() {
+  if (busy) return;
+  busy = true;
+  try {
+    const res = await fetch(API_URL, { headers: { "Accept": "application/json", "Cache-Control": "no-cache" }, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`API HTTP ${res.status}`);
+    const payload = await res.json();
+    const history = normalize(payload);
+    if (!history.length) throw new Error("API không có phiên hợp lệ hoặc cấu trúc dữ liệu đã thay đổi.");
+    evaluatePending(history);
+    const latest = history[0];
+    const f = forecast(history);
+    const currentSid = latest.sid + 1;
+    const prediction = f.prediction === 1 ? "Tài" : "Xỉu";
+    if (!state.pending[String(currentSid)]) {
+      state.pending[String(currentSid)] = { bit: f.prediction, prediction, createdAt: new Date().toISOString() };
+    }
+    // Store current prediction summary and patterns for UI. A pending prediction is not scored until actual result arrives.
+    state.latest = {
+      phien_truoc: latest.sid, xuc_xac: latest.dice, tong: latest.sum, ket_qua: latest.result,
+      phien_hien_tai: currentSid,
+      pattern: history.slice(0, 15).reverse().map(x => x.bit ? "T" : "X").join("").padStart(15, "-"),
+    };
+    state.prediction = {
+      du_doan: prediction, dang_cau: f.mode,
+      do_dai_cau: f.runLength || f.run || 1,
+      tin_cay: f.confidenceLabel,
+      backtest: f.backtest,
+      mau_theo_cau: f.patterns.filter(p => p.bit === (latest.bit)).length,
+      mau_be_cau: f.patterns.filter(p => p.bit !== (latest.bit)).length,
+      votes: { tai: Number(f.votes?.[1] || 0).toFixed(2), xiu: Number(f.votes?.[0] || 0).toFixed(2) },
+      patterns: f.patterns,
+      familyCounts: f.familyCounts || {},
+      danh_gia: "CHỜ KẾT QUẢ"
+    };
+    state.lastSession = latest.sid;
+    state.lastUpdate = new Date().toISOString();
+    lastApiError = null;
+    // Keep only a few pending predictions in case the API skips an ID.
+    const keys = Object.keys(state.pending).sort((a,b) => Number(a)-Number(b));
+    for (const old of keys.slice(0, Math.max(0, keys.length - 20))) delete state.pending[old];
+    saveState();
+  } catch (e) {
+    lastApiError = e?.message || String(e);
+    console.error("[API ERROR]", lastApiError);
+  } finally { busy = false; }
 }
 
-function html() {
-return `<!doctype html>
-<html lang="vi">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#050815">
-<title>VERTEX PREMIUM • Live Engine</title>
+const HTML = String.raw`<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VERTEX PREMIUM · Analyzer V9</title>
 <style>
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#030611;color:#edf5ff}body{padding:10px;background:radial-gradient(circle at 50% -10%,#122247 0,#050915 35%,#02040b 100%)}button{font:inherit}.wrap{width:min(980px,100%);margin:auto}.top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 10px}.brand{flex:1;padding:16px 18px;position:relative;overflow:hidden;border:1px solid #20335c;border-radius:20px;background:linear-gradient(135deg,#0b1730,#070a16);box-shadow:0 12px 40px #0007}.brandmark{display:flex;align-items:center;gap:12px}.logo-svg{width:54px;height:54px;filter:drop-shadow(0 0 18px #00d8f555)}.brand h1{margin:0;font-size:clamp(27px,7vw,42px);letter-spacing:8px}.brandline{display:flex;gap:14px;margin-top:10px;color:#7f91b5;font-size:8px;font-weight:900;letter-spacing:1.3px}.brandline span{display:flex;align-items:center;gap:5px}.brandline svg{width:12px;height:12px;fill:none;stroke:#5eefff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.brand p{margin:5px 0 0;color:#7184aa;font-size:9px;letter-spacing:1.7px}.status{white-space:nowrap;font-size:10px;font-weight:800;padding:9px 11px;border-radius:999px;border:1px solid #28375c;background:#091022;color:#9eb0d4}.ok{color:#5ef2bb;border-color:#1d6c54;background:#071a16}.bad{color:#ff7187;border-color:#6d2d3e;background:#1c0b13}.card{background:linear-gradient(180deg,#0a1122,#060a15);border:1px solid #1d2b4b;border-radius:18px;padding:13px;margin:10px 0;box-shadow:0 10px 35px #0006}.title{font-size:12px;font-weight:900;letter-spacing:.8px;margin-bottom:9px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.cell{border:1px solid #182541;background:#060a15;border-radius:10px;padding:9px;min-height:51px}.cell small{display:block;color:#5f7093;font-size:8px;text-transform:uppercase}.cell b{display:block;margin-top:4px;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.actions{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:7px;margin-top:9px}.btn{border:1px solid #293b64;border-radius:11px;padding:12px;background:#111a31;color:#eaf2ff;font-weight:900;font-size:12px;cursor:pointer}.btn.main{background:linear-gradient(90deg,#00d8f5,#62efff);color:#031018;border:0}.btn.stop{background:#2a101b;color:#ff9bad}.hero{display:grid;place-items:center;min-height:190px;border:1px solid #20355e;border-radius:16px;background:radial-gradient(circle at 50% 45%,#172a51,#070b16 58%);position:relative;overflow:hidden}.hero:before{content:"";position:absolute;width:180px;height:180px;border:1px solid #1e4c78;border-radius:50%;box-shadow:0 0 70px #0874b533}.hero .sig{font-size:clamp(38px,11vw,62px);font-weight:950;letter-spacing:2px;position:relative;text-shadow:0 0 25px #39ddff55}.hero .id{position:absolute;right:12px;top:10px;color:#7182a7;font-size:10px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:7px}.stat{border:1px solid #192641;background:#050914;border-radius:11px;padding:11px;text-align:center}.stat span{display:block;color:#687a9c;font-size:9px;text-transform:uppercase}.stat b{display:block;font-size:16px;margin-top:4px}.bars{margin-top:9px}.barrow{margin:8px 0}.barhead{display:flex;justify-content:space-between;font-size:9px;color:#8190ad}.track{height:7px;background:#12192b;border-radius:99px;overflow:hidden;margin-top:4px}.fill{height:100%;width:50%;border-radius:99px;transition:width .35s ease}.tai{background:linear-gradient(90deg,#ff416c,#ff9a61)}.xiu{background:linear-gradient(90deg,#11d9ff,#45f4d2)}.note{border:1px dashed #223252;color:#7180a0;border-radius:11px;padding:9px;font-size:10px;margin-top:9px}.live{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 10px;border:1px solid #1d3153;border-radius:11px;background:#071021;font-size:10px}.live b{color:#64f2c0}.history-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.table{overflow:auto;border:1px solid #192641;border-radius:11px;max-height:340px}.row{display:grid;grid-template-columns:90px 70px 70px 70px 1fr;min-width:370px;border-bottom:1px solid #101a2d}.row:last-child{border:0}.row>div{padding:8px;font-size:10px}.head{color:#7182a4;background:#091021;position:sticky;top:0}.win{color:#5ef2b7}.loss{color:#ff7288}.muted{color:#7180a0}.foot{font-size:9px;color:#536482;text-align:center;padding:14px 0 8px}.copyright{margin-top:6px;color:#6f82aa;font-weight:800;letter-spacing:.7px}.copyright b{color:#63ecff}.mini-svg{width:14px;height:14px;vertical-align:-2px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}.btn .mini-svg{margin-right:5px}@media(max-width:700px){body{padding:6px}.top{align-items:flex-start}.brand{padding:14px}.brand h1{letter-spacing:5px}.grid{grid-template-columns:repeat(2,1fr)}.actions{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.card{padding:10px;border-radius:14px}.hero{min-height:170px}.cell{min-height:48px}}
-.title{display:flex;align-items:center;gap:7px}.hero{isolation:isolate}.hero:after{content:"LIVE SIGNAL";position:absolute;bottom:12px;font-size:8px;letter-spacing:3px;color:#536b91}.stat b{font-variant-numeric:tabular-nums}.card{backdrop-filter:blur(8px)}.note{line-height:1.55}.row>div{overflow-wrap:anywhere}@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="top">
-  <div class="brand">
-    <div class="brandmark">
-      <svg class="logo-svg" viewBox="0 0 120 120" aria-hidden="true"><defs><linearGradient id="vg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00e5ff"/><stop offset="1" stop-color="#7c5cff"/></linearGradient></defs><circle cx="60" cy="60" r="52" fill="#071224" stroke="url(#vg)" stroke-width="3"/><path d="M28 31h22l10 20 10-20h22L72 68v22H48V68z" fill="url(#vg)"/><circle cx="92" cy="28" r="5" fill="#62f4cf"/></svg>
-      <div><h1>VERTEX</h1><p>PREMIUM AUTO ANALYZER</p></div>
-    </div>
-    <div class="brandline"><span><svg viewBox="0 0 24 24"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg> LIVE ENGINE</span><span><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 109 9"/><path d="M12 7v5l3 2"/></svg> AUTO SYNC</span></div>
-  </div>
-  <div id="status" class="status">CONNECTING</div>
-</div>
-  <section class="card">
-    <div class="title"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 10-13h-7z"/></svg> AUTO API</div>
-    <div class="grid">
-      <div class="cell"><small>API</small><b id="apiName">SERVER PROXY</b></div>
-      <div class="cell"><small>SESSION NGUỒN</small><b id="sourceId">—</b></div>
-      <div class="cell"><small>SESSION MỤC TIÊU</small><b id="targetId">—</b></div>
-      <div class="cell"><small>XÚC XẮC</small><b id="dice">—</b></div>
-      <div class="cell"><small>POINT</small><b id="point">—</b></div>
-      <div class="cell"><small>KẾT QUẢ NGUỒN</small><b id="sourceResult">—</b></div>
-      <div class="cell"><small>LAST UPDATE</small><b id="updated">—</b></div>
-      <div class="cell"><small>API LATENCY</small><b id="latency">—</b></div>
-    </div>
-    <div class="actions"><button id="start" class="btn main"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 10-13h-7z"/></svg> BẬT AUTO ENGINE</button><button id="once" class="btn"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M5.6 9A7 7 0 0118 6l2 6"/><path d="M18.4 15A7 7 0 016 18l-2-6"/></svg> CẬP NHẬT NGAY</button><button id="stop" class="btn stop"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> DỪNG AUTO</button></div>
-    <div id="error" class="note" style="display:none"></div>
-    <div class="note">Render kết nối trực tiếp Tele68, không dùng proxy công cộng. Công thức lõi chỉ có một. Kết quả phiên mục tiêu chỉ dùng để backtest sau khi API đã trả phiên đó.</div>
-  </section>
-
-  <section class="card"><div class="title"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg> MASTER ANALYZER <span id="masterState" class="muted" style="float:right">WAITING</span></div>
-    <div class="hero"><span id="targetLabel" class="id">#—</span><div id="signal" class="sig">—</div></div>
-    <div class="stats"><div class="stat"><span>Đồng thuận*</span><b id="consensus">—</b></div><div class="stat"><span>Giá trị</span><b id="value">—</b></div><div class="stat"><span>Tài</span><b id="tai">—</b></div><div class="stat"><span>Xỉu</span><b id="xiu">—</b></div></div>
-    <div class="bars"><div class="barrow"><div class="barhead"><span>TÀI SCORE</span><span id="taiPct">50%</span></div><div class="track"><div id="taiBar" class="fill tai"></div></div></div><div class="barrow"><div class="barhead"><span>XỈU SCORE</span><span id="xiuPct">50%</span></div><div class="track"><div id="xiuBar" class="fill xiu"></div></div></div></div>
-    <div id="diag" class="note">Chưa có dữ liệu API.</div>
-  </section>
-
-  <section class="card"><div class="live"><span><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="currentColor" stroke="none"/></svg> AUTO UPDATE</span><b id="liveText">Đang chờ dữ liệu</b><span id="nextTick" class="muted">—</span></div></section>
-
-  <section class="card"><div class="title"><svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10h4v10M10 20V4h4v16M16 20v-7h4v7"/></svg> LỊCH SỬ ĐÁNH GIÁ <span id="btCount" class="muted" style="float:right">0</span></div><div id="backtest" class="table"><div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div></div></section>
-  <div class="foot"><svg class="mini-svg" viewBox="0 0 24 24"><path d="M12 3l2.4 5.1L20 10.5l-5.6 2.4L12 18l-2.4-5.1L4 10.5l5.6-2.4z"/></svg> VERTEX PREMIUM • AUTO SYNC • Không đảm bảo kết quả ngẫu nhiên<div class="copyright">© BẢN QUYỀN CHÍNH CHỦ: <b>NOVA LÀ BỐ</b></div></div>
-</div>
+:root{color-scheme:dark;--bg:#07111b;--panel:#0e1b29;--line:#20354a;--muted:#91a4b8;--text:#eaf2f9;--green:#3ce6a0;--red:#ff6178;--gold:#ffc86b}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 500px at 10% -10%,#10334a 0%,transparent 60%),var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:1180px;margin:auto;padding:22px 16px 40px}.head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.brand{display:flex;align-items:center;gap:12px}.logo{width:44px;height:44px;border:1px solid #2c9c83;border-radius:14px;display:grid;place-items:center;color:var(--green);font-weight:900;box-shadow:0 0 24px #1ce5a01a}.brand h1{font-size:17px;letter-spacing:1.2px;margin:0}.brand p{color:var(--muted);font-size:12px;margin:3px 0 0}.pill{border:1px solid var(--line);padding:7px 10px;border-radius:999px;color:var(--muted);font-size:12px}.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}.card{background:linear-gradient(150deg,#102031,#0b1723);border:1px solid var(--line);border-radius:17px;padding:17px;min-width:0;box-shadow:0 14px 35px #0002}.card h2{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#a9bfd1;margin:0 0 14px}.hero{display:flex;align-items:center;justify-content:space-between;gap:18px}.label{color:var(--muted);font-size:12px}.prediction{font-size:36px;font-weight:850;letter-spacing:.3px;margin:4px 0}.prediction.tai{color:var(--green)}.prediction.xiu{color:var(--red)}.mode{display:inline-block;border-radius:8px;padding:5px 8px;font-size:11px;font-weight:750;background:#152c3c;color:#d4e7f5}.confidence{min-width:116px;text-align:right}.confidence strong{display:block;font-size:21px;color:var(--gold)}.confidence small{color:var(--muted);font-size:11px}.dice{display:flex;gap:7px;margin-top:13px}.die{width:34px;height:34px;border-radius:9px;background:#edf5fa;color:#102033;display:grid;place-items:center;font-weight:850}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:16px}.metric{border:1px solid var(--line);border-radius:11px;padding:10px}.metric span{display:block;color:var(--muted);font-size:11px}.metric strong{display:block;font-size:17px;margin-top:4px;overflow-wrap:anywhere}.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stat{padding:15px;border-radius:13px;background:#091522;border:1px solid var(--line)}.stat .n{font-size:30px;font-weight:850}.win{color:var(--green)}.loss{color:var(--red)}.stat small{display:block;color:var(--muted)}.bar{height:7px;background:#23364a;border-radius:99px;overflow:hidden;margin-top:12px}.bar span{height:100%;display:block;background:linear-gradient(90deg,var(--green),#65e0ff);width:0}.wide{margin-top:14px}.pattern{font-family:ui-monospace,Consolas,monospace;letter-spacing:3px;font-size:18px;word-break:break-all;color:#c8d8e7}.legend{display:flex;gap:13px;font-size:11px;color:var(--muted);margin-top:9px}.legend b{color:var(--green)}.legend i{color:var(--red);font-style:normal}.scroll{overflow:auto}table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;padding:10px 9px;border-bottom:1px solid #1b2d3e;font-size:12px}th{color:var(--muted);font-weight:650}td{color:#dce7ef}.badge{display:inline-block;padding:4px 7px;border-radius:6px;font-weight:800;font-size:10px}.badge.win{background:#0d382d}.badge.loss{background:#401b28}.badge.wait{background:#2d2b1d;color:var(--gold)}.patterns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.pat{border:1px solid var(--line);border-radius:10px;padding:10px}.pat strong{font-size:12px;display:block}.pat small{color:var(--muted);display:block;margin-top:4px}.pat em{font-size:12px;font-style:normal;font-weight:800}.taiText{color:var(--green)}.xiuText{color:var(--red)}.error{color:var(--red);font-size:12px;margin-top:8px}.foot{color:#71869a;text-align:center;font-size:11px;margin-top:18px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{align-items:flex-start}.prediction{font-size:32px}.confidence{min-width:92px}.patterns{grid-template-columns:1fr}.head{align-items:flex-start}.pill{max-width:135px;text-align:center}}
+</style></head><body><div class="wrap">
+<header class="head"><div class="brand"><div class="logo">V</div><div><h1>VERTEX PREMIUM</h1><p>MULTI-PATTERN · THEO CẦU / BẺ CẦU</p></div></div><div class="pill" id="status">Đang kết nối API…</div></header>
+<div class="grid">
+<section class="card"><h2>Dự đoán phiên tiếp theo</h2><div class="hero"><div><div class="label">PHIÊN <span id="currentSid">—</span></div><div id="pred" class="prediction">—</div><span class="mode" id="mode">Đang phân tích</span></div><div class="confidence"><strong id="confidence">—</strong><small>Độ chính xác kiểm thử</small></div></div>
+<div class="label" style="margin-top:17px">Kết quả phiên gần nhất · <span id="lastSid">—</span></div><div class="dice" id="dice"></div>
+<div class="metrics"><div class="metric"><span>Tổng điểm</span><strong id="sum">—</strong></div><div class="metric"><span>Kết quả thật</span><strong id="actual">—</strong></div><div class="metric"><span>Độ dài cầu</span><strong id="run">—</strong></div><div class="metric"><span>Đánh giá</span><strong id="evaluation">CHỜ</strong></div></div>
+<div class="wide"><div class="label">Pattern 15 phiên · Cũ → mới</div><div class="pattern" id="pattern">———————————————</div><div class="legend"><span><b>T = Tài</b></span><span><i>X = Xỉu</i></span><span>— = thiếu dữ liệu</span></div></div><div id="error" class="error"></div></section>
+<section class="card"><h2>Thống kê thắng / thua</h2><div class="stats"><div class="stat"><div class="n win" id="wins">0</div><small>THẮNG</small></div><div class="stat"><div class="n loss" id="losses">0</div><small>THUA</small></div></div><div class="bar"><span id="winbar"></span></div><p class="label" style="margin:10px 0 0">Chỉ tính dự đoán đã có kết quả thật. Dữ liệu lưu trên máy chủ.</p><div class="metrics"><div class="metric"><span>Mẫu theo cầu</span><strong id="follow">0</strong></div><div class="metric"><span>Mẫu bẻ cầu</span><strong id="break">0</strong></div><div class="metric"><span>Phiếu Tài</span><strong id="vTai">0</strong></div><div class="metric"><span>Phiếu Xỉu</span><strong id="vXiu">0</strong></div></div></section></div>
+<section class="card wide"><h2>Pattern được dùng trong dự đoán</h2><div class="patterns" id="patterns"><div class="label">Đang tải pattern…</div></div></section>
+<section class="card wide"><h2>Lịch sử đánh giá thắng / thua</h2><div class="scroll"><table><thead><tr><th>Phiên</th><th>Dự đoán</th><th>Kết quả thật</th><th>Tổng điểm</th><th>Đánh giá</th></tr></thead><tbody id="history"><tr><td colspan="5">Chưa có dữ liệu đánh giá.</td></tr></tbody></table></div></section>
+<div class="foot">Tự cập nhật 10 giây · Dữ liệu thắng/thua được lưu trong vertex_state_v9.json · Dự đoán không đảm bảo thắng.</div></div>
 <script>
-const BOOT_ID='${BOOT_ID}';
-const state={running:false,timer:null,last:null,predictions:new Map(),history:[],busy:false,nextAt:0,mode:'THUAN'};
-// Persist through page refreshes; reset only when the Node server's BOOT_ID changes.
-try{
-  const previousBoot=localStorage.getItem('vertex_boot_id');
-  if(previousBoot!==BOOT_ID){
-    localStorage.removeItem('vertex_history_v2');
-    localStorage.removeItem('vertex_predictions_v2');
-    localStorage.setItem('vertex_boot_id',BOOT_ID);
-  } else {
-    const savedHistory=JSON.parse(localStorage.getItem('vertex_history_v2')||'[]');
-    const savedPredictions=JSON.parse(localStorage.getItem('vertex_predictions_v2')||'[]');
-    if(Array.isArray(savedHistory)) state.history=savedHistory.slice(0,100);
-    if(Array.isArray(savedPredictions)) state.predictions=new Map(savedPredictions.map(([id,p])=>[Number(id),p]));
-  }
-}catch(_) { state.history=[]; state.predictions=new Map(); }
-function persistState(){
-  try{
-    localStorage.setItem('vertex_history_v2',JSON.stringify(state.history.slice(0,100)));
-    localStorage.setItem('vertex_predictions_v2',JSON.stringify(Array.from(state.predictions.entries()).slice(-250)));
-  }catch(_){}
-}
 const $=id=>document.getElementById(id);
-const api='/api/sessions';
-
-function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
-function setStatus(text,cls=''){const e=$('status');e.innerHTML='<svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="currentColor" stroke="none"/></svg> '+esc(text);e.className='status '+cls;}
-function showError(msg){const e=$('error');e.style.display='block';e.textContent='API lỗi: '+msg;}
-function clearError(){$('error').style.display='none';}
-function fmtTime(){return new Date().toLocaleTimeString('vi-VN');}
-
-async function load(){
-  if(state.busy)return;
-  state.busy=true;
-  const t0=performance.now();
-  try{
-    setStatus('ĐANG CẬP NHẬT');
-    const r=await fetch(api+'?t='+Date.now(),{cache:'no-store',headers:{Accept:'application/json'}});
-    const j=await r.json();
-    if(!r.ok||!j.success) throw new Error(j.error||('HTTP '+r.status));
-    const list=Array.isArray(j.list)?j.list:[];
-    if(!list.length) throw new Error('API_LIST_EMPTY');
-    $('latency').textContent=Math.round(performance.now()-t0)+' ms';
-    $('updated').textContent=fmtTime();
-    clearError();setStatus('ONLINE','ok');
-    $('liveText').textContent='Đã cập nhật '+fmtTime();
-    process(list);
-  }catch(e){setStatus('API ERROR','bad');showError(e.message||String(e));$('masterState').textContent='LỖI API';$('liveText').textContent='Đang thử lại tự động';}
-  finally{state.busy=false;}
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function render(d){
+ const l=d.latest,p=d.prediction,s=d.stats||{wins:0,losses:0};
+ $("status").textContent=d.error?"Lỗi API":d.updatedAt?"API đang hoạt động":"Đang kết nối";
+ $("error").textContent=d.error?("API: "+d.error):"";
+ if(l){
+  $("currentSid").textContent=l.phien_hien_tai;$("lastSid").textContent=l.phien_truoc;
+  $("sum").textContent=l.tong??"—";$("actual").textContent=l.ket_qua??"—";
+  $("pattern").textContent=l.pattern||"—";
+  $("dice").innerHTML=(l.xuc_xac||[]).map(n=>'<div class="die">'+esc(n)+'</div>').join("")||'<span class="label">Không có dữ liệu xúc xắc</span>';
+ }
+ if(p){
+  $("pred").textContent=p.du_doan||"—";$("pred").className="prediction "+(p.du_doan==="Tài"?"tai":"xiu");
+  $("mode").textContent=p.dang_cau||"CHƯA RÕ CẦU";$("confidence").textContent=p.tin_cay||"—";
+  $("run").textContent=p.do_dai_cau??"—";$("evaluation").textContent=p.danh_gia||"CHỜ";
+  $("follow").textContent=p.mau_theo_cau??0;$("break").textContent=p.mau_be_cau??0;
+  $("vTai").textContent=p.votes?.tai??"0";$("vXiu").textContent=p.votes?.xiu??"0";
+  $("patterns").innerHTML=(p.patterns||[]).slice(0,24).map(x=>'<div class="pat"><strong>'+esc(x.name)+'</strong><small>'+esc(x.detail)+' · '+x.samples+' mẫu</small><em class="'+(x.bit===1?"taiText":"xiuText")+'">'+(x.bit===1?"TÀI":"XỈU")+' · '+(x.ratio*100).toFixed(0)+'% đồng thuận</em></div>').join("")||'<div class="label">Chưa đủ mẫu để hiển thị pattern có ưu thế.</div>';
+ }
+ const wins=Number(s.wins)||0,losses=Number(s.losses)||0,total=wins+losses;
+ $("wins").textContent=wins;$("losses").textContent=losses;$("winbar").style.width=(total?100*wins/total:0)+"%";
+ const rows=d.evaluated||[];
+ $("history").innerHTML=rows.length?rows.map(x=>'<tr><td>'+esc(x.sid)+'</td><td class="'+(x.prediction==="Tài"?"taiText":"xiuText")+'">'+esc(x.prediction)+'</td><td>'+esc(x.actual)+'</td><td>'+esc(x.sum??"—")+'</td><td><span class="badge '+(x.status==="THẮNG"?"win":"loss")+'">'+esc(x.status)+'</span></td></tr>').join(""):'<tr><td colspan="5">Chưa có phiên nào được chấm. Chờ API trả kết quả của phiên dự đoán.</td></tr>';
 }
+async function refresh(){try{const r=await fetch("/api/state",{cache:"no-store"});render(await r.json());}catch(e){$("status").textContent="Mất kết nối giao diện";}}
+refresh();setInterval(refresh,3000);
+</script></body></html>`;
 
-function coreFormula(prev,current,d1,d2){
-  // Một công thức lõi duy nhất, chỉ dùng D1 và D2:
-  // V = floor(abs(((D1 + D2) / P) * C)); chẵn = TÀI, lẻ = XỈU.
-  // Không tự thay P=0 bằng giá trị giả và không dự đoán khi dữ liệu xúc xắc không hợp lệ.
-  const dice1=Number(d1), dice2=Number(d2);
-  const p=Number(prev), c=Number(current);
-  const validDice=Number.isInteger(dice1)&&dice1>=1&&dice1<=6&&
-                  Number.isInteger(dice2)&&dice2>=1&&dice2<=6;
-  if(!validDice || !Number.isInteger(p) || p<1 || p>9 ||
-     !Number.isInteger(c) || c<0 || c>9){
-    return {value:null,signal:null,raw:null,error:'Dữ liệu không hợp lệ hoặc số cuối phiên trước bằng 0'};
+const server = http.createServer((req, res) => {
+  if (req.url === "/" || req.url.startsWith("/index.html")) {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(HTML); return;
   }
-  const raw=((dice1+dice2)/p)*c;
-  if(!Number.isFinite(raw)) return {value:null,signal:null,raw:null,error:'Giá trị công thức không hợp lệ'};
-  const value=Math.floor(Math.abs(raw));
-  return {value,signal:value%2===0?'TAI':'XIU',raw,error:null};
-}
-
-function signals(list){
-  const src=list[0];
-  const targetId=Number(src.id)+1;
-  const prevLast=Math.abs(Number(src.id))%10;
-  const curLast=Math.abs(targetId)%10;
-  const dices=Array.isArray(src.dices)?src.dices:[];
-  const d1=Number(dices[0]||0),d2=Number(dices[1]||0);
-  const core=coreFormula(prevLast,curLast,d1,d2);
-  return {src,targetId,prevLast,curLast,d1,d2,core};
-}
-
-function opposite(signal){return signal==='TAI'?'XIU':'TAI';}
-function strategyWin(row,mode){
-  if(mode==='NGUOC') return row.reverseWin;
-  return row.straightWin;
-}
-function chooseMode(){
-  const recent=state.history.slice(0,20);
-  const current=state.mode||'THUAN';
-
-  // Rule 1: if the active strategy has two consecutive settled losses, reverse it.
-  const streakRows=state.history.filter(h=>h.actual==='TAI'||h.actual==='XIU');
-  if(streakRows.length>=2 &&
-     strategyWin(streakRows[0],current)===false &&
-     strategyWin(streakRows[1],current)===false){
-    state.mode=current==='THUAN'?'NGUOC':'THUAN';
-    return state.mode;
+  if (req.url.startsWith("/api/state")) {
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
+    res.end(JSON.stringify(makeSnapshot())); return;
   }
-
-  // Rule 2: compare both approaches on the same settled sessions and follow the one with more wins.
-  let straightWins=0,reverseWins=0,compared=0;
-  for(const h of recent){
-    if(typeof h.straightWin==='boolean' && typeof h.reverseWin==='boolean'){
-      compared++;
-      if(h.straightWin) straightWins++;
-      if(h.reverseWin) reverseWins++;
-    }
-  }
-  if(compared>0 && straightWins!==reverseWins){
-    state.mode=straightWins>reverseWins?'THUAN':'NGUOC';
-  } else if(!state.mode){
-    state.mode='THUAN';
-  }
-  return state.mode;
-}
-
-function analyze(list){
-  const s=signals(list); if(!s.core.signal) { $('masterState').textContent='CHỜ DỮ LIỆU'; $('diag').textContent=s.core.error||'Chưa đủ dữ liệu hợp lệ cho công thức 2 xúc xắc.'; return null; }
-  const recent=list.slice(0,40);
-  const counts={TAI:0,XIU:0}; recent.forEach(x=>{if(x.result==='TAI'||x.result==='XIU')counts[x.result]++;});
-  // Diagnostics deliberately do not replace the core formula.
-  const balance=Math.abs(counts.TAI-counts.XIU);
-  const parity=s.core.value%2===0?'EVEN':'ODD';
-  const engineItems=Array.from({length:40},(_,i)=>{
-    const names=['Core parity','Recent balance','Recent TAI rate','Recent XIU rate','Dice sum','Dice spread','Dice odd/even','Session parity','Last-digit pair','Source point','Rolling 5','Rolling 10','Rolling 20','Transition T-T','Transition T-X','Transition X-T','Transition X-X','Streak length','Alternation','Entropy proxy','Mean point','Median point','Point spread','High-point rate','Low-point rate','D1 frequency','D2 frequency','Duplicate dice','Range signal','Recent momentum','Recency weight','Agreement check','Outlier check','Data completeness','Session continuity','Target gap','Parity stability','Balance stability','Backtest readiness','Formula integrity'];
-    let score=0,detail='neutral';
-    if(i===0) score=s.core.signal==='TAI'?1:-1;
-    else if(i===1) score=counts.TAI>counts.XIU?1:counts.XIU>counts.TAI?-1:0;
-    else if(i===2) score=counts.TAI>=counts.XIU?1:-1;
-    else if(i===3) score=counts.XIU>=counts.TAI?-1:1;
-    else if(i===4) score=(s.d1+s.d2)>=7?1:-1;
-    else if(i===5) score=Math.abs(s.d1-s.d2)>=3?1:-1;
-    else if(i===6) score=((s.d1+s.d2)%2===0)?1:-1;
-    else if(i===7) score=(s.src.id%2===0)?1:-1;
-    else score=0;
-    detail=score>0?'TAI':score<0?'XIU':'NEUTRAL';
-    return {name:names[i]||('Analysis '+(i+1)),score,detail};
-  });
-  const models=Array.from({length:20},(_,i)=>({name:'Ensemble Model '+(i+1),detail:i===0?'Core-only validation':i%3===0?'Balance diagnostic':i%3===1?'Dice diagnostic':'Stability diagnostic',score:i===0?(s.core.signal==='TAI'?1:-1):0}));
-  const ais=Array.from({length:10},(_,i)=>({name:'AI Layer '+(i+1),detail:i===0?'Input validation':i===1?'Consistency check':i===2?'Backtest guard':'Research diagnostic',score:0}));
-  const straightDir=s.core.signal;
-  const reverseDir=opposite(straightDir);
-  const mode=chooseMode();
-  const coreDir=mode==='NGUOC'?reverseDir:straightDir;
-  const agreement=recent.length?Math.round((Math.max(counts.TAI,counts.XIU)/Math.max(1,counts.TAI+counts.XIU))*100):50;
-  const confidence=Math.max(50,Math.min(90,Math.round(50+Math.abs(agreement-50)*0.8))); // diagnostic consensus, not win probability
-  return {s,counts,balance,parity,engineItems,models,ais,confidence,coreDir,straightDir,reverseDir,mode};
-}
-
-function renderAnalysis(a){
-  $('sourceId').textContent=a.s.src.id;
-  $('targetId').textContent=a.s.targetId;
-  $('targetLabel').textContent='#'+a.s.targetId;
-  $('dice').textContent=[a.s.d1,a.s.d2].join(' • ')||'—';
-  $('point').textContent=a.s.src.point||'—';
-  $('sourceResult').textContent=a.s.src.result||'—';
-  $('signal').textContent=a.coreDir==='TAI'?'TÀI':'XỈU';
-  $('consensus').textContent=a.confidence.toFixed(2)+'%';
-  $('value').textContent=a.s.core.value;
-  $('tai').textContent=a.coreDir==='TAI'?a.confidence.toFixed(2)+'%':'—';
-  $('xiu').textContent=a.coreDir==='XIU'?a.confidence.toFixed(2)+'%':'—';
-  const tp=a.coreDir==='TAI'?a.confidence:100-a.confidence, xp=100-tp;
-  $('taiPct').textContent=tp.toFixed(2)+'%';$('xiuPct').textContent=xp.toFixed(2)+'%';
-  $('taiBar').style.width=tp+'%';$('xiuBar').style.width=xp+'%';
-  $('masterState').textContent='READY';
-  $('diag').textContent='Chế độ đang dùng: '+(a.mode==='NGUOC'?'NGƯỢC':'THUẬN')+' • Thuận: chẵn Tài / lẻ Xỉu • Ngược: chẵn Xỉu / lẻ Tài • Tự chọn theo lịch sử; đổi bên sau 2 LOSS liên tiếp. Công thức chỉ dùng D1 và D2; đồng thuận không phải xác suất thắng.';
-}
-
-function process(list){
-  const a=analyze(list); if(!a) return;
-  let changed=false;
-  // Settle predictions only when the corresponding real session is present in the API.
-  for(const [id,p] of state.predictions){
-    if(p.settled) continue;
-    const actualRow=list.find(x=>Number(x.id)===Number(id));
-    if(actualRow && (actualRow.result==='TAI'||actualRow.result==='XIU')){
-      p.settled=true;
-      p.actual=actualRow.result;
-      p.win=p.pred===actualRow.result;
-      p.straightWin=p.straightPred===actualRow.result;
-      p.reverseWin=p.reversePred===actualRow.result;
-      if(!state.history.some(h=>Number(h.id)===Number(id))){
-        state.history.unshift({
-          id:Number(id),pred:p.pred,actual:p.actual,win:p.win,
-          mode:p.mode||'THUAN',
-          straightPred:p.straightPred,reversePred:p.reversePred,
-          straightWin:p.straightWin,reverseWin:p.reverseWin,
-          time:new Date().toLocaleString('vi-VN')
-        });
-        changed=true;
-      }
-    }
-  }
-  // Never overwrite an existing prediction for a target session.
-  if(!state.predictions.has(Number(a.s.targetId))){
-    state.predictions.set(Number(a.s.targetId),{
-      pred:a.coreDir,straightPred:a.straightDir,reversePred:a.reverseDir,
-      mode:a.mode,created:Date.now(),settled:false
-    });
-    changed=true;
-  }
-  // Remove old settled entries while keeping enough unresolved targets for delayed APIs.
-  if(state.history.length>100) state.history.length=100;
-  if(state.predictions.size>250){
-    for(const [id,p] of state.predictions){
-      if(state.predictions.size<=220) break;
-      if(p.settled) state.predictions.delete(id);
-    }
-  }
-  if(changed) persistState();
-  renderAnalysis(a); renderBacktest(); state.last=a;
-}
-
-function renderBacktest(){
-  $('btCount').textContent=state.history.length;
-  const total=state.history.length;
-  const wins=state.history.filter(x=>x.win).length;
-  const rate=total?((wins/total)*100).toFixed(2):'0.00';
-  const compared=state.history.filter(x=>typeof x.straightWin==='boolean'&&typeof x.reverseWin==='boolean');
-  const straightWins=compared.filter(x=>x.straightWin).length;
-  const reverseWins=compared.filter(x=>x.reverseWin).length;
-  $('backtest').innerHTML='<div class="row head"><div>PHIÊN</div><div>DỰ ĐOÁN</div><div>THỰC TẾ</div><div>KQ</div><div>THỜI GIAN</div></div>'+state.history.map(x=>'<div class="row"><div>'+esc(x.id)+'</div><div>'+esc(x.pred)+' <small class="muted">'+esc(x.mode==='NGUOC'?'NGƯỢC':'THUẬN')+'</small></div><div>'+esc(x.actual)+'</div><div class="'+(x.win?'win':'loss')+'">'+(x.win?'WIN':'LOSS')+'</div><div class="muted">'+esc(x.time)+'</div></div>').join('')+'<div class="note">Đã đánh giá: '+total+' • WIN: '+wins+' • LOSS: '+(total-wins)+' • Accuracy chế độ đã chọn: '+rate+'%<br>So sánh cùng '+compared.length+' phiên: Thuận '+straightWins+' WIN / Ngược '+reverseWins+' WIN. Chỉ số lịch sử không đảm bảo kết quả sau.</div>';
-}
-
-function startAuto(){if(state.running)return;state.running=true;state.timer=setInterval(()=>{state.nextAt=Date.now()+3000;load();},3000);state.nextAt=Date.now();load();$('start').textContent='<svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 10-13h-7z"/></svg> AUTO ĐANG CHẠY';$('liveText').textContent='Theo dõi liên tục';}
-$('start').onclick=startAuto;
-$('once').onclick=load;
-$('stop').onclick=()=>{state.running=false;if(state.timer)clearInterval(state.timer);state.timer=null;$('start').textContent='<svg class="mini-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 10-13h-7z"/></svg> BẬT AUTO ENGINE';$('liveText').textContent='Đã dừng tự động';$('nextTick').textContent='—';setStatus('STOPPED');};
-setInterval(()=>{if(state.running&&state.nextAt){const sec=Math.max(0,Math.ceil((state.nextAt-Date.now())/1000));$('nextTick').textContent='+'+sec+'s';}},500);
-renderBacktest();
-load();
-</script>
-</body></html>`;
-}
-
-function startHeartbeat(){
-  if(heartbeatTimer)clearInterval(heartbeatTimer);
-  heartbeatTimer=setInterval(()=>{
-    const started=Date.now();
-    const req=http.request({host:'127.0.0.1',port:PORT,path:'/ping',method:'GET',timeout:5000},r=>{
-      r.resume();
-      console.log(`PING ${r.statusCode} OK ${Date.now()-started}ms`);
-    });
-    req.on('error',e=>console.log('PING ERROR',e.message));
-    req.end();
-  },PING_INTERVAL_MS);
-  heartbeatTimer.unref?.();
-}
-
-const server=http.createServer(async (req,res)=>{
-  try{
-    if(req.method==='OPTIONS'){res.writeHead(204,{'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,OPTIONS','Access-Control-Allow-Headers':'Content-Type'});return res.end();}
-    const u=new URL(req.url,'http://'+(req.headers.host||'localhost'));
-    if(u.pathname==='/health') return json(res,200,{success:true,status:'ONLINE',service:'VERTEX PREMIUM',bootId:BOOT_ID,uptime:process.uptime(),time:new Date().toISOString()});
-    if(u.pathname==='/ping') return json(res,200,{success:true,status:'PONG',time:new Date().toISOString()});
-    if(u.pathname==='/api/sessions'){
-      try{return json(res,200,{success:true,list:await getSessions(u.searchParams.get('force')==='1'),source:'tele68',serverTime:new Date().toISOString()});}
-      catch(e){return json(res,502,{success:false,error:e.message||'UPSTREAM_ERROR',source:UPSTREAM});}
-    }
-    if(u.pathname==='/api/raw'){
-      try{return json(res,200,{success:true,data:await getSessions(true)});}
-      catch(e){return json(res,502,{success:false,error:e.message||'UPSTREAM_ERROR'});}
-    }
-    if(u.pathname==='/'||u.pathname==='/index.html'){
-      const body=html();res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(body);
-    }
-    return json(res,404,{success:false,error:'NOT_FOUND'});
-  }catch(e){return json(res,500,{success:false,error:'SERVER_ERROR',message:e.message});}
+  res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }); res.end("Not found");
 });
 
-server.listen(PORT,HOST,()=>{
-  startHeartbeat();
-  console.log('==============================================');
-  console.log(' VERTEX PREMIUM - ONE FILE SERVER');
-  console.log(' URL: http://'+HOST+':'+PORT);
-  console.log(' HEALTH: /health');
-  console.log(' API: /api/sessions');
-  console.log(' UPSTREAM DIRECT: '+UPSTREAM);
-  console.log(' PUBLIC PROXY: DISABLED');
-  console.log('==============================================');
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`VERTEX PREMIUM V9 UI: http://localhost:${PORT}`);
+  console.log(`API: ${API_URL}`);
+  console.log(`Refresh API every ${POLL_MS/1000}s. Stop with Ctrl+C.`);
+  pollApi();
+  setInterval(pollApi, POLL_MS);
 });
-
-process.on('SIGTERM',()=>server.close(()=>process.exit(0)));
-process.on('SIGINT',()=>server.close(()=>process.exit(0)));
