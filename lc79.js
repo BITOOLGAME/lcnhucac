@@ -1,5 +1,5 @@
-// VERTEX PREMIUM V9 — Multi-pattern Tài/Xỉu analyzer + web UI
-// Requires Node.js 18+. Run: node vertex_analyzer_v9.js
+// VERTEX PREMIUM V12 — Balanced 40-character Tài/Xỉu analyzer + web UI
+// Requires Node.js 18+. Run: node vertex_analyzer_v12.js
 // Uses only Node built-ins; state is saved to vertex_state_v9.json beside this file.
 "use strict";
 const http = require("node:http");
@@ -177,7 +177,7 @@ function forecastBits(bits) {
     add(`CHU KỲ ${period}`, counts, counts[0] + counts[1], "cycle", `Chu kỳ ${period}`,);
   }
   // Short-window frequency: use it as a weak pattern vote, not a hard prediction.
-  for (const n of [5, 10, 15, 20, 30, 50]) {
+  for (const n of [5, 10, 15, 20, 30, 40]) {
     const w = bits.slice(-n);
     if (w.length < 5) continue;
     const counts = [w.filter(v => v === 0).length, w.filter(v => v === 1).length];
@@ -242,7 +242,7 @@ function forecast(history) {
     }
   }
   // Rolling-origin backtest: predictions at each historical point use only earlier sessions.
-  const testStart = Math.max(20, bits.length - 100);
+  const testStart = Math.max(8, bits.length - 20);
   let tested = 0, correct = 0;
   for (let i = testStart; i < bits.length; i++) {
     const test = forecastBits(bits.slice(Math.max(0, i - 40), i));
@@ -251,7 +251,7 @@ function forecast(history) {
     if (test.prediction === bits[i]) correct++;
   }
   result.backtest = { tested, correct, accuracy: tested >= 10 ? correct / tested : null };
-  result.confidenceLabel = tested >= 10 ? `${(100 * correct / tested).toFixed(1)}%` : "Chưa đủ mẫu";
+  result.confidenceLabel = tested >= 10 ? `${(100 * correct / tested).toFixed(1)}% (${correct}/${tested})` : "Chưa đủ mẫu";
   result.patterns = result.patterns.slice(0, 30);
   return result;
 }
@@ -277,12 +277,11 @@ function evaluatePending(history) {
 }
 function makeSnapshot() {
   return {
-    success: true, source: "VERTEX PREMIUM V11 · 40-Character Analyzer",
+    success: true, source: "VERTEX PREMIUM V12 · Balanced 40-Character Analyzer",
     updatedAt: state.lastUpdate, error: lastApiError,
     latest: state.latest || null, prediction: state.prediction || null,
     stats: { wins: state.wins, losses: state.losses },
-    evaluated: state.evaluated.slice(0, 50),
-    patternNames: state.prediction?.patterns?.map(p => p.name) || []
+    evaluated: state.evaluated.slice(0, 50)
   };
 }
 async function pollApi() {
@@ -296,28 +295,35 @@ async function pollApi() {
     if (!history.length) throw new Error("API không có phiên hợp lệ hoặc cấu trúc dữ liệu đã thay đổi.");
     evaluatePending(history);
     const latest = history[0];
-    const f = forecast(history);
     const currentSid = latest.sid + 1;
-    const prediction = f.prediction === 1 ? "Tài" : "Xỉu";
-    if (!state.pending[String(currentSid)]) {
-      state.pending[String(currentSid)] = { bit: f.prediction, prediction, createdAt: new Date().toISOString() };
+    let pending = state.pending[String(currentSid)];
+    let f;
+    if (!pending) {
+      f = forecast(history);
+      const prediction = f.prediction === 1 ? "Tài" : "Xỉu";
+      pending = {
+        bit: f.prediction, prediction, createdAt: new Date().toISOString(),
+        mode: f.mode, runLength: f.runLength || f.run || 1,
+        confidenceLabel: f.confidenceLabel, backtest: f.backtest,
+        followCount: f.patterns.filter(p => p.bit === latest.bit).length,
+        breakCount: f.patterns.filter(p => p.bit !== latest.bit).length,
+        votes: { tai: Number(f.votes?.[1] || 0).toFixed(2), xiu: Number(f.votes?.[0] || 0).toFixed(2) }
+      };
+      state.pending[String(currentSid)] = pending;
     }
-    // Store current prediction summary and patterns for UI. A pending prediction is not scored until actual result arrives.
+    // Freeze each session's first forecast: displayed prediction and win/loss evaluation now match.
     state.latest = {
       phien_truoc: latest.sid, xuc_xac: latest.dice, tong: latest.sum, ket_qua: latest.result,
       phien_hien_tai: currentSid,
     };
     state.prediction = {
-      du_doan: prediction, dang_cau: f.mode,
-      do_dai_cau: f.runLength || f.run || 1,
-      tin_cay: f.confidenceLabel,
-      backtest: f.backtest,
-      mau_theo_cau: f.patterns.filter(p => p.bit === (latest.bit)).length,
-      mau_be_cau: f.patterns.filter(p => p.bit !== (latest.bit)).length,
-      votes: { tai: Number(f.votes?.[1] || 0).toFixed(2), xiu: Number(f.votes?.[0] || 0).toFixed(2) },
-      patterns: f.patterns,
-      familyCounts: f.familyCounts || {},
-      familySummary: f.familySummary || {},
+      du_doan: pending.prediction, dang_cau: pending.mode || "ĐÃ KHÓA DỰ ĐOÁN",
+      do_dai_cau: pending.runLength || 1,
+      tin_cay: pending.confidenceLabel || "Chưa đủ mẫu",
+      backtest: pending.backtest || null,
+      mau_theo_cau: pending.followCount ?? 0,
+      mau_be_cau: pending.breakCount ?? 0,
+      votes: pending.votes || { tai: "0.00", xiu: "0.00" },
       danh_gia: "CHỜ KẾT QUẢ"
     };
     state.lastSession = latest.sid;
@@ -334,23 +340,23 @@ async function pollApi() {
 }
 
 const HTML = String.raw`<!doctype html>
-<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VERTEX PREMIUM · Analyzer V11</title>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VERTEX PREMIUM · Analyzer V12</title>
 <style>
 :root{color-scheme:dark;--bg:#07111b;--panel:#0e1b29;--line:#20354a;--muted:#91a4b8;--text:#eaf2f9;--green:#3ce6a0;--red:#ff6178;--gold:#ffc86b}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 500px at 10% -10%,#10334a 0%,transparent 60%),var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
 .wrap{max-width:1180px;margin:auto;padding:22px 16px 40px}.head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.brand{display:flex;align-items:center;gap:12px}.logo{width:44px;height:44px;border:1px solid #2c9c83;border-radius:14px;display:grid;place-items:center;color:var(--green);font-weight:900;box-shadow:0 0 24px #1ce5a01a}.brand h1{font-size:17px;letter-spacing:1.2px;margin:0}.brand p{color:var(--muted);font-size:12px;margin:3px 0 0}.pill{border:1px solid var(--line);padding:7px 10px;border-radius:999px;color:var(--muted);font-size:12px}.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}.card{background:linear-gradient(150deg,#102031,#0b1723);border:1px solid var(--line);border-radius:17px;padding:17px;min-width:0;box-shadow:0 14px 35px #0002}.card h2{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:#a9bfd1;margin:0 0 14px}.hero{display:flex;align-items:center;justify-content:space-between;gap:18px}.label{color:var(--muted);font-size:12px}.prediction{font-size:36px;font-weight:850;letter-spacing:.3px;margin:4px 0}.prediction.tai{color:var(--green)}.prediction.xiu{color:var(--red)}.mode{display:inline-block;border-radius:8px;padding:5px 8px;font-size:11px;font-weight:750;background:#152c3c;color:#d4e7f5}.confidence{min-width:116px;text-align:right}.confidence strong{display:block;font-size:21px;color:var(--gold)}.confidence small{color:var(--muted);font-size:11px}.dice{display:flex;gap:7px;margin-top:13px}.die{width:34px;height:34px;border-radius:9px;background:#edf5fa;color:#102033;display:grid;place-items:center;font-weight:850}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:16px}.metric{border:1px solid var(--line);border-radius:11px;padding:10px}.metric span{display:block;color:var(--muted);font-size:11px}.metric strong{display:block;font-size:17px;margin-top:4px;overflow-wrap:anywhere}.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}.stat{padding:15px;border-radius:13px;background:#091522;border:1px solid var(--line)}.stat .n{font-size:30px;font-weight:850}.win{color:var(--green)}.loss{color:var(--red)}.stat small{display:block;color:var(--muted)}.bar{height:7px;background:#23364a;border-radius:99px;overflow:hidden;margin-top:12px}.bar span{height:100%;display:block;background:linear-gradient(90deg,var(--green),#65e0ff);width:0}.wide{margin-top:14px}.pattern{font-family:ui-monospace,Consolas,monospace;letter-spacing:3px;font-size:18px;word-break:break-all;color:#c8d8e7}.legend{display:flex;gap:13px;font-size:11px;color:var(--muted);margin-top:9px}.legend b{color:var(--green)}.legend i{color:var(--red);font-style:normal}.scroll{overflow:auto}table{width:100%;border-collapse:collapse;min-width:620px}th,td{text-align:left;padding:10px 9px;border-bottom:1px solid #1b2d3e;font-size:12px}th{color:var(--muted);font-weight:650}td{color:#dce7ef}.badge{display:inline-block;padding:4px 7px;border-radius:6px;font-weight:800;font-size:10px}.badge.win{background:#0d382d}.badge.loss{background:#401b28}.badge.wait{background:#2d2b1d;color:var(--gold)}.patterns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.pat{border:1px solid var(--line);border-radius:10px;padding:10px}.pat strong{font-size:12px;display:block}.pat small{color:var(--muted);display:block;margin-top:4px}.pat em{font-size:12px;font-style:normal;font-weight:800}.taiText{color:var(--green)}.xiuText{color:var(--red)}.error{color:var(--red);font-size:12px;margin-top:8px}.foot{color:#71869a;text-align:center;font-size:11px;margin-top:18px}
 @media(max-width:760px){.grid{grid-template-columns:1fr}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{align-items:flex-start}.prediction{font-size:32px}.confidence{min-width:92px}.patterns{grid-template-columns:1fr}.head{align-items:flex-start}.pill{max-width:135px;text-align:center}}
 </style></head><body><div class="wrap">
-<header class="head"><div class="brand"><div class="logo">V</div><div><h1>VERTEX PREMIUM</h1><p></p></div></div><div class="pill" id="status">Đang kết nối API…</div></header>
+<header class="head"><div class="brand"><div class="logo">V</div><div><h1>VERTEX PREMIUM</h1><p>PHÂN TÍCH 40 KÝ TỰ · CÂN BẰNG TÍN HIỆU</p></div></div><div class="pill" id="status">Đang kết nối API…</div></header>
 <div class="grid">
-<section class="card"><h2>Dự đoán phiên tiếp theo</h2><div class="hero"><div><div class="label">PHIÊN <span id="currentSid">—</span></div><div id="pred" class="prediction">—</div><span class="mode" id="mode">Đang phân tích</span></div><div class="confidence"><strong id="confidence">—</strong><small>tin cậy</small></div></div>
+<section class="card"><h2>Dự đoán phiên tiếp theo</h2><div class="hero"><div><div class="label">PHIÊN <span id="currentSid">—</span></div><div id="pred" class="prediction">—</div><span class="mode" id="mode">Đang phân tích</span></div><div class="confidence"><strong id="confidence">—</strong><small>Backtest quá khứ · không đảm bảo tương lai</small></div></div>
 <div class="label" style="margin-top:17px">Kết quả phiên gần nhất · <span id="lastSid">—</span></div><div class="dice" id="dice"></div>
-<div class="metrics"><div class="metric"><span>Tổng điểm</span><strong id="sum">—</strong></div><div class="metric"><span>Kết quả</span><strong id="actual">—</strong></div><div class="metric"><span>Độ dài cầu</span><strong id="run">—</strong></div><div class="metric"><span>Đánh giá</span><strong id="evaluation">CHỜ</strong></div></div>
+<div class="metrics"><div class="metric"><span>Tổng điểm</span><strong id="sum">—</strong></div><div class="metric"><span>Kết quả thật</span><strong id="actual">—</strong></div><div class="metric"><span>Độ dài cầu</span><strong id="run">—</strong></div><div class="metric"><span>Đánh giá</span><strong id="evaluation">CHỜ</strong></div></div>
 <div id="error" class="error"></div></section>
 <section class="card"><h2>Thống kê thắng / thua</h2><div class="stats"><div class="stat"><div class="n win" id="wins">0</div><small>THẮNG</small></div><div class="stat"><div class="n loss" id="losses">0</div><small>THUA</small></div></div><div class="bar"><span id="winbar"></span></div><p class="label" style="margin:10px 0 0">Chỉ tính dự đoán đã có kết quả thật. Dữ liệu lưu trên máy chủ.</p><div class="metrics"><div class="metric"><span>Mẫu theo cầu</span><strong id="follow">0</strong></div><div class="metric"><span>Mẫu bẻ cầu</span><strong id="break">0</strong></div><div class="metric"><span>Phiếu Tài</span><strong id="vTai">0</strong></div><div class="metric"><span>Phiếu Xỉu</span><strong id="vXiu">0</strong></div></div></section></div>
 
 <section class="card wide"><h2>Lịch sử đánh giá thắng / thua</h2><div class="scroll"><table><thead><tr><th>Phiên</th><th>Dự đoán</th><th>Kết quả thật</th><th>Tổng điểm</th><th>Đánh giá</th></tr></thead><tbody id="history"><tr><td colspan="5">Chưa có dữ liệu đánh giá.</td></tr></tbody></table></div></section>
-<div class="foot">Tự cập nhật 10 giây · Phân tích 40 ký tự gần nhất · Dữ liệu thắng/thua được lưu trong vertex_state_v9.json · Dự đoán không đảm bảo thắng.</div></div>
+<div class="foot">Tự cập nhật 10 giây · Mô hình dùng 40 kết quả gần nhất · Dự đoán mỗi phiên được khóa để chấm đúng · Không đảm bảo thắng.</div></div>
 <script>
 const $=id=>document.getElementById(id);
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
@@ -381,6 +387,10 @@ refresh();setInterval(refresh,3000);
 </script></body></html>`;
 
 const server = http.createServer((req, res) => {
+  if (req.url === "/health" || req.url === "/ping") {
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(JSON.stringify({ ok: true, service: "VERTEX PREMIUM V12", updatedAt: state.lastUpdate, apiError: lastApiError })); return;
+  }
   if (req.url === "/" || req.url.startsWith("/index.html")) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
     res.end(HTML); return;
@@ -393,8 +403,9 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`VERTEX PREMIUM V11 UI: http://localhost:${PORT}`);
+  console.log(`VERTEX PREMIUM V12 UI: http://localhost:${PORT}`);
   console.log(`API: ${API_URL}`);
+  console.log(`Health: /health · Ping: /ping · State: /api/state`);
   console.log(`Refresh API every ${POLL_MS/1000}s. Stop with Ctrl+C.`);
   pollApi();
   setInterval(pollApi, POLL_MS);
