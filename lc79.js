@@ -1,4 +1,4 @@
-// VERTEX PREMIUM V15 — Adaptive Tài/Xỉu bias correction + 40-character analyzer + web UI
+// VERTEX PREMIUM V16 — 150 Pattern AI Analyzer + 40-character balanced analysis + web UI
 // Requires Node.js 18+. Run: npm start
 // Uses only Node built-ins; state is saved to vertex_state_v9.json beside this file.
 "use strict";
@@ -82,6 +82,69 @@ function weightedRate(samples) {
   }
   return { tai, xiu, support, p: smoothedRate(tai, xiu, 0.5, 2) };
 }
+// Exactly 150 balanced binary pattern templates: all contexts of length 2–6 (124),
+// plus 13 complementary pairs of length 7 (26). Templates are internal only.
+function build150PatternLibrary() {
+  const out = [];
+  for (let len = 2; len <= 6; len++) {
+    for (let mask = 0; mask < (1 << len); mask++) {
+      out.push({ id: `P${String(out.length + 1).padStart(3, "0")}`, bits: Array.from({ length: len }, (_, i) => (mask >> (len - 1 - i)) & 1), len });
+    }
+  }
+  // Select 13 length-6 representatives beginning with 0 and add each complement.
+  // This preserves a balanced template set and avoids systematic T/X preference.
+  let added = 0;
+  for (let mask = 0; mask < 64 && added < 13; mask++) {
+    const rep = [0, ...Array.from({ length: 6 }, (_, i) => (mask >> (5 - i)) & 1)];
+    const comp = rep.map(x => 1 - x);
+    out.push({ id: `P${String(out.length + 1).padStart(3, "0")}`, bits: rep, len: 7 });
+    out.push({ id: `P${String(out.length + 1).padStart(3, "0")}`, bits: comp, len: 7 });
+    added++;
+  }
+  return out.slice(0, 150);
+}
+const PATTERN_LIBRARY_150 = build150PatternLibrary();
+function score150PatternLibrary(bits, weightedStats, decayedSamples) {
+  const n = bits.length;
+  if (n < 4) return { p: 0.5, support: 0, matched: 0, detail: "150 mẫu · thiếu dữ liệu" };
+  let sum = 0, weightSum = 0, evidence = 0, matched = 0;
+  const byLen = {};
+  for (const pattern of PATTERN_LIBRARY_150) {
+    const len = pattern.len;
+    if (len >= n) continue;
+    const tail = bits.slice(n - len);
+    let distance = 0;
+    for (let j = 0; j < len; j++) if (tail[j] !== pattern.bits[j]) distance++;
+    // Similar patterns are considered with lower weight; no single arbitrary template dominates.
+    const maxDistance = len <= 3 ? 1 : Math.floor(len * 0.34);
+    if (distance > maxDistance) continue;
+    const samples = [];
+    for (let i = 0; i + len < n; i++) {
+      let exact = true;
+      for (let j = 0; j < len; j++) {
+        if (bits[i + j] !== pattern.bits[j]) { exact = false; break; }
+      }
+      if (exact) samples.push({ bit: bits[i + len], age: n - (i + len), base: 1 / Math.sqrt(len) });
+    }
+    if (!samples.length) continue;
+    const stats = weightedStats(decayedSamples(samples, 22), 3);
+    const similarity = Math.exp(-distance * 0.85);
+    const supportWeight = Math.min(2.5, Math.sqrt(stats.support));
+    const patternWeight = similarity * supportWeight * (0.7 + len / 10);
+    sum += stats.p * patternWeight;
+    weightSum += patternWeight;
+    evidence += stats.support * similarity;
+    matched++;
+    byLen[len] = (byLen[len] || 0) + 1;
+  }
+  return {
+    p: weightSum ? sum / weightSum : 0.5,
+    support: evidence,
+    matched,
+    detail: `150 mẫu · khớp ${matched} · độ dài ${Object.keys(byLen).sort((a,b)=>Number(a)-Number(b)).join("/") || "chưa có"}`
+  };
+}
+
 function forecastBits(bits) {
   const n = bits.length;
   const neutral = {
@@ -116,6 +179,10 @@ function forecastBits(bits) {
   };
   const decayedSamples = (samples, decay = 24) =>
     samples.map(s => ({ bit: s.bit, w: Math.exp(-Math.max(0, s.age) / decay) * (s.base || 1) }));
+
+  // 0. Dedicated catalog of 150 balanced pattern templates; aggregated as one family vote.
+  const pattern150 = score150PatternLibrary(bits, weightedStats, decayedSamples);
+  add("pattern150", pattern150.p, pattern150.support, pattern150.detail);
 
   // 1. Variable-length suffix matching: patterns from length 2 to 16.
   const suffixModels = [];
@@ -300,7 +367,7 @@ function forecastBits(bits) {
     directionalStrength, confidence,
     confidenceLabel: `${(confidence * 100).toFixed(2)}%`,
     analysis: {
-      families: rows.length, activeFamilies: active.length,
+      families: rows.length, activeFamilies: active.length, patternCatalogSize: PATTERN_LIBRARY_150.length,
       agreeTai, agreeXiu, entropy: Number(entropy.toFixed(3)),
       sampleSize: n, recentBalance: { tai: recentTai, xiu: recent.length - recentTai }
     }
@@ -373,7 +440,7 @@ function evaluatePending(history) {
 }
 function makeSnapshot() {
   return {
-    success: true, source: "VERTEX PREMIUM V15 · Adaptive Balanced Analyzer",
+    success: true, source: "VERTEX PREMIUM V16 · 150 Pattern AI Analyzer",
     updatedAt: state.lastUpdate, error: lastApiError,
     latest: state.latest || null, prediction: state.prediction || null,
     stats: { wins: state.wins, losses: state.losses },
@@ -521,7 +588,7 @@ refresh();setInterval(refresh,3000);
 const server = http.createServer((req, res) => {
   if (req.url === "/health" || req.url === "/ping") {
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ ok: true, service: "VERTEX PREMIUM V15", updatedAt: state.lastUpdate, apiError: lastApiError })); return;
+    res.end(JSON.stringify({ ok: true, service: "VERTEX PREMIUM V16", updatedAt: state.lastUpdate, apiError: lastApiError })); return;
   }
   if (req.url === "/" || req.url.startsWith("/index.html")) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
@@ -535,7 +602,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`VERTEX PREMIUM V15 UI: http://localhost:${PORT}`);
+  console.log(`VERTEX PREMIUM V16 150 Pattern AI UI: http://localhost:${PORT}`);
   console.log(`API: ${API_URL}`);
   console.log(`Health: /health · Ping: /ping · State: /api/state`);
   console.log(`Refresh API every ${POLL_MS/1000}s. Stop with Ctrl+C.`);
