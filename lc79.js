@@ -37,10 +37,18 @@ function sessionId(s) {
 
 function normalizePayload(payload) {
   if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.sessions)) return payload.sessions;
-  if (Array.isArray(payload?.data)) return payload.data;
-  if (Array.isArray(payload?.results)) return payload.results;
-  return [];
+  const candidates = [
+    payload?.sessions,
+    payload?.data,
+    payload?.results,
+    payload?.result,
+    payload?.data?.sessions,
+    payload?.data?.results,
+    payload?.data?.data,
+    payload?.result?.sessions,
+    payload?.result?.data
+  ];
+  return candidates.find(Array.isArray) || [];
 }
 
 function safeSession(s) {
@@ -101,12 +109,31 @@ async function fetchJson(url, timeout = 10000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { accept: "application/json", "user-agent": "VertexPremium/1.0" }
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    let res;
+    try {
+      res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          accept: "application/json",
+          "user-agent": "Mozilla/5.0 VertexPremium/1.1",
+          "origin": "https://lc79c.vin",
+          "referer": "https://lc79c.vin/"
+        }
+      });
+    } catch (err) {
+      const cause = err?.cause?.code || err?.code;
+      if (err?.name === "AbortError") throw new Error(`Timeout sau ${timeout}ms khi gọi API`);
+      throw new Error(`${cause ? cause + ": " : ""}${err?.cause?.message || err.message || "Không kết nối được API"}`);
+    }
+    if (!res.ok) {
+      const body = (await res.text().catch(() => "")).slice(0, 180);
+      throw new Error(`HTTP ${res.status}${body ? " — " + body : ""}`);
+    }
+    try {
+      return await res.json();
+    } catch {
+      throw new Error("API trả về nội dung không phải JSON hợp lệ");
+    }
   } finally {
     clearTimeout(timer);
   }
@@ -254,6 +281,20 @@ const server = http.createServer(async (req, res) => {
       sessions: state.sessions,
       predictions: state.predictions,
       latestSessionId: state.latestSessionId
+    }));
+  }
+  if (url.pathname === "/api/diagnostics") {
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    return res.end(JSON.stringify({
+      apiUrl: API_URL,
+      connected: state.connected,
+      lastSync: state.lastSync,
+      latency: state.latency,
+      error: state.error,
+      sessionsReceived: state.sessions.length,
+      hint: state.error
+        ? "Xem trường error để biết HTTP/DNS/TLS/timeout hoặc lỗi cấu trúc JSON."
+        : "API phiên đã trả dữ liệu hợp lệ."
     }));
   }
   if (url.pathname === "/api/ping") {
