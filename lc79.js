@@ -7,9 +7,11 @@
 const http = require("node:http");
 
 const PORT = Number(process.env.PORT || 3000);
-const API_URL = "https://wtxmd52.tele68.com/v1/txmd5/sessions";
-const PING_URL = "https://wtxmd52.tele68.com/v1/txmd5/ping";
-const POLL_MS = 5000;
+const UPSTREAM_BASE = (process.env.UPSTREAM_BASE || "https://wtxmd52.tele68.com/v1/txmd5").replace(/\/$/, "");
+const API_URL = process.env.SESSIONS_URL || `${UPSTREAM_BASE}/sessions`;
+const PING_URL = process.env.PING_URL || `${UPSTREAM_BASE}/ping`;
+const POLL_MS = Math.max(5000, Number(process.env.POLL_MS || 10000));
+const REQUEST_TIMEOUT_MS = Math.max(3000, Number(process.env.REQUEST_TIMEOUT_MS || 12000));
 const HISTORY_LIMIT = 50;
 
 let state = {
@@ -23,7 +25,8 @@ let state = {
 };
 
 function pickResult(s) {
-  const raw = s?.resultTruyenThong ?? s?.result ?? s?.ket_qua ?? s?.result_traditional;
+  const raw = s?.resultTruyenThong ?? s?.result ?? s?.ket_qua ??
+    s?.result_traditional ?? s?.["kết quả"] ?? s?.outcome;
   if (typeof raw !== "string") return null;
   const v = raw.trim().toLowerCase();
   if (["tai", "tài", "big"].includes(v)) return "Tài";
@@ -38,17 +41,18 @@ function sessionId(s) {
 function normalizePayload(payload) {
   if (Array.isArray(payload)) return payload;
   const candidates = [
-    payload?.sessions,
-    payload?.data,
-    payload?.results,
-    payload?.result,
-    payload?.data?.sessions,
-    payload?.data?.results,
-    payload?.data?.data,
-    payload?.result?.sessions,
-    payload?.result?.data
+    payload?.sessions, payload?.data, payload?.results, payload?.result,
+    payload?.data?.sessions, payload?.data?.results, payload?.data?.data,
+    payload?.result?.sessions, payload?.result?.data,
+    payload?.response?.sessions, payload?.response?.data
   ];
-  return candidates.find(Array.isArray) || [];
+  const found = candidates.find(Array.isArray);
+  if (found) return found;
+  if (payload && typeof payload === "object" &&
+      (payload.success === false || payload.status === "error" || payload.error)) {
+    throw new Error(`API báo lỗi: ${String(payload.message || payload.error || payload.status)}`);
+  }
+  return [];
 }
 
 function safeSession(s) {
@@ -75,64 +79,64 @@ function buildPrediction(sessions) {
   const recentTai = recent.filter(s => s.result === "Tài").length;
   const recentXiu = recent.length - recentTai;
 
-  // Neutral prior prevents a default Tài/Xỉu choice.
-  const taiScore = (tai + 1) / (last.length + 2) * 0.65 +
-    (recentTai + 1) / (recent.length + 2) * 0.35;
-  const xiuScore = (xiu + 1) / (last.length + 2) * 0.65 +
-    (recentXiu + 1) / (recent.length + 2) * 0.35;
-
-  if (Math.abs(taiScore - xiuScore) < 0.035) {
-    return {
-      side: "Chưa đủ tín hiệu",
-      score: 50,
-      note: "Hai phía cân bằng; tiếp tục quan sát",
-      sample: last.length,
-      targetSession: settled[settled.length - 1].id == null
-        ? null : String(Number(settled[settled.length - 1].id) + 1)
-    };
-  }
-
-  const side = taiScore > xiuScore ? "Tài" : "Xỉu";
+  const taiLong = (tai + 1) / (last.length + 2);
+  const xiuLong = (xiu + 1) / (last.length + 2);
+  const taiShort = (recentTai + 1) / (recent.length + 2);
+  const xiuShort = (recentXiu + 1) / (recent.length + 2);
+  const taiScore = taiLong * 0.65 + taiShort * 0.35;
+  const xiuScore = xiuLong * 0.65 + xiuShort * 0.35;
   const gap = Math.abs(taiScore - xiuScore);
-  const score = Math.min(70, 50 + gap * 100);
+  const side = gap < 0.035 ? "Chưa đủ tín hiệu" : (taiScore > xiuScore ? "Tài" : "Xỉu");
+
+  // Điểm tín hiệu của thuật toán, không phải xác suất thắng đã hiệu chuẩn.
+  const agrees = side === "Tài"
+    ? (Number(taiLong >= 0.5) + Number(taiShort >= 0.5)) / 2
+    : side === "Xỉu"
+      ? (Number(xiuLong >= 0.5) + Number(xiuShort >= 0.5)) / 2
+      : 0;
+  const confidence = side === "Chưa đủ tín hiệu"
+    ? 50
+    : Number(Math.min(75, 50 + gap * 100 * (0.7 + agrees * 0.3)).toFixed(2));
+
+  const lastId = settled[settled.length - 1].id;
+  const numericId = Number(lastId);
   return {
-    side,
-    score: Number(score.toFixed(2)),
-    note: "Điểm xu hướng thống kê; không phải xác suất thắng",
+    side, confidence, score: confidence,
+    note: side === "Chưa đủ tín hiệu"
+      ? "Tín hiệu hai phía cân bằng"
+      : "Điểm tín hiệu nội bộ từ 30 phiên và 6 phiên gần nhất; chưa hiệu chuẩn xác suất thắng",
     sample: last.length,
-    targetSession: settled[settled.length - 1].id == null
-      ? null : String(Number(settled[settled.length - 1].id) + 1)
+    targetSession: lastId == null ? null :
+      (Number.isFinite(numericId) ? String(numericId + 1) : String(lastId) + " kế tiếp")
   };
 }
 
-async function fetchJson(url, timeout = 10000) {
+async function fetchJson(url, timeout = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    let res;
+    let response;
     try {
-      res = await fetch(url, {
+      response = await fetch(url, {
         signal: controller.signal,
         headers: {
           accept: "application/json",
-          "user-agent": "Mozilla/5.0 VertexPremium/1.1",
-          "origin": "https://lc79c.vin",
-          "referer": "https://lc79c.vin/"
+          "user-agent": "Mozilla/5.0 VertexPremium/1.2"
         }
       });
     } catch (err) {
-      const cause = err?.cause?.code || err?.code;
-      if (err?.name === "AbortError") throw new Error(`Timeout sau ${timeout}ms khi gọi API`);
-      throw new Error(`${cause ? cause + ": " : ""}${err?.cause?.message || err.message || "Không kết nối được API"}`);
+      const code = err?.cause?.code || err?.code;
+      if (err?.name === "AbortError") throw new Error(`Timeout sau ${timeout}ms`);
+      throw new Error(`${code ? code + ": " : ""}${err?.cause?.message || err.message || "Không kết nối được upstream API"}`);
     }
-    if (!res.ok) {
-      const body = (await res.text().catch(() => "")).slice(0, 180);
-      throw new Error(`HTTP ${res.status}${body ? " — " + body : ""}`);
+    if (!response.ok) {
+      const body = (await response.text().catch(() => "")).slice(0, 160);
+      throw new Error(`HTTP ${response.status}${body ? " — " + body : ""}`);
     }
     try {
-      return await res.json();
+      return await response.json();
     } catch {
-      throw new Error("API trả về nội dung không phải JSON hợp lệ");
+      throw new Error("Upstream trả về nội dung không phải JSON hợp lệ");
     }
   } finally {
     clearTimeout(timer);
@@ -216,7 +220,7 @@ const html = String.raw`<!doctype html>
 <div class="card"><div class="section-head"><h3>LỊCH SỬ DỰ ĐOÁN</h3><span class="pill">AUTO SETTLEMENT</span></div><div class="table-wrap"><table><thead><tr><th>PHIÊN</th><th>DỰ ĐOÁN</th><th>ĐIỂM</th><th>KẾT QUẢ</th></tr></thead><tbody id="predRows"><tr><td colspan="4" class="empty">Đang chờ dữ liệu…</td></tr></tbody></table></div></div>
 <div class="card"><div class="section-head"><h3>LỊCH SỬ PHIÊN API</h3><button class="refresh" id="refresh">Làm mới</button></div><div class="table-wrap"><table><thead><tr><th>PHIÊN</th><th>XÚC XẮC</th><th>TỔNG ĐIỂM</th><th>KẾT QUẢ</th></tr></thead><tbody id="sessionRows"><tr><td colspan="4" class="empty">Đang tải phiên…</td></tr></tbody></table></div></div>
 </section>
-<div class="notice" id="notice">Độ tin cậy hiển thị là điểm xu hướng của mô hình đơn giản, không phải xác suất thắng đã được chứng minh. Kết quả trò chơi có thể ngẫu nhiên; không có bảo đảm thắng.</div>
+<div class="notice" id="notice">Độ tin cậy hiển thị là điểm tín hiệu do thuật toán tính từ lịch sử gần đây, không phải xác suất thắng đã được hiệu chuẩn hay bảo đảm kết quả. Kết quả trò chơi có thể ngẫu nhiên; không có bảo đảm thắng.</div>
 <div class="footer"><span>VERTEX PREMIUM · DATA MONITOR</span><span id="error">Không có lỗi được ghi nhận</span><span>Tự đồng bộ mỗi 5 giây</span></div>
 </main>
 <script>
@@ -245,12 +249,12 @@ async function refresh(){
       $("prediction").textContent=current.side;
       $("prediction").className="side "+(current.side==="Tài"?"tai":current.side==="Xỉu"?"xiu":"neutral");
       $("target").textContent="Phiên "+(current.targetSession??"—");
-      $("confidence").textContent="Điểm mô hình: "+Number(current.score).toFixed(2)+"/100";
+      $("confidence").textContent="Độ tin cậy thuật toán: "+Number(current.confidence ?? current.score).toFixed(2)+"% (điểm tín hiệu)";
       $("scorebar").style.width=Math.max(0,Math.min(100,Number(current.score)))+"%";
       $("signalnote").textContent=current.note||"Điểm tham khảo";
     }else{
       $("prediction").textContent="CHƯA ĐỦ DỮ LIỆU";$("prediction").className="side neutral";
-      $("target").textContent="Phiên —";$("confidence").textContent="Điểm mô hình: —";$("scorebar").style.width="0%";
+      $("target").textContent="Phiên —";$("confidence").textContent="Độ tin cậy thuật toán: —";$("scorebar").style.width="0%";
       $("signalnote").textContent="Cần tối thiểu 8 phiên có kết quả.";
     }
     const pr=[...p].reverse().slice(0,12);
@@ -270,6 +274,30 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/") {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
     return res.end(html);
+  }
+  // Same-origin proxy: browser talks to this Render service, not directly to upstream.
+  if (url.pathname === "/proxy/sessions") {
+    try {
+      const payload = await fetchJson(API_URL);
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      return res.end(JSON.stringify(payload));
+    } catch (e) {
+      res.writeHead(502, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      return res.end(JSON.stringify({ success: false, error: e.message, upstream: API_URL }));
+    }
+  }
+  if (url.pathname === "/api/diagnostics") {
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    return res.end(JSON.stringify({
+      service: "VERTEX PREMIUM API proxy",
+      connected: state.connected,
+      upstream: API_URL,
+      lastSync: state.lastSync,
+      latency: state.latency,
+      sessionsReceived: state.sessions.length,
+      error: state.error,
+      note: state.error ? "Kiểm tra DNS/TLS/HTTP/JSON của upstream." : "API phiên đã trả dữ liệu."
+    }));
   }
   if (url.pathname === "/api/status") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
