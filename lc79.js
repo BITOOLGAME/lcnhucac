@@ -41,10 +41,10 @@ function sessionId(s) {
 function normalizePayload(payload) {
   if (Array.isArray(payload)) return payload;
   const candidates = [
-    payload?.sessions, payload?.data, payload?.results, payload?.result,
-    payload?.data?.sessions, payload?.data?.results, payload?.data?.data,
-    payload?.result?.sessions, payload?.result?.data,
-    payload?.response?.sessions, payload?.response?.data
+    payload?.list, payload?.sessions, payload?.data, payload?.results, payload?.result,
+    payload?.data?.list, payload?.data?.sessions, payload?.data?.results, payload?.data?.data,
+    payload?.result?.list, payload?.result?.sessions, payload?.result?.data,
+    payload?.response?.list, payload?.response?.sessions, payload?.response?.data
   ];
   const found = candidates.find(Array.isArray);
   if (found) return found;
