@@ -1,348 +1,251 @@
-// VERTEX PREMIUM — dashboard + API proxy, Node.js 18+
-// Run: node 68md5.js
-// Open: http://localhost:3000
-// API source: https://wtxmd52.tele68.com/v1/txmd5/sessions
-"use strict";
+const express = require("express");
+const fs = require("fs");
+const path = require("path");
 
-const http = require("node:http");
+const app = express();
+const PORT = process.env.PORT || 3000;
+const SOURCE_API = "https://wtxmd52.tele68.com/v1/txmd5/sessions";
+const DATA_DIR = path.join(__dirname, "data");
+const STORE_FILE = path.join(DATA_DIR, "evaluation-history.json");
+app.use(express.json({ limit: "1mb" }));
+app.use(express.static(path.join(__dirname, "public")));
 
-const PORT = Number(process.env.PORT || 3000);
-const UPSTREAM_BASE = (process.env.UPSTREAM_BASE || "https://wtxmd52.tele68.com/v1/txmd5").replace(/\/$/, "");
-const API_URL = process.env.SESSIONS_URL || `${UPSTREAM_BASE}/sessions`;
-const PING_URL = process.env.PING_URL || `${UPSTREAM_BASE}/ping`;
-const POLL_MS = Math.max(5000, Number(process.env.POLL_MS || 10000));
-const REQUEST_TIMEOUT_MS = Math.max(3000, Number(process.env.REQUEST_TIMEOUT_MS || 12000));
-const HISTORY_LIMIT = 50;
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(STORE_FILE)) fs.writeFileSync(STORE_FILE, JSON.stringify({ pending: [], evaluated: [] }, null, 2));
 
-let state = {
-  connected: false,
-  latency: null,
-  lastSync: null,
-  error: null,
-  sessions: [],
-  predictions: [],
-  latestSessionId: null
-};
-
-function pickResult(s) {
-  const raw = s?.resultTruyenThong ?? s?.result ?? s?.ket_qua ??
-    s?.result_traditional ?? s?.["kết quả"] ?? s?.outcome;
-  if (typeof raw !== "string") return null;
-  const v = raw.trim().toLowerCase();
-  if (["tai", "tài", "big"].includes(v)) return "Tài";
-  if (["xiu", "xỉu", "small"].includes(v)) return "Xỉu";
-  return null;
+function readStore() {
+  try { return JSON.parse(fs.readFileSync(STORE_FILE, "utf8")); }
+  catch { return { pending: [], evaluated: [] }; }
 }
-
-function sessionId(s) {
-  return s?.id ?? s?.session_id ?? s?._id ?? null;
+function writeStore(store) {
+  fs.writeFileSync(STORE_FILE, JSON.stringify(store, null, 2));
 }
-
-function normalizePayload(payload) {
-  if (Array.isArray(payload)) return payload;
-  const candidates = [
-    payload?.list, payload?.sessions, payload?.data, payload?.results, payload?.result,
-    payload?.data?.list, payload?.data?.sessions, payload?.data?.results, payload?.data?.data,
-    payload?.result?.list, payload?.result?.sessions, payload?.result?.data,
-    payload?.response?.list, payload?.response?.sessions, payload?.response?.data
-  ];
-  const found = candidates.find(Array.isArray);
-  if (found) return found;
-  if (payload && typeof payload === "object" &&
-      (payload.success === false || payload.status === "error" || payload.error)) {
-    throw new Error(`API báo lỗi: ${String(payload.message || payload.error || payload.status)}`);
+function normalizeResult(row) {
+  const dice = Array.isArray(row.dices) ? row.dices.map(Number) : [];
+  const point = Number(row.point ?? dice.reduce((a,b)=>a+b,0));
+  let result = String(row.resultTruyenThong || "").toUpperCase();
+  if (result !== "TAI" && result !== "XIU") {
+    result = point >= 11 && point <= 17 ? "TAI" : point >= 4 && point <= 10 ? "XIU" : "";
   }
-  return [];
-}
-
-function safeSession(s) {
-  const dices = Array.isArray(s?.dices) ? s.dices : null;
   return {
-    id: sessionId(s),
-    result: pickResult(s),
-    point: Number.isFinite(Number(s?.point)) ? Number(s.point) : null,
-    dices: dices && dices.length ? dices.slice(0, 3).map(Number) : null,
-    md5: s?.md5 ?? s?.hash ?? s?.md5_hash ?? null,
-    timestamp: s?.timestamp ?? s?.time ?? s?.created_at ?? null
+    id: Number(row.id),
+    result,
+    dice,
+    point,
+    raw: row
   };
 }
+async function getSessions() {
+  const response = await fetch(SOURCE_API, {
+    headers: { "accept": "application/json", "user-agent": "TX-Pattern-Dashboard/1.0" },
+    signal: AbortSignal.timeout(12000)
+  });
+  if (!response.ok) throw new Error(`Nguồn dữ liệu trả HTTP ${response.status}`);
+  const json = await response.json();
+  const list = Array.isArray(json) ? json : json.list;
+  if (!Array.isArray(list)) throw new Error("API không trả về list hợp lệ");
+  return list.map(normalizeResult).filter(x => Number.isFinite(x.id) && x.result)
+    .sort((a,b) => b.id - a.id);
+}
 
-// A transparent, modest heuristic for display/testing only.
-// Its "score" is model strength, NOT a verified win probability.
-function buildPrediction(sessions) {
-  const settled = sessions.filter(s => s.result);
-  if (settled.length < 8) return null;
-  const last = settled.slice(-30);
-  const tai = last.filter(s => s.result === "Tài").length;
-  const xiu = last.length - tai;
-  const recent = last.slice(-6);
-  const recentTai = recent.filter(s => s.result === "Tài").length;
-  const recentXiu = recent.length - recentTai;
+const patterns = [
+  { id:"PATTERN_6", patterns:["TXTXTT","XTXTXX"], weight:.89, confidence:.76 },
+  { id:"1-1", patterns:["TXTXTX","XTXTXT"], weight:.85, confidence:.78 },
+  { id:"1-2-1", patterns:["TXXTXX","XTTXTT"], weight:.88, confidence:.81 },
+  { id:"1-3-1", patterns:["TXXXT","XTTTX"], weight:.86, confidence:.79 },
+  { id:"1-4-1", patterns:["TXXXXT","XTTTTX"], weight:.83, confidence:.75 },
+  { id:"1-5-1", patterns:["TXXXXXT","XTTTTTX"], weight:.80, confidence:.72 },
+  { id:"2-1-2", patterns:["TTXTTX","XXTXXT"], weight:.87, confidence:.80 },
+  { id:"2-3-2", patterns:["TTXXXT","XXTTTX"], weight:.89, confidence:.82 },
+  { id:"2-4-2", patterns:["TTXXXXT","XXTTTTX"], weight:.85, confidence:.77 },
+  { id:"2-5-2", patterns:["TTXXXXXT","XXTTTTTX"], weight:.81, confidence:.73 },
+  { id:"3-1-3", patterns:["TTTXTTT","XXXTXXX"], weight:.84, confidence:.76 },
+  { id:"3-2-3", patterns:["TTXXTT","XXTTXX"], weight:.88, confidence:.80 },
+  { id:"3-3-3", patterns:["TTTXXX","XXXTTT"], weight:.90, confidence:.83 },
+  { id:"3-4-3", patterns:["TTTXXXX","XXXTTTT"], weight:.86, confidence:.78 },
+  { id:"3-5-3", patterns:["TTTXXXXX","XXXTTTTT"], weight:.82, confidence:.74 },
+  { id:"4-1-4", patterns:["TTTTXTTTT","XXXXTXXXX"], weight:.83, confidence:.75 },
+  { id:"4-2-4", patterns:["TTTTXXTTTT","XXXXTTXXXX"], weight:.86, confidence:.78 },
+  { id:"4-3-4", patterns:["TTTTXXXTTTT","XXXXTTTXXXX"], weight:.89, confidence:.81 },
+  { id:"4-4-4", patterns:["TTTTXXXXTTTT","XXXXTTTTXXXX"], weight:.91, confidence:.84 },
+  { id:"4-5-4", patterns:["TTTTXXXXXTTTT","XXXXTTTTTXXXX"], weight:.85, confidence:.77 },
+  { id:"BET_TAI_7", patterns:["TTTTTTT"], weight:.90, confidence:.82 },
+  { id:"BET_XIU_7", patterns:["XXXXXXX"], weight:.90, confidence:.82 },
+  { id:"1-2-3", patterns:["TXXTTT","XTTXXX"], weight:.88, confidence:.80 },
+  { id:"1-2-4", patterns:["TXXTTTT","XTTXXXX"], weight:.85, confidence:.77 },
+  { id:"1-2-5", patterns:["TXXTTTTT","XTTXXXXX"], weight:.82, confidence:.74 },
+  { id:"2-3-4", patterns:["TTXXXTTTT","XXTTTXXXX"], weight:.89, confidence:.81 },
+  { id:"2-3-5", patterns:["TTXXXTTTTT","XXTTTXXXXX"], weight:.86, confidence:.78 },
+  { id:"3-3-4", patterns:["TTTXXXTTTT","XXXTTTXXXX"], weight:.87, confidence:.79 },
+  { id:"3-3-5", patterns:["TTTXXXTTTTT","XXXTTTXXXXX"], weight:.84, confidence:.76 },
+  { id:"3-4-4", patterns:["TTTXXXXTTTT","XXXTTTTXXXX"], weight:.88, confidence:.80 },
+  { id:"3-4-5", patterns:["TTTXXXXTTTTT","XXXTTTTXXXXX"], weight:.91, confidence:.83 }
+];
 
-  const taiLong = (tai + 1) / (last.length + 2);
-  const xiuLong = (xiu + 1) / (last.length + 2);
-  const taiShort = (recentTai + 1) / (recent.length + 2);
-  const xiuShort = (recentXiu + 1) / (recent.length + 2);
-  const taiScore = taiLong * 0.65 + taiShort * 0.35;
-  const xiuScore = xiuLong * 0.65 + xiuShort * 0.35;
-  const gap = Math.abs(taiScore - xiuScore);
-  const side = gap < 0.035 ? "Chưa đủ tín hiệu" : (taiScore > xiuScore ? "Tài" : "Xỉu");
+const clamp = (v, lo=0, hi=1) => Math.max(lo, Math.min(hi, v));
+function prob(t, x, smooth=2) {
+  const sum = t+x+smooth;
+  return { T: (t+smooth/2)/sum, X: (x+smooth/2)/sum };
+}
+function countNext(seq, context) {
+  let t=0,x=0;
+  for (let i=0;i+context.length<seq.length;i++) {
+    if (seq.slice(i,i+context.length) !== context) continue;
+    if (seq[i+context.length] === "T") t++; else x++;
+  }
+  return {t,x};
+}
+function predict(history) {
+  const seq = history.map(s => s.result === "TAI" ? "T" : "X").reverse().join("");
+  if (seq.length < 8) return { ready:false, message:"Chưa đủ lịch sử (cần tối thiểu 8 phiên)." };
+  const models = [];
 
-  // Điểm tín hiệu của thuật toán, không phải xác suất thắng đã hiệu chuẩn.
-  const agrees = side === "Tài"
-    ? (Number(taiLong >= 0.5) + Number(taiShort >= 0.5)) / 2
-    : side === "Xỉu"
-      ? (Number(xiuLong >= 0.5) + Number(xiuShort >= 0.5)) / 2
-      : 0;
-  const confidence = side === "Chưa đủ tín hiệu"
-    ? 50
-    : Number(Math.min(75, 50 + gap * 100 * (0.7 + agrees * 0.3)).toFixed(2));
+  // Model 1: Pattern bank. Only uses patterns matching the current suffix.
+  let pt=0,px=0,patternMatches=0;
+  for (const p of patterns) for (const raw of p.patterns) {
+    const pat=raw.toUpperCase();
+    if (pat.length > seq.length || seq.slice(-pat.length)!==pat) continue;
+    const c=countNext(seq.slice(0,-pat.length), pat); // historical context, conservative fallback below
+    const all=countNext(seq, pat);
+    const support=all.t+all.x;
+    if (!support) continue;
+    const factor=p.weight*p.confidence*(support/(support+5));
+    pt += (all.t/support)*factor; px += (all.x/support)*factor; patternMatches++;
+  }
+  models.push({ name:"Pattern có trọng số", ...prob(pt,px), support:patternMatches });
 
-  const lastId = settled[settled.length - 1].id;
-  const numericId = Number(lastId);
+  // Model 2: one-step transition.
+  const last=seq.at(-1);
+  let t=0,x=0;
+  for(let i=0;i<seq.length-1;i++) if(seq[i]===last) { if(seq[i+1]==="T")t++;else x++; }
+  models.push({name:"Chuyển tiếp 1 bước",...prob(t,x),support:t+x});
+
+  // Model 3: current run length compared with prior run endings.
+  let run=1;
+  for(let i=seq.length-2;i>=0 && seq[i]===last;i--) run++;
+  let rt=0,rx=0;
+  for(let i=0;i<seq.length-1;i++) {
+    let r=1;
+    for(let j=i-1;j>=0 && seq[j]===seq[i];j--) r++;
+    if(r===run && i+1<seq.length) { if(seq[i+1]==="T")rt++;else rx++; }
+  }
+  models.push({name:"Cầu bệt / độ dài chuỗi",...prob(rt,rx),support:rt+rx});
+
+  // Model 4: multi-order n-gram.
+  let ngT=0,ngX=0,ngW=0;
+  for(let n=1;n<=Math.min(6,seq.length-1);n++) {
+    const context=seq.slice(-n), c=countNext(seq,context), s=c.t+c.x;
+    if(!s) continue;
+    const w=(s/(s+5))*(n/6);
+    ngT += c.t/s*w; ngX += c.x/s*w; ngW += w;
+  }
+  models.push({name:"N-gram đa độ dài",...prob(ngT,ngX),support:Number(ngW.toFixed(2))});
+
+  // Model 5: ensemble of first four statistical models.
+  const ws=[.30,.25,.15,.30];
+  let ensT=0,ensX=0;
+  models.forEach((m,i)=>{ensT+=m.T*ws[i];ensX+=m.X*ws[i];});
+  const ensemble=prob(ensT*10,ensX*10,0);
+  models.push({name:"Ensemble tổng hợp",...ensemble,support:models.reduce((a,m)=>a+(m.support||0),0)});
+
+  // Three transparent analysis layers (not external LLMs).
+  const votesT=models.slice(0,4).filter(m=>m.T>m.X).length;
+  const votesX=4-votesT;
+  const agreement=Math.max(votesT,votesX)/4;
+  const entropy=-(ensemble.T*Math.log2(Math.max(ensemble.T,1e-9))+ensemble.X*Math.log2(Math.max(ensemble.X,1e-9)));
+  const support=models.slice(0,4).reduce((a,m)=>a+Math.min(10,m.support||0),0);
+  const sampleAdequacy=clamp(support/20);
+  const rawConfidence=Math.round(100*agreement*sampleAdequacy*(1-entropy/2));
+  const prediction=ensemble.T===ensemble.X ? null : ensemble.T>ensemble.X ? "TAI":"XIU";
+
   return {
-    side, confidence, score: confidence,
-    note: side === "Chưa đủ tín hiệu"
-      ? "Tín hiệu hai phía cân bằng"
-      : "Điểm tín hiệu nội bộ từ 30 phiên và 6 phiên gần nhất; chưa hiệu chuẩn xác suất thắng",
-    sample: last.length,
-    targetSession: lastId == null ? null :
-      (Number.isFinite(numericId) ? String(numericId + 1) : String(lastId) + " kế tiếp")
+    ready:true,
+    prediction,
+    probability:{TAI:Number((ensemble.T*100).toFixed(1)),XIU:Number((ensemble.X*100).toFixed(1))},
+    confidenceIndex:rawConfidence,
+    agreement,
+    sampleAdequacy,
+    patternMatches,
+    models:models.map(m=>({...m,TAI:Number((m.T*100).toFixed(1)),XIU:Number((m.X*100).toFixed(1))})),
+    aiAnalysis:[
+      {name:"AI 1 · Pattern", result:patternMatches ? `Tìm thấy ${patternMatches} mẫu có hỗ trợ` : "Chưa có pattern khớp đủ dữ liệu"},
+      {name:"AI 2 · Kiểm định", result:`Đồng thuận ${Math.round(agreement*100)}%; lượng hỗ trợ ${Math.round(sampleAdequacy*100)}%`},
+      {name:"AI 3 · Tổng hợp", result:entropy>.90 ? "Hai phía gần cân bằng; tín hiệu yếu" : "Đã tổng hợp điểm; cần đối chiếu kết quả thực tế"}
+    ],
+    note:"Chỉ số tin cậy là chỉ báo nội bộ, không phải xác suất thắng đã được xác minh."
   };
 }
-
-async function fetchJson(url, timeout = REQUEST_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-  try {
-    let response;
-    try {
-      response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          accept: "application/json",
-          "user-agent": "Mozilla/5.0 VertexPremium/1.2"
-        }
-      });
-    } catch (err) {
-      const code = err?.cause?.code || err?.code;
-      if (err?.name === "AbortError") throw new Error(`Timeout sau ${timeout}ms`);
-      throw new Error(`${code ? code + ": " : ""}${err?.cause?.message || err.message || "Không kết nối được upstream API"}`);
-    }
-    if (!response.ok) {
-      const body = (await response.text().catch(() => "")).slice(0, 160);
-      throw new Error(`HTTP ${response.status}${body ? " — " + body : ""}`);
-    }
-    try {
-      return await response.json();
-    } catch {
-      throw new Error("Upstream trả về nội dung không phải JSON hợp lệ");
-    }
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function syncSessions() {
-  const start = Date.now();
-  try {
-    const payload = await fetchJson(API_URL);
-    const raw = normalizePayload(payload);
-    const sessions = raw.map(safeSession).filter(s => s.id != null);
-    if (!sessions.length) throw new Error("API trả về JSON nhưng không nhận diện được danh sách phiên.");
-    // API commonly returns newest first. Sort numeric IDs ascending when possible.
-    sessions.sort((a, b) => {
-      const na = Number(a.id), nb = Number(b.id);
-      if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
-      return String(a.id).localeCompare(String(b.id));
+function settlePending(sessions) {
+  const store=readStore();
+  const byId=new Map(sessions.map(s=>[String(s.id),s]));
+  const stillPending=[];
+  for(const p of store.pending) {
+    const actual=byId.get(String(p.targetSessionId));
+    if(!actual) { stillPending.push(p); continue; }
+    const won=p.prediction===actual.result;
+    store.evaluated.unshift({
+      ...p, actualResult:actual.result, dice:actual.dice, point:actual.point,
+      outcome:won?"WIN":"LOSS", settledAt:new Date().toISOString()
     });
-
-    const oldPrediction = state.predictions[state.predictions.length - 1];
-    const latest = sessions[sessions.length - 1];
-    if (oldPrediction && oldPrediction.actual == null) {
-      const matched = sessions.find(s => String(s.id) === String(oldPrediction.targetSession));
-      if (matched?.result) {
-        oldPrediction.actual = matched.result;
-        oldPrediction.correct = oldPrediction.side === matched.result;
-        oldPrediction.settledAt = new Date().toISOString();
-      }
-    }
-
-    state.sessions = sessions.slice(-HISTORY_LIMIT);
-    state.latestSessionId = latest.id;
-    state.connected = true;
-    state.latency = Date.now() - start;
-    state.lastSync = new Date().toISOString();
-    state.error = null;
-
-    const prediction = buildPrediction(state.sessions);
-    if (prediction && prediction.targetSession &&
-        state.predictions[state.predictions.length - 1]?.targetSession !== prediction.targetSession) {
-      state.predictions.push({
-        ...prediction,
-        actual: null,
-        correct: null,
-        createdAt: new Date().toISOString()
-      });
-      state.predictions = state.predictions.slice(-HISTORY_LIMIT);
-    }
-  } catch (e) {
-    state.connected = false;
-    state.error = e?.message || "Lỗi kết nối API";
   }
+  store.pending=stillPending;
+  store.evaluated=store.evaluated.slice(0,500);
+  writeStore(store);
 }
-
-const html = String.raw`<!doctype html>
-<html lang="vi">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#080d19"><title>VERTEX PREMIUM — Analyzer</title>
-<style>
-:root{color-scheme:dark;--bg:#080d19;--panel:#10192b;--panel2:#0c1424;--line:#24334d;--text:#edf4ff;--muted:#8fa3c2;--cyan:#52e6ff;--blue:#6c8cff;--green:#43e0a0;--red:#ff647c;--gold:#ffd36a}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 15% 0%,#14284a 0,transparent 36%),var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-.wrap{max-width:1180px;margin:auto;padding:22px 16px 38px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px}.brand{display:flex;align-items:center;gap:12px}.logo{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-weight:900;color:#07111d;background:linear-gradient(135deg,var(--cyan),var(--blue));box-shadow:0 0 25px #52e6ff40}.brand h1{font-size:16px;letter-spacing:2px;margin:0}.brand p{font-size:11px;color:var(--muted);margin:3px 0 0;letter-spacing:1.3px}.status{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:#0d1626;padding:8px 11px;border-radius:999px;color:var(--muted);font-size:12px}.dot{width:7px;height:7px;border-radius:50%;background:var(--red)}.dot.on{background:var(--green);box-shadow:0 0 10px #43e0a080}
-.hero{position:relative;border:1px solid transparent;border-radius:18px;padding:1px;background:linear-gradient(120deg,#52e6ff80,#344a78,#7c72ff80,#52e6ff80);background-size:300% 300%;animation:borderflow 8s ease infinite;margin-bottom:14px}.hero-in{border-radius:17px;background:linear-gradient(115deg,#111e34,#0c1424 65%);padding:22px;display:grid;grid-template-columns:1.2fr .8fr;gap:18px}.eyebrow{color:var(--cyan);font-size:10px;letter-spacing:2px;font-weight:800}.hero h2{font-size:clamp(22px,4vw,34px);margin:8px 0}.sub{color:var(--muted);margin:0;max-width:560px}.signal{align-self:center;border:1px solid var(--line);background:#08111f;border-radius:14px;padding:16px}.signal-top{display:flex;justify-content:space-between;color:var(--muted);font-size:11px}.side{font-size:34px;font-weight:850;letter-spacing:1px;margin:8px 0}.side.tai{color:var(--red)}.side.xiu{color:var(--cyan)}.side.neutral{color:var(--gold)}.bar{height:6px;background:#1b2940;border-radius:10px;overflow:hidden}.bar span{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--blue));border-radius:10px}.tiny{font-size:11px;color:var(--muted);margin-top:9px}
-.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}.card{background:linear-gradient(145deg,#111b2d,#0d1524);border:1px solid var(--line);border-radius:14px;padding:15px;min-width:0}.k{font-size:11px;color:var(--muted);margin-bottom:8px}.v{font-size:22px;font-weight:800;overflow-wrap:anywhere}.detail{font-size:11px;color:var(--muted);margin-top:5px}.columns{display:grid;grid-template-columns:1fr 1fr;gap:14px}.section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.section-head h3{font-size:13px;letter-spacing:.5px;margin:0}.pill{font-size:10px;color:var(--cyan);border:1px solid #52e6ff40;padding:4px 7px;border-radius:999px;white-space:nowrap}
-.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;white-space:nowrap;font-size:12px}th{text-align:left;color:var(--muted);font-size:10px;font-weight:600;padding:10px 8px;border-bottom:1px solid var(--line)}td{padding:10px 8px;border-bottom:1px solid #1a2940}tr:last-child td{border-bottom:0}.tag{display:inline-block;border-radius:6px;padding:3px 7px;font-size:10px;font-weight:800}.tag.tai{color:#ff8da0;background:#ff647c18}.tag.xiu{color:#6feaff;background:#52e6ff16}.tag.win{color:var(--green);background:#43e0a015}.tag.loss{color:var(--red);background:#ff647c15}.empty{text-align:center;padding:24px;color:var(--muted);font-size:12px}.footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:10px;margin-top:14px}.notice{border:1px solid #ffd36a30;background:#ffd36a0a;border-radius:12px;padding:12px 14px;color:#c7d2e4;font-size:11px;margin-top:14px}.refresh{border:1px solid var(--line);background:#121f34;color:var(--text);padding:8px 12px;border-radius:9px;font-weight:700;cursor:pointer}.refresh:active{transform:scale(.98)}
-@keyframes borderflow{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
-@media(max-width:760px){.wrap{padding:15px 11px 28px}.hero-in{grid-template-columns:1fr;padding:17px}.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.columns{grid-template-columns:1fr}.top{align-items:flex-start}.brand h1{font-size:14px}.status{font-size:10px}.card{padding:13px}.v{font-size:20px}.side{font-size:29px}}
-</style></head>
-<body><main class="wrap">
-<header class="top"><div class="brand"><div class="logo">V</div><div><h1>VERTEX PREMIUM</h1><p>WILD BOUNTY · SESSION ANALYZER</p></div></div><div class="status"><span id="dot" class="dot"></span><span id="connection">Đang kết nối API</span></div></header>
-<section class="hero"><div class="hero-in"><div><div class="eyebrow">LIVE DATA · TELE68 API</div><h2>Phân tích phiên tự động</h2><p class="sub">Theo dõi dữ liệu phiên, chấm kết quả dự đoán và đo hiệu suất từ dữ liệu đã xác minh.</p><div class="tiny" id="updated">Đang tải dữ liệu…</div></div><div class="signal"><div class="signal-top"><span>DỰ ĐOÁN THAM KHẢO</span><span id="target">Phiên —</span></div><div id="prediction" class="side neutral">ĐANG TẢI</div><div class="bar"><span id="scorebar" style="width:0%"></span></div><div class="tiny" id="confidence">Điểm mô hình: —</div><div class="tiny" id="signalnote">Chờ đủ dữ liệu phiên.</div></div></div></section>
-<section class="grid">
-<div class="card"><div class="k">PHIÊN MỚI NHẤT</div><div class="v" id="latest">—</div><div class="detail" id="latestResult">Chưa có kết quả</div></div>
-<div class="card"><div class="k">PING / LATENCY</div><div class="v" id="latency">—</div><div class="detail">Thời gian phản hồi API</div></div>
-<div class="card"><div class="k">ĐỘ CHÍNH XÁC ĐÃ ĐÁNH GIÁ</div><div class="v" id="accuracy">—</div><div class="detail" id="evaluated">Chưa có phiên đối chiếu</div></div>
-<div class="card"><div class="k">TỔNG DỰ ĐOÁN</div><div class="v" id="totalPred">0</div><div class="detail" id="winloss">WIN 0 · LOSS 0</div></div>
-</section>
-<section class="columns">
-<div class="card"><div class="section-head"><h3>LỊCH SỬ DỰ ĐOÁN</h3><span class="pill">AUTO SETTLEMENT</span></div><div class="table-wrap"><table><thead><tr><th>PHIÊN</th><th>DỰ ĐOÁN</th><th>ĐIỂM</th><th>KẾT QUẢ</th></tr></thead><tbody id="predRows"><tr><td colspan="4" class="empty">Đang chờ dữ liệu…</td></tr></tbody></table></div></div>
-<div class="card"><div class="section-head"><h3>LỊCH SỬ PHIÊN API</h3><button class="refresh" id="refresh">Làm mới</button></div><div class="table-wrap"><table><thead><tr><th>PHIÊN</th><th>XÚC XẮC</th><th>TỔNG ĐIỂM</th><th>KẾT QUẢ</th></tr></thead><tbody id="sessionRows"><tr><td colspan="4" class="empty">Đang tải phiên…</td></tr></tbody></table></div></div>
-</section>
-<div class="notice" id="notice">Độ tin cậy hiển thị là điểm tín hiệu do thuật toán tính từ lịch sử gần đây, không phải xác suất thắng đã được hiệu chuẩn hay bảo đảm kết quả. Kết quả trò chơi có thể ngẫu nhiên; không có bảo đảm thắng.</div>
-<div class="footer"><span>VERTEX PREMIUM · DATA MONITOR</span><span id="error">Không có lỗi được ghi nhận</span><span>Tự đồng bộ mỗi 5 giây</span></div>
-</main>
-<script>
-const $ = id => document.getElementById(id);
-const esc = v => String(v ?? "—").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-function fmtTime(v){if(!v)return "—";const d=new Date(v);return Number.isNaN(d.getTime())?String(v):d.toLocaleString("vi-VN");}
-function resultTag(v){if(!v)return "—";return '<span class="tag '+(v==="Tài"?"tai":"xiu")+'">'+esc(v)+'</span>';}
-async function refresh(){
-  try{
-    const r=await fetch("/api/status",{cache:"no-store"});const d=await r.json();
-    $("dot").className="dot "+(d.connected?"on":"");
-    $("connection").textContent=d.connected?"API ĐANG HOẠT ĐỘNG":"API MẤT KẾT NỐI";
-    $("updated").textContent="Cập nhật: "+fmtTime(d.lastSync);
-    $("latency").textContent=d.latency==null?"—":d.latency+" ms";
-    $("latest").textContent=d.latestSessionId??"—";
-    const latest=(d.sessions||[]).slice(-1)[0];
-    $("latestResult").innerHTML=latest?resultTag(latest.result):"Chưa có kết quả";
-    const p=d.predictions||[];const settled=p.filter(x=>x.correct!==null);
-    const wins=settled.filter(x=>x.correct).length;
-    $("accuracy").textContent=settled.length?((wins/settled.length)*100).toFixed(2)+"%":"—";
-    $("evaluated").textContent=settled.length+" phiên đã đối chiếu";
-    $("totalPred").textContent=p.length;
-    $("winloss").textContent="WIN "+wins+" · LOSS "+(settled.length-wins);
-    const current=p[p.length-1];
-    if(current){
-      $("prediction").textContent=current.side;
-      $("prediction").className="side "+(current.side==="Tài"?"tai":current.side==="Xỉu"?"xiu":"neutral");
-      $("target").textContent="Phiên "+(current.targetSession??"—");
-      $("confidence").textContent="Độ tin cậy thuật toán: "+Number(current.confidence ?? current.score).toFixed(2)+"% (điểm tín hiệu)";
-      $("scorebar").style.width=Math.max(0,Math.min(100,Number(current.score)))+"%";
-      $("signalnote").textContent=current.note||"Điểm tham khảo";
-    }else{
-      $("prediction").textContent="CHƯA ĐỦ DỮ LIỆU";$("prediction").className="side neutral";
-      $("target").textContent="Phiên —";$("confidence").textContent="Độ tin cậy thuật toán: —";$("scorebar").style.width="0%";
-      $("signalnote").textContent="Cần tối thiểu 8 phiên có kết quả.";
-    }
-    const pr=[...p].reverse().slice(0,12);
-    $("predRows").innerHTML=pr.length?pr.map(x=>'<tr><td>'+esc(x.targetSession)+'</td><td>'+esc(x.side)+'</td><td>'+Number(x.score).toFixed(2)+'</td><td>'+(x.correct===null?'<span class="tag">CHỜ</span>':x.correct?'<span class="tag win">WIN</span>':'<span class="tag loss">LOSS</span>')+'</td></tr>').join(""):'<tr><td colspan="4" class="empty">Chưa có dự đoán</td></tr>';
-    const ss=[...(d.sessions||[])].reverse().slice(0,12);
-    $("sessionRows").innerHTML=ss.length?ss.map(x=>'<tr><td>'+esc(x.id)+'</td><td>'+esc(x.dices?x.dices.join(" · "):"—")+'</td><td>'+esc(x.point??"—")+'</td><td>'+resultTag(x.result)+'</td></tr>').join(""):'<tr><td colspan="4" class="empty">API chưa trả phiên</td></tr>';
-    $("error").textContent=d.error?"API: "+d.error:"Không có lỗi được ghi nhận";
-  }catch(e){$("connection").textContent="LỖI DASHBOARD";$("error").textContent=e.message;}
-}
-$("refresh").addEventListener("click",refresh);
-refresh();setInterval(refresh,5000);
-</script></body></html>`;
-
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  if (url.pathname === "/") {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-    return res.end(html);
-  }
-  // Same-origin proxy: browser talks to this Render service, not directly to upstream.
-  if (url.pathname === "/proxy/sessions") {
-    try {
-      const payload = await fetchJson(API_URL);
-      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      return res.end(JSON.stringify(payload));
-    } catch (e) {
-      res.writeHead(502, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      return res.end(JSON.stringify({ success: false, error: e.message, upstream: API_URL }));
-    }
-  }
-  if (url.pathname === "/api/diagnostics") {
-    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    return res.end(JSON.stringify({
-      service: "VERTEX PREMIUM API proxy",
-      connected: state.connected,
-      upstream: API_URL,
-      lastSync: state.lastSync,
-      latency: state.latency,
-      sessionsReceived: state.sessions.length,
-      error: state.error,
-      note: state.error ? "Kiểm tra DNS/TLS/HTTP/JSON của upstream." : "API phiên đã trả dữ liệu."
-    }));
-  }
-  if (url.pathname === "/api/status") {
-    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    return res.end(JSON.stringify({
-      connected: state.connected,
-      latency: state.latency,
-      lastSync: state.lastSync,
-      error: state.error,
-      sessions: state.sessions,
-      predictions: state.predictions,
-      latestSessionId: state.latestSessionId
-    }));
-  }
-  if (url.pathname === "/api/diagnostics") {
-    res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-    return res.end(JSON.stringify({
-      apiUrl: API_URL,
-      connected: state.connected,
-      lastSync: state.lastSync,
-      latency: state.latency,
-      error: state.error,
-      sessionsReceived: state.sessions.length,
-      hint: state.error
-        ? "Xem trường error để biết HTTP/DNS/TLS/timeout hoặc lỗi cấu trúc JSON."
-        : "API phiên đã trả dữ liệu hợp lệ."
-    }));
-  }
-  if (url.pathname === "/api/ping") {
-    const start = Date.now();
-    try {
-      const data = await fetchJson(PING_URL, 5000);
-      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      return res.end(JSON.stringify({ ok: true, latency: Date.now() - start, data }));
-    } catch (e) {
-      res.writeHead(502, { "content-type": "application/json; charset=utf-8" });
-      return res.end(JSON.stringify({ ok: false, error: e.message }));
-    }
-  }
-  res.writeHead(404, { "content-type": "application/json; charset=utf-8" });
-  res.end(JSON.stringify({ error: "Not found" }));
+app.get("/api/sessions", async (req,res) => {
+  try {
+    const sessions=await getSessions();
+    settlePending(sessions);
+    res.json({ok:true,source:SOURCE_API,updatedAt:new Date().toISOString(),sessions});
+  } catch(e) { res.status(502).json({ok:false,error:e.message}); }
 });
-
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`VERTEX PREMIUM running at http://localhost:${PORT}`);
-  console.log(`API source: ${API_URL}`);
-  syncSessions();
-  setInterval(syncSessions, POLL_MS);
+app.get("/api/dashboard", async (req,res) => {
+  try {
+    const sessions=await getSessions();
+    settlePending(sessions);
+    const store=readStore();
+    const history=sessions.slice(0,200);
+    const prediction=predict(history);
+    const latest=history[0];
+    const lastSaved=store.pending.find(p=>String(p.sourceSessionId)===String(latest?.id));
+    res.json({
+      ok:true,updatedAt:new Date().toISOString(),source:SOURCE_API,
+      latest, sessions:history, prediction,
+      pending:store.pending.slice(0,30), evaluated:store.evaluated.slice(0,100),
+      stats:{
+        total:store.evaluated.length,
+        wins:store.evaluated.filter(x=>x.outcome==="WIN").length,
+        losses:store.evaluated.filter(x=>x.outcome==="LOSS").length,
+        pending:store.pending.length
+      },
+      savedForLatest:!!lastSaved
+    });
+  } catch(e) { res.status(502).json({ok:false,error:e.message}); }
 });
+app.post("/api/predict", async (req,res) => {
+  try {
+    const sessions=await getSessions();
+    settlePending(sessions);
+    const latest=sessions[0];
+    const result=predict(sessions.slice(0,200));
+    if(!result.ready || !result.prediction) return res.status(400).json({ok:false,error:"Chưa đủ dữ liệu để lưu dự đoán."});
+    const targetSessionId=Number(latest.id)+1;
+    const store=readStore();
+    const existing=store.pending.find(p=>String(p.targetSessionId)===String(targetSessionId));
+    if(existing) return res.status(409).json({ok:false,error:"Đã có dự đoán cho phiên mục tiêu này.",existing});
+    const item={
+      predictionId:`${Date.now()}-${targetSessionId}`,
+      sourceSessionId:latest.id,targetSessionId,
+      prediction:result.prediction,probability:result.probability,
+      confidenceIndex:result.confidenceIndex,createdAt:new Date().toISOString()
+    };
+    store.pending.unshift(item); store.pending=store.pending.slice(0,200); writeStore(store);
+    res.json({ok:true,item});
+  } catch(e) { res.status(502).json({ok:false,error:e.message}); }
+});
+app.get("/api/history", (req,res) => {
+  const store=readStore();
+  res.json({ok:true,pending:store.pending,evaluated:store.evaluated});
+});
+app.get("/api/health", (req,res) => res.json({ok:true,service:"TX Pattern Dashboard"}));
+app.listen(PORT,()=>console.log(`Dashboard running at http://localhost:${PORT}`));
