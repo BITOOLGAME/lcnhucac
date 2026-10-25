@@ -8,7 +8,7 @@ const SOURCE_API = "https://wtxmd52.tele68.com/v1/txmd5/sessions";
 const DATA_DIR = path.join(__dirname, "data");
 const STORE_FILE = path.join(DATA_DIR, "evaluation-history.json");
 app.use(express.json({ limit: "1mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(path.join(__dirname, "")));
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(STORE_FILE)) fs.writeFileSync(STORE_FILE, JSON.stringify({ pending: [], evaluated: [] }, null, 2));
