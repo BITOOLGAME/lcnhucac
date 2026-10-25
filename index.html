@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TX Insight — Pattern Intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-mark">TX</div><div><strong>TX INSIGHT</strong><span>PATTERN INTELLIGENCE</span></div></div>
+    <div class="nav-label">WORKSPACE</div>
+    <a class="nav-item active" href="#overview"><span>◈</span> Tổng quan</a>
+    <a class="nav-item" href="#models"><span>⌘</span> Models & AI</a>
+    <a class="nav-item" href="#history"><span>◷</span> Lịch sử phiên</a>
+    <a class="nav-item" href="#evaluation"><span>↗</span> Đánh giá thắng thua</a>
+    <div class="sidebar-bottom"><div class="live-dot"></div><div><b>API nguồn</b><small id="sourceStatus">Đang kết nối…</small></div></div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div><div class="eyebrow">ANALYTICS / REAL-TIME FEED</div><h1>Trung tâm phân tích</h1><p class="sub">Pattern engine · Ensemble models · Session tracking</p></div>
+      <div class="top-actions"><span class="status-pill"><i></i> <span id="connection">Đang kết nối</span></span><button class="btn btn-ghost" id="refreshBtn">↻ Làm mới</button></div>
+    </header>
+    <section class="hero-grid" id="overview">
+      <div class="panel prediction-panel">
+        <div class="panel-top"><div><div class="eyebrow">DỰ ĐOÁN THAM KHẢO</div><h2>Phiên kế tiếp</h2></div><span class="tag">ENSEMBLE V1</span></div>
+        <div class="prediction-main"><div class="prediction-orb" id="predictionOrb">—</div><div><div class="prediction-label" id="predictionLabel">Đang phân tích dữ liệu</div><div class="prediction-sub" id="predictionSub">Chờ dữ liệu phiên</div></div></div>
+        <div class="confidence-head"><span>Chỉ số tin cậy nội bộ</span><b id="confidenceValue">—</b></div><div class="progress"><span id="confidenceBar"></span></div>
+        <div class="prob-row"><div><span class="dot tai"></span>TÀI <b id="taiProb">—</b></div><div><span class="dot xiu"></span>XỈU <b id="xiuProb">—</b></div></div>
+        <div class="panel-foot"><span id="targetSession">Phiên mục tiêu: —</span><button class="btn btn-primary" id="savePredictionBtn">Lưu dự đoán phiên tới ↗</button></div>
+      </div>
+      <div class="panel latest-panel">
+        <div class="panel-top"><div><div class="eyebrow">LIVE FEED</div><h2>Phiên mới nhất</h2></div><span class="live-chip"><i></i> LIVE</span></div>
+        <div class="latest-id" id="latestId">—</div><div class="latest-result" id="latestResult">—</div>
+        <div class="dice-row" id="diceRow"><span>—</span><span>—</span><span>—</span></div>
+        <div class="latest-meta"><div><span>Tổng điểm</span><b id="latestPoint">—</b></div><div><span>Cập nhật</span><b id="updatedAt">—</b></div></div>
+        <div class="mini-note">Dữ liệu lấy trực tiếp từ API nguồn.</div>
+      </div>
+    </section>
+    <section class="stats-grid">
+      <div class="stat-card"><span class="stat-icon purple">⌁</span><div><small>Phiên đã đánh giá</small><strong id="statTotal">0</strong><em>Đã có kết quả</em></div></div>
+      <div class="stat-card"><span class="stat-icon green">✓</span><div><small>Dự đoán đúng</small><strong id="statWins">0</strong><em id="winRate">Tỷ lệ đúng: —</em></div></div>
+      <div class="stat-card"><span class="stat-icon red">×</span><div><small>Dự đoán sai</small><strong id="statLosses">0</strong><em>Không tính phiên chờ</em></div></div>
+      <div class="stat-card"><span class="stat-icon amber">◷</span><div><small>Đang chờ kết quả</small><strong id="statPending">0</strong><em>Đối chiếu tự động theo ID</em></div></div>
+    </section>
+    <section class="section" id="models"><div class="section-heading"><div><div class="eyebrow">MODEL STACK</div><h2>5 Models + 3 lớp phân tích</h2></div><span class="muted" id="modelSummary">Đang tải model…</span></div>
+      <div class="model-grid" id="modelGrid"></div>
+      <div class="ai-grid" id="aiGrid"></div>
+    </section>
+    <section class="section" id="history"><div class="section-heading"><div><div class="eyebrow">SOURCE DATA</div><h2>Lịch sử phiên gần đây</h2></div><span class="muted">Tối đa 50 phiên</span></div>
+      <div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>Phiên</th><th>Xúc xắc</th><th>Tổng</th><th>Kết quả</th></tr></thead><tbody id="sessionsTable"><tr><td colspan="4" class="empty">Đang tải dữ liệu…</td></tr></tbody></table></div></div>
+    </section>
+    <section class="section" id="evaluation"><div class="section-heading"><div><div class="eyebrow">PREDICTION LOG</div><h2>Đánh giá từng phiên</h2></div><span class="muted">Tự chốt khi API có phiên mục tiêu</span></div>
+      <div class="panel table-panel"><div class="table-wrap"><table><thead><tr><th>Phiên mục tiêu</th><th>Dự đoán</th><th>Xác suất dự đoán</th><th>Kết quả thực tế</th><th>Đánh giá</th></tr></thead><tbody id="evaluationTable"><tr><td colspan="5" class="empty">Chưa có lịch sử. Nhấn “Lưu dự đoán phiên tới”.</td></tr></tbody></table></div></div>
+    </section>
+    <footer>TX INSIGHT <span>·</span> Công cụ phân tích thống kê, không đảm bảo dự đoán đúng hoặc lợi nhuận.</footer>
+  </main>
+</div>
+<div id="toast" class="toast"></div>
+<script src="/app.js"></script>
+</body></html>
