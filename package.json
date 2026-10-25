@@ -1,15 +1,9 @@
 {
-  "name": "vertex-tx-api",
-  "version": "2.0.0",
-  "description": "Vertex TX Prediction API",
-  "main": "lc79.js",
-  "scripts": {
-    "start": "node lc79.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "dependencies": {
-    "express": "^5.1.0"
-  }
+  "name": "tx-pattern-dashboard",
+  "version": "1.0.0",
+  "description": "Dashboard phân tích Tài/Xỉu theo pattern, 5 model và 3 bộ phân tích",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "express": "^4.21.2" }
 }
